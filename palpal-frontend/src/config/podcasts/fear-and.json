@@ -1,0 +1,48 @@
+{
+  "id": "fear-and",
+  "displayName": "Fear&",
+  "description": "Existential dread meets comedy",
+  "indexName": "fear-and",
+  "image": "/fear-and.jpg",
+  "theme": {
+    "primary": "red-500",
+    "secondary": "red-400",
+    "accent": "red-600",
+    "gradientFrom": "red-900",
+    "gradientTo": "red-800"
+  },
+  "socialSections": [
+    {
+      "title": "Fear&",
+      "titleColor": "bg-gradient-to-r from-red-500 to-red-400 bg-clip-text text-transparent",
+      "links": [
+        {
+          "site": "youtube",
+          "title": "@FearAndPodcast",
+          "link": "https://www.youtube.com/@FearAndPodcast",
+          "icon": "YouTube",
+          "hoverColor": "hover:text-red-400"
+        },
+        {
+          "site": "patreon",
+          "title": "Fear& Patreon",
+          "link": "https://www.patreon.com/c/fearand",
+          "icon": "Patreon",
+          "hoverColor": "hover:text-red-400"
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "site": "youtube",
+      "name": "FearAndYoutubePlaylist",
+      "url": "https://youtu.be/1YOIMoHF798?list=PLmijiMQBvw1LGakNWhfCedRxPD_apQ1H1",
+      "type": "playlist",
+      "enabled": true,
+      "fetch": null
+    }
+  ],
+  "enabled": true,
+  "order": 3
+}

@@ -1,0 +1,70 @@
+{
+  "id": "pal",
+  "displayName": "Podcast About List",
+  "description": "The most intelligent search engine for the most intelligent podcast",
+  "indexName": "pal",
+  "image": "/pal.webp",
+  "theme": {
+    "primary": "orange-500",
+    "secondary": "orange-400",
+    "accent": "orange-600",
+    "gradientFrom": "orange-900",
+    "gradientTo": "orange-800"
+  },
+  "socialSections": [
+    {
+      "title": "Podcast About List",
+      "titleColor": "bg-gradient-to-r from-orange-500 to-orange-400 bg-clip-text text-transparent",
+      "links": [
+        {
+          "site": "youtube",
+          "title": "Youtube",
+          "link": "https://www.youtube.com/@PodcastAboutList",
+          "icon": "YouTube",
+          "hoverColor": "hover:text-red-400"
+        },
+        {
+          "site": "patreon",
+          "title": "Patreon",
+          "link": "https://patreon.com/podcastaboutlist",
+          "icon": "Patreon",
+          "hoverColor": "hover:text-orange-400"
+        },
+        {
+          "site": "twitch",
+          "title": "Twitch",
+          "link": "https://www.twitch.tv/podcastaboutlist",
+          "icon": "Twitch",
+          "hoverColor": "hover:text-purple-400"
+        },
+        {
+          "site": "website",
+          "title": "Swagpoop",
+          "link": "https://swagpoop.com",
+          "icon": "Website",
+          "hoverColor": "hover:text-green-700"
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "site": "youtube",
+      "name": "PALYoutubePlaylist",
+      "url": "https://youtu.be/to1SiPIV41c?list=PL5B0Y8l1lpJoXIvq-qr5eD0OfD2McKB_o",
+      "type": "playlist",
+      "enabled": true,
+      "fetch": null
+    },
+    {
+      "site": "patreon",
+      "name": "PALPatreon",
+      "url": "https://www.patreon.com/podcastaboutlist",
+      "type": "user",
+      "enabled": true,
+      "fetch": "https://www.patreon.com/collection/868040"
+    }
+  ],
+  "enabled": true,
+  "order": 1
+}

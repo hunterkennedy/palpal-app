@@ -1,0 +1,15 @@
+services:
+  meilisearch:
+    user: "999:986"  # Run as dockeruser (UID:GID) for production security
+    environment:
+      - MEILI_ENV=production
+    # In production, you might want to remove localhost binding and use proper networking
+    ports: []  # Override to remove external port exposure if using reverse proxy
+
+  app:
+    user: "999:986"  # Run as dockeruser (UID:GID) for production security
+    environment:
+      - NODE_ENV=production
+    # In production, you might want to remove localhost binding
+    ports:
+      - "127.0.0.1:${APP_PORT}:${APP_PORT}"  # Remove localhost binding for production

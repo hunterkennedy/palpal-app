@@ -1,0 +1,89 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { X } from 'lucide-react';
+import { dismissWhatsNew, isWhatsNewDismissed } from '@/lib/cookies';
+
+interface WhatsNewData {
+  content: string;
+  version: string;
+  timestamp: string;
+}
+
+export default function WhatsNewBubble() {
+  const [whatsNewData, setWhatsNewData] = useState<WhatsNewData | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchWhatsNewData();
+  }, []);
+
+  const fetchWhatsNewData = async () => {
+    try {
+      const response = await fetch('/api/whats-new');
+      if (response.ok) {
+        const data: WhatsNewData = await response.json();
+        setWhatsNewData(data);
+
+        // Check if this version has been dismissed
+        const isDismissed = isWhatsNewDismissed(data.version);
+        setIsVisible(!isDismissed);
+      }
+    } catch (error) {
+      console.error('Failed to fetch what\'s new:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDismiss = () => {
+    if (whatsNewData) {
+      dismissWhatsNew(whatsNewData.version);
+      setIsVisible(false);
+    }
+  };
+
+  if (isLoading || !isVisible || !whatsNewData) {
+    return null;
+  }
+
+  return (
+    <div className="fixed top-4 right-4 z-[9999] max-w-xs animate-scaleIn">
+      <div className="relative overflow-hidden rounded-xl border backdrop-blur-xl"
+           style={{
+             background: 'linear-gradient(135deg, rgba(51, 51, 51, 0.95) 0%, rgba(42, 42, 42, 0.9) 100%)',
+             borderColor: 'rgba(255, 140, 66, 0.3)',
+             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(255, 140, 66, 0.15)'
+           }}>
+
+        {/* Subtle glow effect */}
+        <div className="absolute inset-0 rounded-xl opacity-50"
+             style={{
+               background: 'radial-gradient(circle at top right, rgba(255, 140, 66, 0.1) 0%, transparent 70%)'
+             }} />
+
+        {/* Close button */}
+        <button
+          onClick={handleDismiss}
+          className="absolute top-2 right-2 z-[10000] p-1.5 rounded-lg transition-all duration-200 hover:bg-white/10 cursor-pointer"
+          style={{ color: 'var(--text-muted)', pointerEvents: 'auto' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)' }}
+          aria-label="Dismiss what's new"
+        >
+          <X className="w-3.5 h-3.5" style={{ pointerEvents: 'none' }} />
+        </button>
+
+        {/* Content */}
+        <div className="relative z-10 p-4 pr-10">
+          <div
+            className="text-sm leading-relaxed"
+            style={{ color: 'var(--text-secondary)' }}
+            dangerouslySetInnerHTML={{ __html: whatsNewData.content }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

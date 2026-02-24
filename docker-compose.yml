@@ -1,0 +1,105 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: palpal-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - palpal-network
+
+  temporal:
+    image: temporalio/auto-setup:1.24
+    container_name: palpal-temporal
+    environment:
+      - DB=${TEMPORAL_DB_PLUGIN}
+      - DB_PORT=${TEMPORAL_DB_PORT}
+      - POSTGRES_USER=${TEMPORAL_DB_USER}
+      - POSTGRES_PWD=${TEMPORAL_DB_PASSWORD}
+      - POSTGRES_SEEDS=${TEMPORAL_DB_HOST}
+      - DYNAMIC_CONFIG_FILE_PATH=/etc/temporal/config/dynamicconfig/development-sql.yaml
+    volumes:
+      - ./docker/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    ports:
+      - "127.0.0.1:7233:7233"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - palpal-network
+
+  temporal-ui:
+    image: temporalio/ui:2.26
+    container_name: palpal-temporal-ui
+    environment:
+      - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS}
+    ports:
+      - "127.0.0.1:${TEMPORAL_UI_PORT}:8080"
+    depends_on:
+      - temporal
+    restart: unless-stopped
+    networks:
+      - palpal-network
+
+  # palpal-frontend:   ← commented out until Phase 5 refactor
+  #   The existing Dockerfile bakes in NEXT_PUBLIC_MEILISEARCH_HOST at build time.
+  #   It will not build cleanly until MeiliSearch is removed in Phase 5.
+  #   Uncomment and update once the frontend refactor is complete.
+  # palpal-frontend:
+  #   build:
+  #     context: ./palpal-frontend
+  #     dockerfile: Dockerfile
+  #     args:
+  #       - NEXT_TELEMETRY_DISABLED=${NEXT_TELEMETRY_DISABLED}
+  #   container_name: palpal-frontend
+  #   environment:
+  #     - PORT=${APP_PORT}
+  #     - NODE_ENV=${NODE_ENV}
+  #     - CONDUCTOR_URL=${CONDUCTOR_URL}
+  #   ports:
+  #     - "127.0.0.1:${APP_PORT}:${APP_PORT}"
+  #   restart: unless-stopped
+  #   networks:
+  #     - palpal-network
+
+  # palpal-conductor:   ← uncomment when conductor is built (Phase 3+)
+  # palpal-conductor:
+  #   build:
+  #     context: ./palpal-conductor
+  #     dockerfile: Dockerfile
+  #   container_name: palpal-conductor
+  #   environment:
+  #     - DATABASE_URL=${DATABASE_URL}
+  #     - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS}
+  #     - BLURB_API_KEY=${BLURB_API_KEY}
+  #     - PORT=${CONDUCTOR_PORT}
+  #   ports:
+  #     - "127.0.0.1:${CONDUCTOR_PORT}:${CONDUCTOR_PORT}"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   networks:
+  #     - palpal-network
+
+volumes:
+  postgres_data:
+
+networks:
+  palpal-network:
+    driver: bridge

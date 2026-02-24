@@ -1,0 +1,47 @@
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.19.1
+    container_name: ${MEILISEARCH_CONTAINER_NAME}
+    environment:
+      - MEILI_HTTP_ADDR=${MEILI_HOST}:${MEILI_PORT}
+      # This line enforces the master key for security
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+    volumes:
+      - ${VOLUME_NAME}:/meili_data
+    restart: unless-stopped
+    networks:
+      - ${NETWORK_NAME}
+    ports:
+      - "127.0.0.1:${MEILI_PORT}:${MEILI_PORT}"  # Map to localhost
+    expose:
+      - "${MEILI_PORT}"  # Internal only, not external ports
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_MEILISEARCH_HOST=http://meilisearch:7700
+        - NEXT_TELEMETRY_DISABLED=${NEXT_TELEMETRY_DISABLED}
+    container_name: ${APP_CONTAINER_NAME}
+    environment:
+      - PORT=${APP_PORT}
+      - NODE_ENV=${NODE_ENV}
+      - NEXT_PUBLIC_MEILISEARCH_HOST=http://meilisearch:${MEILI_PORT}
+      - MEILISEARCH_ADMIN_KEY=${MEILISEARCH_ADMIN_KEY}
+      - NEXT_PUBLIC_MEILISEARCH_SEARCH_KEY=${NEXT_PUBLIC_MEILISEARCH_SEARCH_KEY}
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+    ports:
+      - "127.0.0.1:${APP_PORT}:${APP_PORT}"  # Localhost only
+    depends_on:
+      - meilisearch
+    networks:
+      - ${NETWORK_NAME}
+    restart: unless-stopped
+
+volumes:
+  meilisearch_data_vol:
+
+networks:
+  palpal-network-dev:
+    driver: bridge
