@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import React, { useState, useEffect } from 'react';
-import { X, Search, SlidersHorizontal } from 'lucide-react';
+import { X, SlidersHorizontal } from 'lucide-react';
 import { SortOption, DateRange } from './SearchFilters';
 import PodcastDropdown from './PodcastDropdown';
 import SortFilter, { SortDirection } from './SortFilter';
@@ -183,9 +183,6 @@ export default function SearchBar({
 
       {/* Search Bar */}
       <form onSubmit={handleSearchSubmit} className="relative max-w-4xl mx-auto">
-        <div className="search-orb absolute left-7 top-1/2 transform -translate-y-1/2 w-7 h-7 rounded-full bg-orange-500 shadow-2xl shadow-orange-400/100 ring-2 ring-orange-300/100 border-2 border-orange-400 flex items-center justify-center">
-          <Search className="w-4 h-4 text-white" />
-        </div>
         <input
           type="text"
           value={searchQuery}
@@ -193,7 +190,7 @@ export default function SearchBar({
           onFocus={(e) => onSearchFocus?.(e.target)}
           onBlur={onSearchBlur}
           placeholder={placeholder}
-          className="search-bar-enhanced w-full pl-20 pr-20 py-7 text-xl font-medium rounded-3xl text-white placeholder-gray-400 transition-all duration-300"
+          className="search-bar-enhanced w-full pl-8 pr-20 py-7 text-xl font-medium rounded-3xl text-white placeholder-gray-400 transition-all duration-300"
           disabled={false}
           enterKeyHint="search"
         />

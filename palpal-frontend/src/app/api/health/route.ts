@@ -1,19 +1,16 @@
 import { NextResponse } from 'next/server';
-import { searchClient } from '@/lib/meilisearch';
+import { checkHealth } from '@/lib/conductor';
 
 export async function GET() {
   try {
-    // Check Meilisearch health
-    const meilisearchHealth = await searchClient.health();
-    const isHealthy = meilisearchHealth.status === 'available';
+    const health = await checkHealth();
+    const isHealthy = health.status === 'ok';
 
     if (!isHealthy) {
       return NextResponse.json({
         status: 'unhealthy',
         timestamp: new Date().toISOString(),
-        services: {
-          meilisearch: 'unavailable'
-        },
+        services: { conductor: 'unavailable' },
         version: process.env.npm_package_version || '1.0.0'
       }, { status: 503 });
     }
@@ -22,16 +19,13 @@ export async function GET() {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      services: {
-        meilisearch: 'available'
-      },
+      services: { conductor: 'available' },
       version: process.env.npm_package_version || '1.0.0',
       environment: process.env.NODE_ENV || 'development'
     });
 
   } catch (error) {
     console.error('Health check failed:', error);
-    
     return NextResponse.json({
       status: 'unhealthy',
       timestamp: new Date().toISOString(),

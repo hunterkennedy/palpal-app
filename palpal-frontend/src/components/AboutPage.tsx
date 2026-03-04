@@ -98,9 +98,9 @@ export default function AboutPage() {
                   <h3 className="heading-tertiary mb-2">🚀 <span className="text-orange-400 group-hover:text-orange-300 transition-colors">Next.js</span></h3>
                   <p className="text-meta">React framework for the frontend and API</p>
                 </a>
-                <a href="https://www.meilisearch.com/" target="_blank" rel="noopener noreferrer" className="card-secondary hover:scale-[1.02] transition-transform duration-200 cursor-pointer">
-                  <h3 className="heading-tertiary mb-2">🔍 <span className="text-orange-400 group-hover:text-orange-300 transition-colors">Meilisearch</span></h3>
-                  <p className="text-meta">Fast reverse index search engine</p>
+                <a href="https://www.postgresql.org/" target="_blank" rel="noopener noreferrer" className="card-secondary hover:scale-[1.02] transition-transform duration-200 cursor-pointer">
+                  <h3 className="heading-tertiary mb-2">🔍 <span className="text-orange-400 group-hover:text-orange-300 transition-colors">PostgreSQL</span></h3>
+                  <p className="text-meta">Full-text search via tsvector/tsquery</p>
                 </a>
                 <a href="https://github.com/m-bain/whisperX" target="_blank" rel="noopener noreferrer" className="card-secondary hover:scale-[1.02] transition-transform duration-200 cursor-pointer">
                   <h3 className="heading-tertiary mb-2">🎤 <span className="text-orange-400 group-hover:text-orange-300 transition-colors">WhisperX</span></h3>

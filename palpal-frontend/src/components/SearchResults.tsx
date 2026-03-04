@@ -101,7 +101,7 @@ export default function SearchResults({ query, results, totalHits, error, isSear
         episode_title: hit.episode_title,
         video_id: hit.video_id,
         start_formatted: hit.start_formatted,
-        end_formatted: hit.end_formatted || hit.start_formatted, // Fallback if end_formatted is missing
+        end_formatted: hit.start_formatted,
         podcast_name: hit.podcast_name,
         source_name: hit.source_name
       };
@@ -192,7 +192,7 @@ export default function SearchResults({ query, results, totalHits, error, isSear
         <div className="text-center py-8">
           <p className="text-body mb-4">No results found for "{query}"</p>
           <p className="text-meta">
-            Try different keywords or check if transcript data is loaded in Meilisearch.
+            Try different keywords or broaden your filters.
           </p>
         </div>
       </div>
@@ -270,12 +270,12 @@ export default function SearchResults({ query, results, totalHits, error, isSear
                 >
 
                   <div className="mb-4">
-                    {hit._formatted?.episode_title ? (
+                    {hit.title_highlighted ? (
                       <h3
                         id={`result-${groupKey}-${index}-title`}
                         className="heading-secondary [&_mark]:bg-orange-500 [&_mark]:text-white [&_mark]:px-1 [&_mark]:rounded"
                         dangerouslySetInnerHTML={{
-                          __html: DOMPurify.sanitize(hit._formatted.episode_title, {
+                          __html: DOMPurify.sanitize(hit.title_highlighted, {
                             ALLOWED_TAGS: ['mark'],
                             ALLOWED_ATTR: []
                           })
@@ -307,21 +307,9 @@ export default function SearchResults({ query, results, totalHits, error, isSear
                     ) : null;
                   })()}
 
-                  {hit._formatted?.podcast_name ? (
-                    <span
-                      className="text-meta font-medium [&_mark]:bg-orange-500 [&_mark]:text-white [&_mark]:px-1 [&_mark]:rounded"
-                      dangerouslySetInnerHTML={{
-                        __html: DOMPurify.sanitize(hit._formatted.podcast_name, {
-                          ALLOWED_TAGS: ['mark'],
-                          ALLOWED_ATTR: []
-                        })
-                      }}
-                    />
-                  ) : (
-                    <span className="text-meta font-medium">
-                      {hit.podcast_name}
-                    </span>
-                  )}
+                  <span className="text-meta font-medium">
+                    {hit.podcast_name}
+                  </span>
                 </div>
 
                 {/* Publication date */}
@@ -334,12 +322,12 @@ export default function SearchResults({ query, results, totalHits, error, isSear
               </div>
               
               <div className="prose max-w-none">
-                    {hit._formatted?.text ? (
+                    {hit.text_highlighted ? (
                       <p
                         id={`result-${groupKey}-${index}-content`}
                         className="text-body leading-relaxed [&_mark]:bg-orange-500 [&_mark]:text-white [&_mark]:px-1 [&_mark]:rounded"
                         dangerouslySetInnerHTML={{
-                          __html: DOMPurify.sanitize(hit._formatted.text, {
+                          __html: DOMPurify.sanitize(hit.text_highlighted, {
                             ALLOWED_TAGS: ['mark'],
                             ALLOWED_ATTR: []
                           })
@@ -391,13 +379,13 @@ export default function SearchResults({ query, results, totalHits, error, isSear
                         <span>{hit.start_formatted}</span>
                       </div>
 
-                      {hit._rankingScore !== undefined && (
+                      {hit.rank !== undefined && (
                         <div
                           className="flex items-center gap-1"
-                          aria-label={`Search relevance: ${Math.round(hit._rankingScore * 100)} percent`}
+                          aria-label={`Search relevance: ${Math.round(hit.rank * 100)} percent`}
                         >
                           <span className="text-orange-500">
-                            {Math.round(hit._rankingScore * 100)}% relevance
+                            {Math.round(hit.rank * 100)}% relevance
                           </span>
                         </div>
                       )}

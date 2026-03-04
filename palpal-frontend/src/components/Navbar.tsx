@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Search, Info, Heart } from 'lucide-react';
+import { Search, Info, Heart, Settings2 } from 'lucide-react';
 
 interface NavbarProps {
   currentPage: string;
@@ -63,6 +63,13 @@ export default function Navbar({ currentPage }: NavbarProps) {
             <Info className="w-4 h-4 mr-2" />
             About
           </Link>
+          <Link
+            href="/admin"
+            className={`${getButtonClasses('admin')} nav-pill px-6 py-3 transition-all duration-300 shadow-lg`}
+          >
+            <Settings2 className="w-4 h-4 mr-2" />
+            Admin
+          </Link>
         </div>
 
         {/* Mobile Layout - Icon Only */}
@@ -87,6 +94,13 @@ export default function Navbar({ currentPage }: NavbarProps) {
             aria-label="About"
           >
             <Info className="w-4 h-4" />
+          </Link>
+          <Link
+            href="/admin"
+            className={`${getButtonClasses('admin')} nav-pill px-3 py-2.5 transition-all duration-300 shadow-lg`}
+            aria-label="Admin"
+          >
+            <Settings2 className="w-4 h-4" />
           </Link>
         </div>
       </nav>

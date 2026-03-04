@@ -1,0 +1,167 @@
+/**
+ * Server-side fetch wrapper for palpal-conductor API.
+ * Uses CONDUCTOR_URL (runtime env, no NEXT_PUBLIC_ prefix).
+ */
+
+const CONDUCTOR_URL = process.env.CONDUCTOR_URL || 'http://localhost:8000';
+
+export interface ConductorSearchParams {
+  q: string;
+  podcast_id?: string;
+  sort?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ConductorSearchResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  results: ConductorChunk[];
+}
+
+export interface ConductorChunk {
+  id: string;
+  episode_id: string;
+  chunk_index: number;
+  text: string;
+  start_time: number;
+  end_time: number;
+  duration: number;
+  start_formatted: string;
+  start_minutes: number;
+  word_count: number;
+  podcast_id: string;
+  podcast_name: string;
+  source_name: string;
+  episode_title: string;
+  video_id: string;
+  publication_date: string | null;
+  rank?: number;
+  text_highlighted?: string;
+  title_highlighted?: string;
+}
+
+export async function searchChunks(params: ConductorSearchParams): Promise<ConductorSearchResponse> {
+  const qs = new URLSearchParams();
+  qs.set('q', params.q);
+  if (params.podcast_id) qs.set('podcast_id', params.podcast_id);
+  if (params.sort) qs.set('sort', params.sort);
+  if (params.date_from) qs.set('date_from', params.date_from);
+  if (params.date_to) qs.set('date_to', params.date_to);
+  if (params.page != null) qs.set('page', String(params.page));
+  if (params.page_size != null) qs.set('page_size', String(params.page_size));
+
+  const res = await fetch(`${CONDUCTOR_URL}/search?${qs.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Conductor /search error: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getChunks(chunkId: string, radius: number): Promise<ConductorChunk[]> {
+  const qs = new URLSearchParams({ chunk_id: chunkId, radius: String(radius) });
+  const res = await fetch(`${CONDUCTOR_URL}/chunks?${qs.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Conductor /chunks error: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function checkHealth(): Promise<{ status: string }> {
+  const res = await fetch(`${CONDUCTOR_URL}/health`);
+  if (!res.ok) {
+    throw new Error(`Conductor /health error: ${res.status}`);
+  }
+  return res.json();
+}
+
+// --------------------------------------------------------------------------- //
+// Admin API (server-side only — requires CONDUCTOR_ADMIN_KEY)                  //
+// --------------------------------------------------------------------------- //
+
+const ADMIN_KEY = process.env.CONDUCTOR_ADMIN_KEY;
+
+function adminHeaders(): HeadersInit {
+  return ADMIN_KEY
+    ? { 'Authorization': `Bearer ${ADMIN_KEY}`, 'Content-Type': 'application/json' }
+    : { 'Content-Type': 'application/json' };
+}
+
+export interface EpisodeInfo {
+  id: string;
+  video_id: string;
+  title: string;
+  publication_date: string | null;
+  status: string;
+  error_message: string | null;
+  podcast_id: string;
+  podcast_name: string;
+  source_name: string;
+  chunk_count: number;
+  youtube_url: string;
+}
+
+export interface SchedulerStatus {
+  running: boolean;
+  paused: boolean;
+  jobs: { id: string; next_run: string | null }[];
+}
+
+export interface AdminStatus {
+  counts: Record<string, number>;
+  recent_failures: { id: string; title: string; error_message: string; updated_at: string }[];
+  stuck_transcribing: { id: string; title: string; updated_at: string }[];
+}
+
+export async function getEpisodes(): Promise<EpisodeInfo[]> {
+  const res = await fetch(`${CONDUCTOR_URL}/episodes`, { headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor /episodes error: ${res.status}`);
+  return res.json();
+}
+
+export async function getAdminStatus(): Promise<AdminStatus> {
+  const res = await fetch(`${CONDUCTOR_URL}/admin/status`, { headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor /admin/status error: ${res.status}`);
+  return res.json();
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  const res = await fetch(`${CONDUCTOR_URL}/admin/scheduler/status`, { headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor /admin/scheduler/status error: ${res.status}`);
+  return res.json();
+}
+
+export async function pauseScheduler(): Promise<void> {
+  const res = await fetch(`${CONDUCTOR_URL}/admin/scheduler/pause`, { method: 'POST', headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor pause error: ${res.status}`);
+}
+
+export async function resumeScheduler(): Promise<void> {
+  const res = await fetch(`${CONDUCTOR_URL}/admin/scheduler/resume`, { method: 'POST', headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor resume error: ${res.status}`);
+}
+
+export async function triggerDiscover(podcastId?: string, autoQueue = false): Promise<void> {
+  const qs = new URLSearchParams({ auto_queue: String(autoQueue) });
+  if (podcastId) qs.set('podcast_id', podcastId);
+  const res = await fetch(`${CONDUCTOR_URL}/admin/discover?${qs}`, { method: 'POST', headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor discover error: ${res.status}`);
+}
+
+export async function processEpisode(episodeId: string): Promise<void> {
+  const res = await fetch(`${CONDUCTOR_URL}/admin/episodes/${episodeId}/process`, { method: 'POST', headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor process error: ${res.status}`);
+}
+
+export async function retryEpisode(episodeId: string): Promise<void> {
+  const res = await fetch(`${CONDUCTOR_URL}/admin/episodes/${episodeId}/retry`, { method: 'POST', headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor retry error: ${res.status}`);
+}
+
+export async function bustEpisodesCache(): Promise<void> {
+  const res = await fetch(`${CONDUCTOR_URL}/admin/episodes/cache/bust`, { method: 'POST', headers: adminHeaders() });
+  if (!res.ok) throw new Error(`Conductor cache bust error: ${res.status}`);
+}

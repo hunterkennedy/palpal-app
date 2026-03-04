@@ -2,10 +2,7 @@
  * Cookie utility functions for storing user preferences
  */
 
-export type SearchMode = 'hybrid' | 'semantic' | 'keyword';
-
 interface UserPreferences {
-  searchMode: SearchMode;
   selectedPodcasts: string[];
 }
 
@@ -82,7 +79,6 @@ export function loadUserPreferences(): UserPreferences | null {
     if (
       typeof preferences === 'object' &&
       preferences !== null &&
-      ['hybrid', 'semantic', 'keyword'].includes(preferences.searchMode) &&
       Array.isArray(preferences.selectedPodcasts)
     ) {
       return preferences;
@@ -100,7 +96,6 @@ export function loadUserPreferences(): UserPreferences | null {
  */
 export function getDefaultPreferences(): UserPreferences {
   return {
-    searchMode: 'hybrid',
     selectedPodcasts: ['pal'] // Default to PAL selected
   };
 }

@@ -5,143 +5,162 @@ palpal is a podcast transcript search app.
 ## Architecture Overview
 
 ```
-[Temporal Scheduler]
-        |
-        v
-[Temporal Worker in conductor]
-  - Episode discovery workflow (reads sources from DB)
-  - Download activity (yt-dlp / patreon-dl → Docker volume)
-      └── rate limit hit → Temporal retry with exponential backoff
-  - POST audio to blurb activity
-      └── waits for blurb "hello" Signal if unavailable
-  - Webhook receiver → transcript processing activity
-  - DB write activity
+[APScheduler in conductor]
+  - Discovery job every 24h (reads sources from DB, auto-queues episodes)
+  - Recovery job daily at 10:00 (resubmits stuck transcribing episodes)
+
+[Pipeline in conductor]
+  - Episode discovery (yt-dlp --flat-playlist → DB insert)
+  - Download (yt-dlp → Docker volume, one at a time via semaphore)
+  - POST audio to blurb
+  - Webhook receiver → transcript processing → DB write
 
 [FastAPI in conductor]
-  - GET  /search
+  - GET  /search                              (FTS with ts_headline highlights)
   - GET  /chunks
   - GET  /podcasts
+  - GET  /episodes
   - GET  /episodes/check
-  - POST /blurb/register   (sends Signal to waiting Temporal workflow)
-  - POST /blurb/deregister
+  - GET  /health
+  - GET  /admin/status
+  - GET  /admin/scheduler/status
+  - POST /blurb/webhook/{job_id}
+  - POST /admin/discover                      (?podcast_id=, ?auto_queue=)
+  - POST /admin/scheduler/pause
+  - POST /admin/scheduler/resume
+  - POST /admin/episodes/{id}/retry
+  - POST /admin/episodes/{id}/process
+  - POST /admin/episodes/cache/bust
 
 [palpal-frontend] → [FastAPI in conductor] → [Postgres]
-[palpal-blurb]    → registers/deregisters with conductor on start/stop
-                  → receives audio POST, sends webhook back to conductor
+[palpal-blurb]    → receives audio POST, sends webhook back to conductor
 ```
 
 ---
 
-## palpal-conductor (not developed)
+## palpal-conductor (complete)
 
-**Stack:** Python + FastAPI + Temporal (self-hosted OSS, free, Apache 2.0)
+**Stack:** Python + FastAPI + APScheduler
 
 Data management and orchestration platform. Contains two things running together:
 - **FastAPI app** — HTTP API for the frontend and blurb
-- **Temporal worker** — runs all pipeline workflow/activity code
+- **Pipeline** — APScheduler + asyncio for discovery, download, and transcription
 
 ### Feed/source discovery
-- Sources defined in the postgres DB (YouTube playlists or Patreon collections)
-- Episode discovery runs on a Temporal Schedule (replaces cron)
-- New episodes are enqueued as Temporal workflow executions
+- Sources defined in the postgres DB (YouTube playlists or channels)
+- Episode discovery runs on a 24-hour APScheduler interval (or triggered via `/admin/discover`)
+- `auto_queue=false` discovers without downloading — used by the admin panel for manual testing
+- New episodes are processed as asyncio tasks, one download at a time (semaphore)
 
 ### Download pipeline
-- Audio downloaded via yt-dlp or patreon-dl
+- Audio downloaded via yt-dlp
 - Raw audio stored on a Docker volume, then POSTed to blurb
-- Rate limit handling: Temporal RetryPolicy with exponential backoff — no manual retry logic needed
-- Investigate yt-dlp options to reduce rate limit exposure (delays, cookies, etc.)
-- Episode status tracked in DB throughout: discovered → downloading → downloaded → transcribing → transcribed → processed
+- Episode status tracked in DB: discovered → downloading → transcribing → processed / failed
+- Stuck episodes (left in transcribing) are automatically resubmitted daily at 10:00
 
 ### Blurb coordination
-- `POST /blurb/register` — blurb calls this on startup with shared secret; conductor sends a Temporal Signal to unblock waiting workflows and drain the job queue
-- `POST /blurb/deregister` — blurb calls this on shutdown; conductor pauses dispatch
-- Auth: shared secret API key in `Authorization` header, configured via env vars on both sides
+- Auth: shared API key in `Authorization` header, configured via env vars on both sides
+- Blurb POSTs completed transcripts to `/blurb/webhook/{job_id}`
 
 ### Transcript processing
 - Webhook receiver accepts raw transcript from blurb
 - Chunks transcript into searchable segments
 - Writes chunks + episode metadata to postgres
+- Raw segments also saved to `transcripts` table (source of truth for re-chunking)
 
-### Search API (replaces MeiliSearch)
-- `GET /search` — full-text search with filter/sort support (relevance, date, duration, date range, per-podcast)
-- `GET /chunks` — adjacent chunk fetching for context expansion
-- `GET /podcasts` — podcast/source list from DB (replaces static JSON configs in frontend)
-- `GET /episodes/check` — check if episode already exists
+### Search API
+- `GET /search` — FTS via websearch_to_tsquery; supports relevance/date/duration sort, per-podcast filter, date range; returns `ts_headline` highlights with `<mark>` tags
+- `GET /chunks` — adjacent chunk fetching by UUID + radius (for context expansion)
+- `GET /podcasts` — podcast/source list from DB
 
 ---
 
-## palpal-blurb (partially developed)
+## palpal-blurb (complete)
 
 Transcription app. Lives on local PC, uses GPU. Operates at random hours. Runs natively (not in Docker) due to GPU requirements.
 
-Already implemented:
 - `/health` endpoint
 - Job submission via `POST /jobs`
 - Whisper transcription with faster-whisper (`distil-large-v3`, batched, GPU)
 - API key auth system (this doubles as the shared secret mechanism with conductor)
 - Job status tracking in memory
-
-Work remaining:
-- **Add startup/shutdown hooks** to `POST /conductor/blurb/register` and `POST /conductor/blurb/deregister` on start and stop — the hello/goodbye messages that unblock the Temporal workflow queue
-- **Switch from poll to webhook** — currently designed for Airflow-style polling (`GET /jobs/{id}`); needs to POST the completed transcript back to conductor instead
-- **Job timeout** — if a transcription hangs, conductor needs to know; add a configurable timeout that marks the job failed and notifies conductor
-- **Concurrency guard** — enforce one active job at a time (single GPU); queue or reject additional submissions while busy
+- Startup/shutdown hooks — registers/deregisters with conductor (conductor ignores unknown routes gracefully)
+- Webhook push — POSTs completed transcript to `{CONDUCTOR_URL}/blurb/webhook/{job_id}` (no polling)
+- Job timeout — configurable via `JOB_TIMEOUT_SECONDS`, marks job failed and notifies conductor
+- Concurrency guard — rejects new jobs with 503 while one is active (single GPU)
+- Manager UI — `blurb_manager.py` Tkinter window with start/stop and live stats; auto-starts on login
 
 ---
 
-## palpal-db (not developed)
+## palpal-db (complete)
 
 **Stack:** Postgres in Docker, pure local, no Supabase
 
-Schema managed via init scripts (`/docker/initdb/`) that run automatically on first container start.
+Schema managed via init scripts (`/initdb/`) that run automatically on first container start.
 
 ### Tables
-- `podcasts` — id, display_name, theme config, social links, enabled, display_order
-- `sources` — podcast_id, type (youtube/patreon), url, enabled
-- `episodes` — id, source_id, video_id, title, publication_date, status, audio_path
-- `transcript_chunks` — episode_id, text, chunk_index, start_time, end_time, word_count, tsvector column for FTS
+- `podcasts` — id, display_name, description, image, theme (JSONB), social_sections (JSONB), enabled, display_order
+- `sources` — podcast_id, name, site, type, url, fetch_url, description, filters (JSONB), enabled
+- `episodes` — id, source_id, video_id, title, publication_date, audio_path, status, error_message
+  - status: `discovered | downloading | transcribing | processed | failed`
+- `transcripts` — episode_id, language, segments (JSONB); raw blurb output, source of truth for re-chunking
+- `transcript_chunks` — episode_id, text, chunk_index, start/end times, duration, word_count, denormalized podcast/episode metadata, tsvector for FTS
 
 ### Full-text search
-- `tsvector` column on `transcript_chunks`, populated via trigger at insert
-- `GIN` index on the tsvector column
+- `search_vector` TSVECTOR on `transcript_chunks`, populated via trigger at insert
+  - text → weight A, episode_title → weight B, podcast_name → weight C
+- GIN index on search_vector
+- Additional indexes: podcast_id, publication_date, (podcast_id, publication_date), duration
 
 ---
 
-## palpal-frontend (developed, needs refactoring; cloned here as palpal)
+## palpal-frontend (complete)
 
 **Stack:** Next.js 15 + React 19 + TypeScript + Tailwind CSS 4
 
-Simple search frontend. Currently queries MeiliSearch directly — needs to be updated to query core.
+Search frontend. Queries conductor directly — no MeiliSearch.
 
-### Refactor required
-- Remove all MeiliSearch client code (`/lib/meilisearch.ts`, `/lib/keys.ts`, MeiliSearch SDK)
-- Replace Next.js API routes with proxies to palpal-conductor (or call conductor directly from client)
-- Remove MeiliSearch admin/index management routes (`/api/index/*`, `/api/transcripts`)
-- Replace static podcast JSON configs with live data from conductor's `/podcasts` endpoint
-- Swap `MEILI_*` env vars for `CONDUCTOR_URL`
-- Keep: all UI components, filtering, save/bookmark system, search debouncing, theming
+### Search flow
+- Client → `GET /api/search` (Next.js route) → conductor `/search`
+- Highlights (`text_highlighted`, `title_highlighted`) from `ts_headline`, rendered with `<mark>` tags and DOMPurify
+- Podcast filter: single `podcast_id` param when one podcast selected; omit to search all
+- Date range presets (last week/month/3 months/year) computed to ISO date strings server-side
+
+### Context expansion
+- Client → `GET /api/chunks?chunkId=&radius=` → conductor `/chunks`
+
+### Admin panel (`/admin`)
+- Scheduler status (paused/running), pause/resume toggle
+- Per-podcast **Discover** button — runs discovery with `auto_queue=false` (episodes land as `discovered`, no download)
+- **Process** button on individual `discovered` episodes — triggers download + transcription for just that episode
+- **Retry** button on `failed` episodes
+- Episode table with live status, filterable by status, auto-refreshes every 8s
+- Cache-busts conductor's episode list cache after any action
+
+### Key env vars
+- `CONDUCTOR_URL` — runtime-only, server-side (e.g. `http://palpal-conductor:8000`)
+- `CONDUCTOR_ADMIN_KEY` — same value as `BLURB_API_KEY`, used by admin API routes
 
 ---
 
 ## Build Order
 
-MeiliSearch data will not be migrated — the shape is different and metadata is missing. The pipeline must produce real data before the frontend refactor is worth doing.
-
 ```
-1. DB schema + Docker compose
+1. DB schema + Docker compose          ✓ done
         │
         ▼
-2. Blurb modifications
+2. Blurb modifications                 ✓ done
         │
         ▼
-3. Conductor pipeline (discover → download → transcribe → process)
-        │
-        ▼  ← real data exists in postgres here
-           (can seed a few chunks manually to develop search against before pipeline is fully done)
-4. Conductor search API
+3. Conductor pipeline                  ✓ done
+   (discover → download → transcribe → process)
         │
         ▼
-5. Frontend refactor
+4. Conductor search API                ✓ done
+        │
+        ▼
+5. Frontend refactor                   ✓ done
+   (MeiliSearch → conductor, admin panel)
 ```
 
 ---
@@ -149,8 +168,7 @@ MeiliSearch data will not be migrated — the shape is different and metadata is
 ## Docker Compose (all services)
 
 - `postgres` — the DB
-- `temporal` + `temporal-ui` — workflow engine (OSS, self-hosted) and its dashboard
-- `palpal-conductor` — FastAPI app + Temporal worker
-- `palpal-frontend` — Next.js app
+- `palpal-conductor` — FastAPI app + APScheduler pipeline
+- `palpal-frontend` — Next.js app (port 3001)
 
 Note: palpal-blurb runs natively on the host machine and is not in the compose stack.

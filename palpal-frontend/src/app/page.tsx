@@ -13,7 +13,7 @@ import { SortDirection } from '@/components/SortFilter';
 import { GroupByOption } from '@/components/GroupByFilter';
 import { useDebounce } from '@/hooks/useDebounce';
 import { SearchHit, ErrorState } from '@/types';
-import { loadUserPreferences, saveUserPreferences, type SearchMode } from '@/lib/cookies';
+import { loadUserPreferences, saveUserPreferences } from '@/lib/cookies';
 import { getAllStaticPodcastConfigs } from '@/lib/static-podcasts';
 
 // SearchHit interface moved to @/types
@@ -72,7 +72,6 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const [totalHits, setTotalHits] = useState(0);
   const [searchError, setSearchError] = useState<ErrorState | null>(null);
-  const [searchMode, setSearchMode] = useState<SearchMode>('hybrid');
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [selectedPodcasts, setSelectedPodcasts] = useState<string[]>([]);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
@@ -219,8 +218,6 @@ export default function Home() {
     let initialPodcasts = enabledPodcastIds;
 
     if (savedPreferences) {
-      // Load search mode and selected podcasts from preferences
-      setSearchMode(savedPreferences.searchMode);
       if (savedPreferences.selectedPodcasts) {
         initialPodcasts = savedPreferences.selectedPodcasts;
       }
@@ -272,12 +269,9 @@ export default function Home() {
   // Save preferences to cookies when they change (but only after initial load)
   useEffect(() => {
     if (preferencesLoaded) {
-      saveUserPreferences({
-        searchMode,
-        selectedPodcasts
-      });
+      saveUserPreferences({ selectedPodcasts });
     }
-  }, [searchMode, selectedPodcasts, preferencesLoaded]);
+  }, [selectedPodcasts, preferencesLoaded]);
 
   // Update URL when search query changes
   useEffect(() => {
@@ -328,41 +322,20 @@ export default function Home() {
     setSearchError(null);
 
     try {
-      // If no podcasts selected, search all enabled podcasts
-      const enabledPodcasts = podcasts.filter(p => p.enabled);
-      const enabledSelectedPodcasts = selectedPodcasts.filter(id => {
-        const podcast = podcasts.find(p => p.id === id);
-        return podcast && podcast.enabled;
-      });
-
-      // Convert podcast IDs to index names
-      const podcastsToSearch = enabledSelectedPodcasts.length === 0 ? enabledPodcasts : enabledSelectedPodcasts.map(id => podcasts.find(p => p.id === id)).filter(Boolean);
-      const indexesToSearch: string[] = [];
-
-      for (const podcast of podcastsToSearch) {
-        if (podcast && podcast.sources) {
-          for (const source of podcast.sources) {
-            if (source.enabled) {
-              // Generate index name: {podcast_id}_{source_name_normalized}
-              const normalizedSourceName = source.name.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '');
-              const indexName = `${podcast.id}_${normalizedSourceName}`;
-              indexesToSearch.push(indexName);
-            }
-          }
-        }
-      }
-      const indexes = JSON.stringify(indexesToSearch);
+      // If exactly one podcast is selected, pass it as podcast_id; otherwise search all
+      const enabledPodcastIds = podcasts.filter(p => p.enabled).map(p => p.id);
+      const enabledSelected = selectedPodcasts.filter(id => enabledPodcastIds.includes(id));
+      const podcast_id = enabledSelected.length === 1 ? enabledSelected[0] : undefined;
 
       // Build query parameters for sorting and filtering
       const searchParams = new URLSearchParams({
         q: query,
         limit: '20',
-        mode: searchMode,
-        indexes: indexes,
         sort: sortBy,
-        sortDirection: sortDirection,
         dateRange: dateRange
       });
+
+      if (podcast_id) searchParams.set('podcast_id', podcast_id);
 
       // Add custom date parameters if date range is custom
       if (dateRange === 'custom' && customStartDate && customEndDate) {
@@ -386,7 +359,7 @@ export default function Home() {
     } finally {
       setIsSearching(false);
     }
-  }, [searchMode, selectedPodcasts, podcasts, sortBy, sortDirection, dateRange, customStartDate, customEndDate]);
+  }, [selectedPodcasts, podcasts, sortBy, sortDirection, dateRange, customStartDate, customEndDate]);
 
   // Handle immediate search (e.g., on Enter key)
   const handleImmediateSearch = (query: string) => {

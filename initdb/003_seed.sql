@@ -64,53 +64,56 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- SOURCES
+-- max_new caps how many new episodes are queued per discovery run.
+-- Prevents a fresh DB (or a new source) from spawning hundreds of workflows at once.
+-- Remove max_new from a source once its backlog has been intentionally processed.
 INSERT INTO sources (podcast_id, name, site, type, url, fetch_url, description, filters, enabled)
 VALUES
     -- pal
     (
         'pal', 'PALYoutubePlaylist', 'youtube', 'playlist',
         'https://youtu.be/to1SiPIV41c?list=PL5B0Y8l1lpJoXIvq-qr5eD0OfD2McKB_o',
-        NULL, NULL, '{}', TRUE
+        NULL, NULL, '{"max_new": 1}', TRUE
     ),
     (
         'pal', 'PALPatreon', 'patreon', 'user',
         'https://www.patreon.com/podcastaboutlist',
         'https://www.patreon.com/collection/868040',
-        NULL, '{}', TRUE
+        NULL, '{"max_new": 1}', TRUE
     ),
     -- joe-box
     (
         'joe-box', 'JoeBoxSeason1', 'youtube', 'playlist',
         'https://youtu.be/nl_1HxPRQPY?list=PLXyeAGcWg3Gahw48EXoRHY297G-0d-7CL',
-        NULL, 'Season 1', '{}', TRUE
+        NULL, 'Season 1', '{"max_new": 1}', TRUE
     ),
     (
         'joe-box', 'JoeBoxSeason2', 'youtube', 'playlist',
         'https://youtu.be/H9QCuVAnP2w?list=PLXyeAGcWg3GZdKX4Facr6yxEdj39LEdXe',
-        NULL, 'Season 2', '{}', TRUE
+        NULL, 'Season 2', '{"max_new": 1}', TRUE
     ),
     -- fear-and
     (
         'fear-and', 'FearAndYoutubePlaylist', 'youtube', 'playlist',
         'https://youtu.be/1YOIMoHF798?list=PLmijiMQBvw1LGakNWhfCedRxPD_apQ1H1',
-        NULL, NULL, '{}', TRUE
+        NULL, NULL, '{"max_new": 1}', TRUE
     ),
     -- the-yard
     (
         'the-yard', 'TheYardYoutubePlaylist', 'youtube', 'playlist',
         'https://youtu.be/pBKAkrBrdkc?list=PLtiWkKVZkCXVu_3pkKsQviOZ7r_9b39JN',
-        NULL, NULL, '{}', TRUE
+        NULL, NULL, '{"max_new": 1}', TRUE
     ),
     -- wine-about-it
     (
         'wine-about-it', 'WineAboutItYoutubePlaylist', 'youtube', 'playlist',
         'https://youtu.be/XWx6XJ2lk4s?list=PLpUEJXG2zlWQA3VOUFwUQXIrrs4zrBNDI',
-        NULL, NULL, '{}', TRUE
+        NULL, NULL, '{"max_new": 1}', TRUE
     ),
     -- joy-tactics
     (
         'joy-tactics', 'JoyTacticsYoutubeChannel', 'youtube', 'channel',
         'https://www.youtube.com/@joytactics',
-        NULL, NULL, '{"title_exclude":["teaser"]}', TRUE
+        NULL, NULL, '{"title_exclude": ["teaser"], "max_new": 1}', TRUE
     )
 ON CONFLICT (podcast_id, name) DO NOTHING;

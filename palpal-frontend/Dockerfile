@@ -14,11 +14,9 @@ FROM base AS builder
 WORKDIR /app
 
 # Accept build-time arguments
-ARG NEXT_PUBLIC_MEILISEARCH_HOST
 ARG NEXT_TELEMETRY_DISABLED
 
 # Set environment variables for build
-ENV NEXT_PUBLIC_MEILISEARCH_HOST=$NEXT_PUBLIC_MEILISEARCH_HOST
 ENV NEXT_TELEMETRY_DISABLED=$NEXT_TELEMETRY_DISABLED
 
 COPY --from=deps /app/node_modules ./node_modules

@@ -18,7 +18,7 @@ const nextConfig = {
           style-src 'self' 'unsafe-inline' fonts.googleapis.com;
           img-src 'self' data: https: blob:;
           font-src 'self' data: fonts.gstatic.com;
-          connect-src 'self' ${process.env.NEXT_PUBLIC_MEILISEARCH_HOST || 'http://localhost:7700'} https://www.youtube.com https://patreon.com https://www.twitch.tv https://ko-fi.com https://storage.ko-fi.com;
+          connect-src 'self' https://www.youtube.com https://patreon.com https://www.twitch.tv https://ko-fi.com https://storage.ko-fi.com;
           frame-src https://www.youtube.com https://ko-fi.com;
           object-src 'none';
           base-uri 'self';

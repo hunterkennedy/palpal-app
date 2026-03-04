@@ -38,12 +38,9 @@ CREATE TABLE IF NOT EXISTS episodes (
     video_id         TEXT        NOT NULL,
     title            TEXT        NOT NULL DEFAULT '',
     publication_date DATE,
-    status           TEXT        NOT NULL DEFAULT 'discovered'
-                                 CHECK (status IN (
-                                     'discovered','downloading','downloaded',
-                                     'transcribing','transcribed','processed','failed'
-                                 )),
     audio_path       TEXT,
+    status           TEXT        NOT NULL DEFAULT 'discovered'
+                     CHECK (status IN ('discovered','downloading','transcribing','processed','failed')),
     error_message    TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -51,9 +48,17 @@ CREATE TABLE IF NOT EXISTS episodes (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_source_video ON episodes(source_id, video_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_source_id  ON episodes(source_id);
-CREATE INDEX IF NOT EXISTS idx_episodes_status     ON episodes(status);
 CREATE INDEX IF NOT EXISTS idx_episodes_pub_date   ON episodes(publication_date DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_episodes_video_id   ON episodes(video_id);
+CREATE INDEX IF NOT EXISTS idx_episodes_status     ON episodes(status);
+
+-- RAW TRANSCRIPTS (source of truth for re-chunking)
+CREATE TABLE IF NOT EXISTS transcripts (
+    episode_id  UUID        PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE,
+    language    TEXT,
+    segments    JSONB       NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- TRANSCRIPT CHUNKS
 CREATE TABLE IF NOT EXISTS transcript_chunks (
@@ -89,9 +94,8 @@ CREATE TABLE IF NOT EXISTS transcript_chunks (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_search_vector  ON transcript_chunks USING GIN(search_vector);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_episode_chunk ON transcript_chunks(episode_id, chunk_index);
-CREATE INDEX IF NOT EXISTS idx_chunks_podcast_id     ON transcript_chunks(podcast_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_pub_date       ON transcript_chunks(publication_date DESC NULLS LAST);
-CREATE INDEX IF NOT EXISTS idx_chunks_episode_id     ON transcript_chunks(episode_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_duration       ON transcript_chunks(duration DESC);
 CREATE INDEX IF NOT EXISTS idx_chunks_podcast_pub    ON transcript_chunks(podcast_id, publication_date DESC NULLS LAST);
 
 -- FTS TRIGGER

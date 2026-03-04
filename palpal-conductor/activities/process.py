@@ -1,0 +1,132 @@
+import logging
+
+import db
+
+logger = logging.getLogger(__name__)
+
+
+def chunk_segments(segments: list[dict], target_words: int = 50) -> list[list[dict]]:
+    """Group Whisper segments into ~target_words-word chunks."""
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    word_count = 0
+    for seg in segments:
+        current.append(seg)
+        word_count += len(seg["text"].split())
+        if word_count >= target_words:
+            chunks.append(current)
+            current = []
+            word_count = 0
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def format_timestamp(seconds: float) -> str:
+    """Format seconds as MM:SS."""
+    total_seconds = int(seconds)
+    minutes = total_seconds // 60
+    secs = total_seconds % 60
+    return f"{minutes:02d}:{secs:02d}"
+
+
+async def process_transcript(episode_id: str, transcript: dict) -> None:
+    """
+    Chunk the transcript segments and bulk-insert into transcript_chunks.
+    Fetches denormalized fields (podcast_id, podcast_name, source_name, etc.)
+    from the DB.
+    """
+    pool = db.get_pool()
+
+    row = await pool.fetchrow(
+        """
+        SELECT
+            e.video_id,
+            e.title       AS episode_title,
+            e.publication_date,
+            s.name        AS source_name,
+            s.podcast_id,
+            p.display_name AS podcast_name
+        FROM episodes e
+        JOIN sources s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        WHERE e.id = $1::uuid
+        """,
+        episode_id,
+    )
+    if not row:
+        raise RuntimeError(f"Episode {episode_id} not found in DB")
+
+    video_id: str = row["video_id"]
+    episode_title: str = row["episode_title"]
+    publication_date = row["publication_date"]
+    source_name: str = row["source_name"]
+    podcast_id: str = row["podcast_id"]
+    podcast_name: str = row["podcast_name"]
+
+    segments: list[dict] = transcript.get("segments", [])
+    if not segments:
+        logger.warning(
+            f"Episode {episode_id}: transcript has no segments"
+        )
+        return
+
+    chunks = chunk_segments(segments)
+    logger.info(
+        f"Episode {episode_id}: {len(segments)} segments → {len(chunks)} chunks"
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO transcripts (episode_id, language, segments)
+                VALUES ($1::uuid, $2, $3::jsonb)
+                ON CONFLICT (episode_id) DO UPDATE
+                    SET language = EXCLUDED.language,
+                        segments = EXCLUDED.segments
+                """,
+                episode_id,
+                transcript.get("language"),
+                transcript.get("segments", []),
+            )
+
+            for chunk_index, chunk_segs in enumerate(chunks):
+                text = " ".join(seg["text"].strip() for seg in chunk_segs)
+                start_time = float(chunk_segs[0]["start"])
+                end_time = float(chunk_segs[-1]["end"])
+                duration = end_time - start_time
+                start_formatted = format_timestamp(start_time)
+                start_minutes = start_time / 60
+                word_count = len(text.split())
+
+                await conn.execute(
+                    """
+                    INSERT INTO transcript_chunks (
+                        episode_id, chunk_index,
+                        text, word_count,
+                        start_time, end_time, duration,
+                        start_formatted, start_minutes,
+                        podcast_id, podcast_name, source_name,
+                        episode_title, video_id, publication_date
+                    ) VALUES (
+                        $1::uuid, $2,
+                        $3, $4,
+                        $5, $6, $7,
+                        $8, $9,
+                        $10, $11, $12,
+                        $13, $14, $15::date
+                    )
+                    ON CONFLICT (episode_id, chunk_index) DO NOTHING
+                    """,
+                    episode_id, chunk_index,
+                    text, word_count,
+                    start_time, end_time, duration,
+                    start_formatted, start_minutes,
+                    podcast_id, podcast_name, source_name,
+                    episode_title, video_id, publication_date,
+                )
+
+    logger.info(
+        f"Episode {episode_id}: inserted {len(chunks)} transcript chunks"
+    )
