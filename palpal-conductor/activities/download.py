@@ -2,6 +2,7 @@ import asyncio
 import glob
 import logging
 import os
+from datetime import date as Date
 
 import db
 
@@ -35,17 +36,20 @@ async def download_audio(episode_id: str) -> str:
         "-x",
         "--audio-format", "best",
         "--no-warnings",
+        "--print", "upload_date",
+        "--no-simulate",
         "-o", output_template,
         video_url,
     ]
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        stdout=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
 
     await proc.wait()
+    stdout_bytes = await proc.stdout.read()
     stderr_bytes = await proc.stderr.read()
     if proc.returncode != 0:
         raise RuntimeError(
@@ -63,9 +67,22 @@ async def download_audio(episode_id: str) -> str:
     file_path = matches[0]
     logger.info(f"Downloaded to {file_path}")
 
+    # Parse upload_date from yt-dlp output ("YYYYMMDD"), backfill if missing in DB
+    pub_date: Date | None = None
+    upload_date = stdout_bytes.decode().strip()
+    if len(upload_date) == 8 and upload_date.isdigit():
+        pub_date = Date(int(upload_date[:4]), int(upload_date[4:6]), int(upload_date[6:8]))
+
     await pool.execute(
-        "UPDATE episodes SET audio_path = $1, updated_at = NOW() WHERE id = $2::uuid",
+        """
+        UPDATE episodes
+        SET audio_path = $1,
+            publication_date = COALESCE(publication_date, $2::date),
+            updated_at = NOW()
+        WHERE id = $3::uuid
+        """,
         file_path,
+        pub_date,
         episode_id,
     )
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -91,6 +91,10 @@ export default function Home() {
 
   // Load podcasts statically at build time
   const podcasts = getAllStaticPodcastConfigs();
+  const enabledPodcastIds = useMemo(
+    () => podcasts.filter(p => p.enabled).map(p => p.id).sort(),
+    [podcasts]
+  );
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
@@ -114,9 +118,12 @@ export default function Home() {
       }
     }
 
-    // Update podcasts parameter
+    // Update podcasts parameter — omit from URL when all enabled podcasts are selected (default)
     if (params.podcasts !== undefined) {
-      if (params.podcasts.length > 0 && JSON.stringify(params.podcasts) !== JSON.stringify(['pal'])) {
+      const sorted = [...params.podcasts].sort();
+      const isDefault = sorted.length === enabledPodcastIds.length &&
+        sorted.every((id, i) => id === enabledPodcastIds[i]);
+      if (params.podcasts.length > 0 && !isDefault) {
         url.searchParams.set('podcasts', params.podcasts.join(','));
       } else {
         url.searchParams.delete('podcasts');
@@ -153,7 +160,7 @@ export default function Home() {
     // Update URL without triggering a page reload
     const newURL = url.pathname + (url.search ? url.search : '');
     router.replace(newURL, { scroll: false });
-  }, [router]);
+  }, [router, enabledPodcastIds]);
 
   const friendlyPlaceholders = [
     "there's multiple...",
@@ -180,7 +187,7 @@ export default function Home() {
     if (window.innerWidth < 768) {
       setTimeout(() => {
         const rect = inputElement.getBoundingClientRect();
-        const offsetTop = window.pageYOffset + rect.top;
+        const offsetTop = window.scrollY + rect.top;
         // Scroll so search bar is about 80px from top (leaving some space)
         window.scrollTo({
           top: offsetTop - 80,
@@ -254,7 +261,7 @@ export default function Home() {
       setSortDirection(urlSortDirection);
     }
 
-    if (urlDateRange && ['all', 'day', 'week', 'month', 'year', 'custom'].includes(urlDateRange)) {
+    if (urlDateRange && ['all', 'last_week', 'last_month', 'last_3_months', 'last_year', 'custom'].includes(urlDateRange)) {
       setDateRange(urlDateRange);
     }
 
@@ -273,40 +280,12 @@ export default function Home() {
     }
   }, [selectedPodcasts, preferencesLoaded]);
 
-  // Update URL when search query changes
+  // Sync all filter state to the URL in one effect to avoid multiple history entries
   useEffect(() => {
     if (preferencesLoaded) {
-      updateURL({ query: searchQuery });
+      updateURL({ query: searchQuery, podcasts: selectedPodcasts, sort: sortBy, sortDirection, dateRange, groupBy });
     }
-  }, [searchQuery, preferencesLoaded, updateURL]);
-
-  // Update URL when selected podcasts change
-  useEffect(() => {
-    if (preferencesLoaded) {
-      updateURL({ podcasts: selectedPodcasts });
-    }
-  }, [selectedPodcasts, preferencesLoaded, updateURL]);
-
-  // Update URL when sort options change
-  useEffect(() => {
-    if (preferencesLoaded) {
-      updateURL({ sort: sortBy, sortDirection });
-    }
-  }, [sortBy, sortDirection, preferencesLoaded, updateURL]);
-
-  // Update URL when date range changes
-  useEffect(() => {
-    if (preferencesLoaded) {
-      updateURL({ dateRange });
-    }
-  }, [dateRange, preferencesLoaded, updateURL]);
-
-  // Update URL when group by option changes
-  useEffect(() => {
-    if (preferencesLoaded) {
-      updateURL({ groupBy });
-    }
-  }, [groupBy, preferencesLoaded, updateURL]);
+  }, [searchQuery, selectedPodcasts, sortBy, sortDirection, dateRange, groupBy, preferencesLoaded, updateURL]);
 
   // Reusable search function
   const performSearch = useCallback(async (query: string) => {
@@ -332,6 +311,7 @@ export default function Home() {
         q: query,
         limit: '20',
         sort: sortBy,
+        sortDirection,
         dateRange: dateRange
       });
 
@@ -433,10 +413,9 @@ export default function Home() {
                 width={160}
                 height={160}
                 priority
-                className="h-20 sm:h-24 md:h-28 drop-shadow-2xl animate-gentleFloat transition-transform duration-300 group-hover:scale-105"
+                className="h-20 sm:h-24 md:h-28 drop-shadow-2xl"
                 style={{ width: 'auto', height: 'auto' }}
               />
-              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-orange-400/20 to-yellow-400/10 blur-xl -z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-500 group-hover:animate-pulseGlow"></div>
             </div>
           </div>
           <p className="text-lg text-body max-w-xl mx-auto font-medium leading-relaxed mb-8">
@@ -464,7 +443,6 @@ export default function Home() {
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
             onCustomDateChange={(startDate, endDate) => {
-              console.log('Custom date change received:', startDate, endDate);
               setCustomStartDate(startDate);
               setCustomEndDate(endDate);
             }}
@@ -494,33 +472,13 @@ export default function Home() {
       {/* Footer */}
       <footer className="footer-container">
         <div className="footer-content">
-          <div className="flex flex-col items-center space-y-6 text-center">
-            <div>
-              <p className="text-meta text-lg">
-                Made by{' '}
-                <Link
-                  href="/about"
-                  className="nav-link-accent hover:text-orange-300 transition-colors duration-200"
-                >
-                  Hunter Kennedy
-                </Link>
-              </p>
-            </div>
-
-            <div className="flex space-x-8 text-sm">
-              <Link
-                href="/tos"
-                className="nav-link hover:text-orange-300 transition-colors duration-200"
-              >
-                Terms of Service
-              </Link>
-              <Link
-                href="/pp"
-                className="nav-link hover:text-orange-300 transition-colors duration-200"
-              >
-                Privacy Policy
-              </Link>
-            </div>
+          <div className="flex space-x-8 text-sm justify-center">
+            <Link href="/tos" className="nav-link hover:text-orange-300 transition-colors duration-200">
+              Terms of Service
+            </Link>
+            <Link href="/pp" className="nav-link hover:text-orange-300 transition-colors duration-200">
+              Privacy Policy
+            </Link>
           </div>
         </div>
       </footer>

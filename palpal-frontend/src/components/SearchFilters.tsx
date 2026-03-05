@@ -11,8 +11,6 @@ interface SearchFiltersProps {
   onSortChange: (sort: SortOption) => void;
   dateRange: DateRange;
   onDateRangeChange: (range: DateRange) => void;
-  onePerEpisode: boolean;
-  onOnePerEpisodeChange: (enabled: boolean) => void;
   className?: string;
 }
 
@@ -21,8 +19,6 @@ export default function SearchFilters({
   onSortChange,
   dateRange,
   onDateRangeChange,
-  onePerEpisode,
-  onOnePerEpisodeChange,
   className = ''
 }: SearchFiltersProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -58,7 +54,6 @@ export default function SearchFilters({
     let count = 0;
     if (sortBy !== 'relevance') count++;
     if (dateRange !== 'all') count++;
-    if (onePerEpisode) count++;
     return count;
   };
 
@@ -133,31 +128,6 @@ export default function SearchFilters({
               </div>
             </div>
 
-            {/* One Per Episode Toggle */}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-3">Results</label>
-              <button
-                onClick={() => onOnePerEpisodeChange(!onePerEpisode)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${
-                  onePerEpisode
-                    ? 'bg-orange-600 text-white'
-                    : 'hover:bg-gray-800 text-gray-300'
-                }`}
-              >
-                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
-                  onePerEpisode ? 'border-white bg-white' : 'border-gray-400'
-                }`}>
-                  {onePerEpisode && (
-                    <div className="w-2 h-2 bg-orange-600 rounded-sm" />
-                  )}
-                </div>
-                <span className="text-sm">One result per episode</span>
-                {onePerEpisode && (
-                  <span className="ml-auto text-xs opacity-75">(active)</span>
-                )}
-              </button>
-            </div>
-
             {/* Reset Button */}
             {activeCount > 0 && (
               <div className="pt-4 border-t border-gray-700">
@@ -165,7 +135,6 @@ export default function SearchFilters({
                   onClick={() => {
                     onSortChange('relevance');
                     onDateRangeChange('all');
-                    onOnePerEpisodeChange(false);
                   }}
                   className="w-full px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
                 >

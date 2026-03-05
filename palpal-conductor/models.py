@@ -4,13 +4,6 @@ from typing import Optional
 from pydantic import BaseModel
 
 
-class BlurbWebhookPayload(BaseModel):
-    """Payload delivered by blurb via POST /blurb/webhook/{job_id}."""
-    job_id: str
-    status: str                  # "completed" | "failed"
-    result: Optional[dict] = None  # {text, language, segments} on success
-    error: Optional[str] = None    # set on failure
-
 
 class EpisodeExistsResponse(BaseModel):
     exists: bool
@@ -64,11 +57,18 @@ class EpisodeInfo(BaseModel):
     publication_date: Optional[Date]
     status: str
     error_message: Optional[str]
+    blacklisted: bool
     podcast_id: str
     podcast_name: str
     source_name: str
     chunk_count: int
+    duration_seconds: Optional[float]
     youtube_url: str
+
+
+class BulkActionRequest(BaseModel):
+    episode_ids: list[str]
+    action: str  # "retry" | "process"
 
 
 class PodcastResult(BaseModel):

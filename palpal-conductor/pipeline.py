@@ -4,29 +4,59 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import db
+import pipeline_settings as settings
 from activities.discovery import get_enabled_youtube_sources, discover_youtube_source
 from activities.download import download_audio
-from activities.blurb import submit_to_blurb
+from activities.blurb import transcribe_episode
+from activities.process import process_transcript
 
 logger = logging.getLogger(__name__)
 
 _download_sem = asyncio.Semaphore(1)
+_transcribe_sem = asyncio.Semaphore(1)
 _scheduler = AsyncIOScheduler()
+
+
+async def submit_downloaded_episode(episode_id: str) -> None:
+    """Transcribe a downloaded episode via blurb (polling) and process the result."""
+    pool = db.get_pool()
+    await pool.execute(
+        "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
+    )
+    async with _transcribe_sem:
+        try:
+            result = await transcribe_episode(episode_id)
+            await process_transcript(episode_id, result)
+            await pool.execute(
+                "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
+            )
+            logger.info(f"Episode {episode_id} transcribed and processed successfully")
+        except Exception as exc:
+            logger.error(f"Transcription failed for {episode_id}: {exc}")
+            await pool.execute(
+                "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+                str(exc), episode_id,
+            )
 
 
 async def run_episode(episode_id: str) -> None:
     pool = db.get_pool()
     try:
+        # Mark downloading immediately so it's visible in admin while waiting for the semaphore
+        await pool.execute(
+            "UPDATE episodes SET status='downloading' WHERE id=$1::uuid", episode_id
+        )
         async with _download_sem:
-            await pool.execute(
-                "UPDATE episodes SET status='downloading' WHERE id=$1::uuid", episode_id
-            )
             await download_audio(episode_id)
 
+        # Safe checkpoint: audio is on disk
         await pool.execute(
-            "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
+            "UPDATE episodes SET status='downloaded' WHERE id=$1::uuid", episode_id
         )
-        await submit_to_blurb(episode_id)
+        if await settings.get("auto_transcribe"):
+            await submit_downloaded_episode(episode_id)
+        else:
+            logger.info("Episode %s downloaded; auto_transcribe is off, stopping here", episode_id)
 
     except Exception as exc:
         logger.error(f"Episode {episode_id} failed: {exc}")
@@ -58,7 +88,7 @@ async def run_discovery(
             )
             for ep in new_episodes:
                 total_new.append(ep["episode_id"])
-                if auto_queue:
+                if auto_queue and await settings.get("auto_download"):
                     asyncio.create_task(run_episode(ep["episode_id"]))
         except Exception as exc:
             logger.error(f"Discovery failed for source {source['id']}: {exc}")
@@ -66,32 +96,71 @@ async def run_discovery(
     return {"sources": len(sources), "new_episodes": len(total_new), "queued": auto_queue}
 
 
+async def recover_interrupted_downloads() -> None:
+    """
+    On startup, reset any episodes stuck in 'downloading' back to 'discovered'.
+
+    If the conductor was killed or restarted while a download was in progress,
+    the episode stays in 'downloading' indefinitely because there is no running
+    task to advance it. Resetting to 'discovered' lets the next manual trigger
+    or scheduled discovery pick it up cleanly.
+    """
+    pool = db.get_pool()
+    r1 = await pool.execute(
+        """
+        UPDATE episodes
+        SET status = 'discovered', error_message = 'Reset: download interrupted by conductor restart'
+        WHERE status = 'downloading' AND blacklisted = FALSE
+        """
+    )
+    r2 = await pool.execute(
+        """
+        UPDATE episodes
+        SET status = 'downloaded', error_message = 'Reset: transcription interrupted by conductor restart'
+        WHERE status = 'transcribing' AND audio_path IS NOT NULL AND blacklisted = FALSE
+        """
+    )
+    n1, n2 = int(r1.split()[-1]), int(r2.split()[-1])
+    if n1 or n2:
+        logger.warning("Startup recovery: reset %d downloading → discovered, %d transcribing → downloaded", n1, n2)
+    else:
+        logger.info("Startup recovery: no interrupted episodes found")
+
+
 async def resubmit_stuck() -> None:
     """
     Resubmit episodes stuck in transcribing.
 
-    Runs daily at 10 AM, when blurb is expected to be back online after the
-    PC has been off overnight. Episodes stay in 'transcribing' until blurb
-    webhooks back — this job catches anything that was left hanging.
+    Runs daily at 10 AM. With polling-based blurb, a stuck 'transcribing'
+    episode means the conductor task died mid-poll. Reset to 'downloaded'
+    and resubmit so they get picked up by the transcription semaphore.
     """
     pool = db.get_pool()
     rows = await pool.fetch(
-        "SELECT id FROM episodes WHERE status='transcribing'"
+        "SELECT id FROM episodes WHERE status='transcribing' AND blacklisted = FALSE"
     )
     if not rows:
-        logger.info("Recovery: no stuck episodes")
+        logger.info("Recovery: no stuck transcribing episodes")
         return
     logger.info(f"Recovery: resubmitting {len(rows)} stuck episode(s)")
     for row in rows:
         logger.warning(f"Resubmitting stuck episode {row['id']}")
-        try:
-            await submit_to_blurb(str(row["id"]))
-        except Exception as exc:
-            logger.error(f"Resubmit failed for {row['id']}: {exc}")
+        await pool.execute(
+            "UPDATE episodes SET status='downloaded' WHERE id=$1::uuid", row['id']
+        )
+        asyncio.create_task(submit_downloaded_episode(str(row["id"])))
+
+
+async def scheduled_discovery() -> None:
+    """Scheduled wrapper — skipped when auto_discover is off."""
+    if not await settings.get("auto_discover"):
+        logger.info("Scheduled discovery skipped (auto_discover=false)")
+        return
+    await run_discovery(auto_queue=True)
 
 
 def start_scheduler() -> None:
-    _scheduler.add_job(run_discovery, "interval", hours=24, id="discovery")
+    _scheduler.add_job(scheduled_discovery, "interval", hours=24, id="discovery")
     # Recovery runs at 10 AM daily — blurb lives on a PC that goes offline
     # overnight and is not expected back until the next morning.
     _scheduler.add_job(resubmit_stuck, "cron", hour=10, minute=0, id="recovery")

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { createHash } from 'crypto';
 
@@ -10,7 +10,6 @@ export async function GET() {
     const content = await readFile(contentPath, 'utf-8');
 
     // Create version hash from content + file modification time
-    const { stat } = await import('fs/promises');
     const stats = await stat(contentPath);
     const versionInput = content + stats.mtime.getTime().toString();
     const version = createHash('md5').update(versionInput).digest('hex').substring(0, 8);

@@ -23,6 +23,7 @@ export interface TranscriptDocument {
   duration: number;
   chunk_index: number;
   start_formatted: string;
+  end_formatted: string;
   start_minutes: number;
 }
 

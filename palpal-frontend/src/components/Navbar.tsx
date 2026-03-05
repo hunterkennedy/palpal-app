@@ -29,7 +29,7 @@ export default function Navbar({ currentPage }: NavbarProps) {
           alt="palpal"
           width={currentPage === 'search' ? 32 : 80}
           height={currentPage === 'search' ? 32 : 40}
-          className={`drop-shadow-lg hover:scale-105 transition-transform duration-200 ${
+          className={`drop-shadow-lg ${
             currentPage === 'search'
               ? 'w-5 h-5 md:w-8 md:h-8 mx-auto'
               : 'h-6 md:h-10 w-auto'

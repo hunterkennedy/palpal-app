@@ -201,7 +201,7 @@ export default function SearchBar({
             className="absolute right-7 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-orange-300 transition-all duration-200 p-2.5 rounded-full hover:bg-orange-400/10 group"
             aria-label="Clear search"
           >
-            <X className="w-6 h-6 group-hover:scale-110 transition-transform duration-200" />
+            <X className="w-6 h-6" />
           </button>
         )}
       </form>

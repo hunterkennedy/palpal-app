@@ -12,9 +12,19 @@ export const searchSchema = z.object({
 });
 
 export const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+let lastPrune = Date.now();
 
 export function checkRateLimit(ip: string, maxRequests = 100, windowMs = 60000): boolean {
   const now = Date.now();
+
+  // Prune expired entries every 5 minutes to prevent unbounded growth
+  if (now - lastPrune > 5 * 60 * 1000) {
+    for (const [key, val] of rateLimitMap) {
+      if (now > val.resetTime) rateLimitMap.delete(key);
+    }
+    lastPrune = now;
+  }
+
   const userLimit = rateLimitMap.get(ip);
 
   if (!userLimit || now > userLimit.resetTime) {

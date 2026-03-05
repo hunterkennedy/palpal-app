@@ -72,7 +72,7 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
               onClick={handleClearAll}
               className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 text-gray-200 hover:bg-red-500/10 hover:text-red-300 group"
             >
-              <Trash2 className="w-4 h-4 group-hover:scale-110 transition-transform duration-200" />
+              <Trash2 className="w-4 h-4 " />
               Clear All
             </button>
           )}
@@ -142,7 +142,7 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
                         }`}
                         aria-label={`${getWatchText(chunk).replace('Watch on ', `Watch "${chunk.episode_title}" on `)}`}
                       >
-                        <Play className="w-4 h-4 group-hover:scale-110 transition-transform duration-200" aria-hidden="true" />
+                        <Play className="w-4 h-4 " aria-hidden="true" />
                         <span>{getWatchText(chunk)}</span>
                       </a>
 
@@ -161,7 +161,7 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
                       className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-gray-900 text-gray-200 hover:bg-red-500/10 hover:text-red-300 group"
                       aria-label="Remove from saved"
                     >
-                      <BookmarkX className="w-4 h-4 group-hover:scale-110 transition-transform duration-200" />
+                      <BookmarkX className="w-4 h-4 " />
                       <span>Remove</span>
                     </button>
                   </div>

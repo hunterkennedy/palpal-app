@@ -1,7 +1,8 @@
 /**
  * Proxy for conductor admin endpoints.
  * Forwards GET/POST requests to /admin/... on conductor with the admin key.
- * The admin page is localhost-only so we don't add frontend auth here.
+ * NOTE: This route is publicly reachable. Security relies on CONDUCTOR_ADMIN_KEY
+ * being forwarded to conductor. Consider adding session-based auth here.
  */
 import { NextRequest, NextResponse } from 'next/server';
 

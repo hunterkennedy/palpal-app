@@ -40,8 +40,9 @@ CREATE TABLE IF NOT EXISTS episodes (
     publication_date DATE,
     audio_path       TEXT,
     status           TEXT        NOT NULL DEFAULT 'discovered'
-                     CHECK (status IN ('discovered','downloading','transcribing','processed','failed')),
+                     CHECK (status IN ('discovered','downloading','downloaded','transcribing','processed','failed')),
     error_message    TEXT,
+    blacklisted      BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -136,3 +137,16 @@ CREATE TRIGGER trig_sources_updated_at
 DROP TRIGGER IF EXISTS trig_episodes_updated_at ON episodes;
 CREATE TRIGGER trig_episodes_updated_at
     BEFORE UPDATE ON episodes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- PIPELINE SETTINGS
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT        PRIMARY KEY,
+    value      TEXT        NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO settings (key, value) VALUES
+    ('auto_discover',   'true'),
+    ('auto_download',   'true'),
+    ('auto_transcribe', 'true')
+ON CONFLICT (key) DO NOTHING;

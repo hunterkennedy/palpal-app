@@ -33,13 +33,21 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  const allowedOrigins = process.env.NODE_ENV === 'production'
+    ? [process.env.ALLOWED_ORIGINS?.split(',') || []].flat()
+    : ['http://localhost:3000', 'http://localhost:3001'];
+
+  const isAllowedOrigin = !origin || allowedOrigins.includes(origin);
+
   return new NextResponse(null, {
     status: 200,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': isAllowedOrigin ? (origin || '*') : 'null',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
     },
   });
 }

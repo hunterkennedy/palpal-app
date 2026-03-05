@@ -101,7 +101,7 @@ export default function SearchResults({ query, results, totalHits, error, isSear
         episode_title: hit.episode_title,
         video_id: hit.video_id,
         start_formatted: hit.start_formatted,
-        end_formatted: hit.start_formatted,
+        end_formatted: hit.end_formatted,
         podcast_name: hit.podcast_name,
         source_name: hit.source_name
       };

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { dismissWhatsNew, isWhatsNewDismissed } from '@/lib/cookies';
 
 interface WhatsNewData {
@@ -66,13 +67,10 @@ export default function WhatsNewBubble() {
         {/* Close button */}
         <button
           onClick={handleDismiss}
-          className="absolute top-2 right-2 z-[10000] p-1.5 rounded-lg transition-all duration-200 hover:bg-white/10 cursor-pointer"
-          style={{ color: 'var(--text-muted)', pointerEvents: 'auto' }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)' }}
+          className="absolute top-2 right-2 z-[10000] p-1.5 rounded-lg transition-colors duration-200 hover:bg-white/10 text-gray-400 hover:text-white cursor-pointer"
           aria-label="Dismiss what's new"
         >
-          <X className="w-3.5 h-3.5" style={{ pointerEvents: 'none' }} />
+          <X className="w-3.5 h-3.5" />
         </button>
 
         {/* Content */}
@@ -80,7 +78,7 @@ export default function WhatsNewBubble() {
           <div
             className="text-sm leading-relaxed"
             style={{ color: 'var(--text-secondary)' }}
-            dangerouslySetInnerHTML={{ __html: whatsNewData.content }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(whatsNewData.content) }}
           />
         </div>
       </div>
