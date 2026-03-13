@@ -8,9 +8,6 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
-    "seed": "npx tsx src/scripts/seed-sample-data.ts",
-    "load-data": "python scripts/load-transcript-data.py",
-    "generate-search-key": "npx tsx scripts/generate-search-key.ts",
     "health-check": "curl http://localhost:3001/health"
   },
   "dependencies": {

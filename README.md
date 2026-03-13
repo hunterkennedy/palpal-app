@@ -10,7 +10,7 @@
 
 palpal is a self-hosted podcast search engine. Every episode gets downloaded, transcribed, chunked, and indexed. You type a phrase, you get back the clip — with a link to the timestamp.
 
-The whole stack lives here: database, pipeline, transcription coordination, and frontend. The only thing that runs outside Docker is [palpal-blurb](../palpal-blurb), a GPU Whisper service that needs to live on a machine with a graphics card.
+The whole stack lives here: database, pipeline, transcription coordination, and frontend. The only thing outside Docker is [palpal-blurb](https://github.com/hunterkennedy/blurb), a Whisper transcription service designed to run on GPU hardware you already have — a gaming PC, a home server, anything with a decent card. Point `BLURB_URL` at it and the pipeline handles the rest.
 
 ---
 
@@ -23,7 +23,7 @@ YouTube playlist/channel
   palpal-conductor          discovers new episodes, downloads audio, sends to blurb
         │
         ▼
-  palpal-blurb              transcribes audio on the host GPU (not in Docker)
+  palpal-blurb              transcribes audio on your GPU hardware
         │
         ▼
   palpal-conductor          chunks transcript, writes to postgres
@@ -42,7 +42,7 @@ Everything in the pipeline — discovery, download, transcription, chunking — 
 ## Prerequisites
 
 - **Docker + Docker Compose**
-- **[palpal-blurb](../palpal-blurb)** running on the host machine at port `8001` — GPU-based Whisper transcription. The conductor container reaches it via `host.docker.internal:8001`.
+- **[palpal-blurb](https://github.com/hunterkennedy/blurb)** running somewhere with a GPU — Whisper transcription service. The idea is to offload the heavy work to whatever GPU hardware you already have (a gaming PC, a local server, etc.) rather than requiring a cloud GPU. Point `BLURB_URL` in `.env` at wherever it's running.
 
 ---
 
