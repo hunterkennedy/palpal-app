@@ -7,7 +7,7 @@ import DOMPurify from 'dompurify';
 import { SearchHit, ErrorState } from '@/types';
 import { saveChunk, unsaveChunk, isChunkSaved } from '@/lib/cookies';
 import { SearchResultsSkeleton } from '@/components/LoadingSkeleton';
-import { getStaticPodcastConfig } from '@/lib/static-podcasts';
+import { PodcastConfig } from '@/types/podcast';
 import { GroupByOption } from '@/components/GroupByFilter';
 import ChunkNotes from '@/components/ChunkNotes';
 import { getWatchUrl, getWatchText, isPatreonSource } from '@/lib/chunk-utils';
@@ -20,6 +20,7 @@ interface SearchResultsProps {
   isSearching: boolean;
   refreshSaveStatus?: boolean;
   groupBy?: GroupByOption;
+  podcasts?: PodcastConfig[];
 }
 
 // Helper function to format publication dates
@@ -54,7 +55,7 @@ const formatPublicationDate = (dateString?: string): string => {
   }
 };
 
-export default function SearchResults({ query, results, totalHits, error, isSearching, refreshSaveStatus, groupBy = 'none' }: SearchResultsProps) {
+export default function SearchResults({ query, results, totalHits, error, isSearching, refreshSaveStatus, groupBy = 'none', podcasts }: SearchResultsProps) {
   const [savedChunkIds, setSavedChunkIds] = useState<Set<string>>(new Set());
   
   // Function to update saved state
@@ -239,7 +240,7 @@ export default function SearchResults({ query, results, totalHits, error, isSear
                 <h3 className="text-lg font-semibold flex items-center gap-3"
                     style={{ color: 'var(--text-primary)' }}>
                   {groupBy === 'podcast' && (() => {
-                    const podcastConfig = getStaticPodcastConfig(hits[0]?.podcast_id);
+                    const podcastConfig = podcasts?.find(p => p.id === hits[0]?.podcast_id) ?? null;
                     return podcastConfig?.image ? (
                       <Image
                         src={podcastConfig.image}
@@ -295,7 +296,7 @@ export default function SearchResults({ query, results, totalHits, error, isSear
                 {/* Podcast icon and name */}
                 <div className="flex items-center gap-2 flex-1">
                   {(() => {
-                    const podcastConfig = getStaticPodcastConfig(hit.podcast_id);
+                    const podcastConfig = podcasts?.find(p => p.id === hit.podcast_id) ?? null;
                     return podcastConfig?.image ? (
                       <Image
                         src={podcastConfig.image}

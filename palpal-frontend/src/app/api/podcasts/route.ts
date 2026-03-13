@@ -1,23 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllStaticPodcastConfigs } from '@/lib/static-podcasts';
+import { getPodcasts } from '@/lib/conductor';
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function GET(_request: NextRequest) {
   try {
-    const podcasts = getAllStaticPodcastConfigs();
+    const raw = await getPodcasts();
+
+    const podcasts = raw.map(p => ({
+      id: p.id,
+      displayName: p.display_name,
+      description: p.description || '',
+      indexName: '',
+      image: p.image || '',
+      theme: {
+        primary: p.theme?.primary || 'gray-500',
+        secondary: p.theme?.secondary || 'gray-400',
+        accent: p.theme?.accent || 'gray-600',
+        gradientFrom: p.theme?.gradientFrom || 'gray-900',
+        gradientTo: p.theme?.gradientTo || 'gray-800',
+        background: 'gray-900',
+        textPrimary: 'white',
+        textSecondary: 'gray-300',
+        border: 'gray-600',
+      },
+      socialSections: (p.social_sections || []).map(section => ({
+        title: section.title,
+        titleColor: section.titleColor,
+        links: section.links.map(link => ({
+          site: link.site,
+          title: link.title,
+          link: link.link,
+          icon: null,
+          hoverColor: link.hoverColor,
+        })),
+      })),
+      sources: p.sources.map(s => ({
+        site: s.site,
+        name: s.name,
+        url: '',
+        type: s.type,
+        enabled: true,
+      })),
+      enabled: true,
+      order: p.display_order,
+    }));
 
     return NextResponse.json(podcasts, {
       headers: {
         'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=3600',
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+      },
     });
   } catch (error) {
     console.error('Podcasts API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to load podcast configurations' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to load podcast configurations' }, { status: 500 });
   }
 }
 

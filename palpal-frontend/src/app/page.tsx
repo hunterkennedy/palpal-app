@@ -14,7 +14,7 @@ import { GroupByOption } from '@/components/GroupByFilter';
 import { useDebounce } from '@/hooks/useDebounce';
 import { SearchHit, ErrorState } from '@/types';
 import { loadUserPreferences, saveUserPreferences } from '@/lib/cookies';
-import { getAllStaticPodcastConfigs } from '@/lib/static-podcasts';
+import { PodcastConfig } from '@/types/podcast';
 
 // SearchHit interface moved to @/types
 
@@ -89,8 +89,14 @@ export default function Home() {
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
 
-  // Load podcasts statically at build time
-  const podcasts = getAllStaticPodcastConfigs();
+  const [podcasts, setPodcasts] = useState<PodcastConfig[]>([]);
+
+  useEffect(() => {
+    fetch('/api/podcasts')
+      .then(r => r.json())
+      .then(setPodcasts)
+      .catch(err => console.error('Failed to load podcasts:', err));
+  }, []);
   const enabledPodcastIds = useMemo(
     () => podcasts.filter(p => p.enabled).map(p => p.id).sort(),
     [podcasts]
@@ -218,6 +224,8 @@ export default function Home() {
 
   // Load user preferences from cookies and URL parameters on mount
   useEffect(() => {
+    if (podcasts.length === 0) return;
+
     const savedPreferences = loadUserPreferences();
 
     // Set default to all enabled podcasts
@@ -459,6 +467,7 @@ export default function Home() {
               error={searchError}
               isSearching={isSearching}
               groupBy={groupBy}
+              podcasts={podcasts}
             />
           </div>
 

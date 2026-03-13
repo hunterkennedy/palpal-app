@@ -80,3 +80,24 @@ export async function checkHealth(): Promise<{ status: string }> {
   return res.json();
 }
 
+export interface ConductorPodcast {
+  id: string;
+  display_name: string;
+  description: string | null;
+  image: string | null;
+  theme: Record<string, string> | null;
+  social_sections: Array<{
+    title: string;
+    titleColor: string;
+    links: Array<{ site: string; title: string; link: string; icon: string; hoverColor: string }>;
+  }> | null;
+  display_order: number;
+  sources: Array<{ id: string; name: string; site: string; type: string; description: string | null }>;
+}
+
+export async function getPodcasts(): Promise<ConductorPodcast[]> {
+  const res = await fetch(`${CONDUCTOR_URL}/podcasts`);
+  if (!res.ok) throw new Error(`Conductor /podcasts error: ${res.status}`);
+  return res.json();
+}
+
