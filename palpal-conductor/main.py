@@ -383,6 +383,13 @@ async def bulk_episode_action(body: BulkActionRequest):
 _EPISODES_TTL = 300.0  # seconds
 _episodes_cache: dict = {"data": None, "fetched_at": 0.0}
 
+# --------------------------------------------------------------------------- #
+# Podcasts list (cached)                                                       #
+# --------------------------------------------------------------------------- #
+
+_PODCASTS_TTL = 600.0  # seconds — podcast config changes rarely
+_podcasts_cache: dict = {"data": None, "fetched_at": 0.0}
+
 
 async def _fetch_episodes() -> list[EpisodeInfo]:
     pool = db.get_pool()
@@ -439,6 +446,14 @@ async def bust_episodes_cache() -> dict:
     """Force the next /episodes request to re-query the DB."""
     _episodes_cache["data"] = None
     _episodes_cache["fetched_at"] = 0.0
+    return {"status": "busted"}
+
+
+@app.post("/admin/podcasts/cache/bust", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def bust_podcasts_cache() -> dict:
+    """Force the next /podcasts request to re-query the DB."""
+    _podcasts_cache["data"] = None
+    _podcasts_cache["fetched_at"] = 0.0
     return {"status": "busted"}
 
 
@@ -538,8 +553,7 @@ async def chunks(
     return [ChunkResult(**dict(row)) for row in rows]
 
 
-@app.get("/podcasts", tags=["search"], response_model=list[PodcastResult])
-async def podcasts() -> list[PodcastResult]:
+async def _fetch_podcasts() -> list[PodcastResult]:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
@@ -568,6 +582,21 @@ async def podcasts() -> list[PodcastResult]:
             d["sources"] = json.loads(d["sources"])
         results.append(PodcastResult(**d))
     return results
+
+
+@app.get("/podcasts", tags=["search"], response_model=list[PodcastResult])
+async def podcasts() -> list[PodcastResult]:
+    """Enabled podcasts with sources. Cached for 10 minutes."""
+    if (
+        _podcasts_cache["data"] is not None
+        and time.monotonic() - _podcasts_cache["fetched_at"] < _PODCASTS_TTL
+    ):
+        return _podcasts_cache["data"]
+
+    data = await _fetch_podcasts()
+    _podcasts_cache["data"] = data
+    _podcasts_cache["fetched_at"] = time.monotonic()
+    return data
 
 
 @app.get("/episodes/check", tags=["episodes"])
