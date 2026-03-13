@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getChunks } from '@/lib/conductor';
+import { checkRateLimit } from '@/lib/validation';
 
 export async function GET(request: NextRequest) {
+  const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'anonymous';
+  if (!checkRateLimit(ip)) {
+    return NextResponse.json({ error: 'Too many requests. Please slow down.' }, { status: 429 });
+  }
+
   const searchParams = request.nextUrl.searchParams;
   const chunkId = searchParams.get('chunkId');
   const radiusParam = searchParams.get('radius');

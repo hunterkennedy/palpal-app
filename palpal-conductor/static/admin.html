@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>palpal admin</title>
+  <style>
+    :root {
+      --bg: #111;
+      --bg2: #1a1a1a;
+      --bg3: #222;
+      --border: #2e2e2e;
+      --text: #e0e0e0;
+      --muted: #777;
+      --orange: #f97316;
+      --green: #4ade80;
+      --red: #f87171;
+      --yellow: #facc15;
+      --blue: #60a5fa;
+      --purple: #c084fc;
+      --cyan: #22d3ee;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: var(--bg); color: var(--text); line-height: 1.5; font-size: 14px; }
+    a { color: var(--orange); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    button { cursor: pointer; font-family: inherit; font-size: 0.875rem; transition: all 0.15s; }
+    .btn { padding: 0.4rem 0.9rem; border-radius: 6px; font-weight: 500; border: 1px solid transparent; background: transparent; }
+    .btn-orange { background: rgba(249,115,22,0.15); color: #fdba74; border-color: rgba(249,115,22,0.3); }
+    .btn-orange:hover:not(:disabled) { background: rgba(249,115,22,0.25); }
+    .btn-green  { background: rgba(74,222,128,0.15); color: #86efac; border-color: rgba(74,222,128,0.3); }
+    .btn-green:hover:not(:disabled) { background: rgba(74,222,128,0.25); }
+    .btn-red    { background: rgba(248,113,113,0.15); color: #fca5a5; border-color: rgba(248,113,113,0.3); }
+    .btn-red:hover:not(:disabled) { background: rgba(248,113,113,0.25); }
+    .btn-yellow { background: rgba(250,204,21,0.15); color: #fde047; border-color: rgba(250,204,21,0.3); }
+    .btn-yellow:hover:not(:disabled) { background: rgba(250,204,21,0.25); }
+    .btn-blue   { background: rgba(96,165,250,0.15); color: #93c5fd; border-color: rgba(96,165,250,0.3); }
+    .btn-blue:hover:not(:disabled) { background: rgba(96,165,250,0.25); }
+    .btn-purple { background: rgba(192,132,252,0.15); color: #d8b4fe; border-color: rgba(192,132,252,0.3); }
+    .btn-purple:hover:not(:disabled) { background: rgba(192,132,252,0.25); }
+    .btn-ghost  { background: transparent; color: var(--muted); border-color: transparent; }
+    .btn-ghost:hover:not(:disabled) { color: var(--text); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    h1 { font-size: 1.4rem; color: var(--orange); }
+    h2 { font-size: 0.9rem; font-weight: 600; color: var(--text); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.72rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap; }
+    .badge-discovered   { color: #93c5fd; background: rgba(96,165,250,0.1);  border-color: rgba(96,165,250,0.2); }
+    .badge-downloading  { color: #fde047; background: rgba(250,204,21,0.1);  border-color: rgba(250,204,21,0.2); }
+    .badge-downloaded   { color: #67e8f9; background: rgba(34,211,238,0.1);  border-color: rgba(34,211,238,0.2); }
+    .badge-transcribing { color: #d8b4fe; background: rgba(192,132,252,0.1); border-color: rgba(192,132,252,0.2); }
+    .badge-processed    { color: #86efac; background: rgba(74,222,128,0.1);  border-color: rgba(74,222,128,0.2); }
+    .badge-failed       { color: #fca5a5; background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.2); }
+    .badge-bl           { color: #fdba74; background: rgba(249,115,22,0.1);  border-color: rgba(249,115,22,0.2); }
+    .badge-running      { color: #86efac; background: rgba(74,222,128,0.1);  border-color: rgba(74,222,128,0.2); }
+    .badge-paused       { color: #fdba74; background: rgba(249,115,22,0.1);  border-color: rgba(249,115,22,0.2); }
+
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 0.4rem 0.6rem; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+    td { padding: 0.45rem 0.6rem; border-bottom: 1px solid rgba(46,46,46,0.6); vertical-align: middle; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    tr.row-selected td { background: rgba(249,115,22,0.04); }
+    tr.row-blacklisted { opacity: 0.5; }
+    .overflow-x { overflow-x: auto; }
+
+    .toggle { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; inset: 0; border-radius: 24px; background: var(--bg3); border: 1px solid var(--border); cursor: pointer; transition: 0.2s; }
+    .toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: white; transition: 0.2s; }
+    input:checked + .toggle-slider { background: var(--orange); border-color: var(--orange); }
+    input:checked + .toggle-slider::before { transform: translateX(20px); }
+    input:disabled + .toggle-slider { opacity: 0.5; cursor: not-allowed; }
+
+    input[type="text"], input[type="password"], select {
+      background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+      padding: 0.4rem 0.65rem; border-radius: 6px; font-family: inherit; font-size: 0.875rem;
+    }
+    input[type="text"]:focus, input[type="password"]:focus, select:focus {
+      outline: none; border-color: rgba(249,115,22,0.5);
+    }
+    input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--orange); cursor: pointer; }
+
+    #toast {
+      position: fixed; top: 1rem; right: 1rem; z-index: 1000;
+      padding: 0.65rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500;
+      display: none; max-width: 340px;
+    }
+    #toast.ok  { background: rgba(10,30,10,0.97); border: 1px solid rgba(74,222,128,0.35); color: #86efac; }
+    #toast.err { background: rgba(30,10,10,0.97); border: 1px solid rgba(248,113,113,0.35); color: #fca5a5; }
+
+    #login-overlay {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    .login-box {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 2rem; width: 100%; max-width: 360px;
+    }
+    .login-box h1 { text-align: center; margin-bottom: 1.5rem; }
+    .login-box label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+    .login-box input { width: 100%; margin-bottom: 1rem; }
+    .login-box button { width: 100%; padding: 0.6rem; }
+
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; gap: 1rem; }
+    .header-right { display: flex; align-items: center; gap: 0.6rem; }
+
+    .tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.85rem; }
+    .tab { padding: 0.2rem 0.65rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--bg3); color: var(--muted); border: 1px solid transparent; cursor: pointer; }
+    .tab:hover { color: var(--text); }
+    .tab.active { background: var(--orange); color: white; }
+    .tab.active-bl { background: rgba(249,115,22,0.18); color: #fdba74; border-color: rgba(249,115,22,0.35); }
+
+    .counts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+    .count-item { padding: 0.65rem 0.75rem; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; }
+    .count-item:hover { border-color: #444; }
+    .count-item.active { border-color: var(--orange); }
+    .count-num { font-size: 1.5rem; font-weight: 700; }
+    .count-label { font-size: 0.7rem; color: var(--muted); }
+
+    .discover-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; }
+    .discover-btn {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.65rem 0.9rem; border-radius: 6px; border: 1px solid var(--border);
+      background: transparent; color: var(--text); cursor: pointer; transition: all 0.15s;
+    }
+    .discover-btn:hover:not(:disabled) { border-color: rgba(249,115,22,0.5); }
+    .discover-all-btn { border-color: rgba(249,115,22,0.3); grid-column: 1 / -1; }
+    .discover-all-btn span:first-child { color: var(--orange); font-weight: 500; }
+    .discover-all-btn span:last-child { color: var(--orange); }
+
+    #bulk-bar {
+      display: none; align-items: center; flex-wrap: wrap; gap: 0.4rem;
+      padding: 0.5rem 0.75rem; border-radius: 6px;
+      background: rgba(249,115,22,0.07); border: 1px solid rgba(249,115,22,0.22);
+      margin-bottom: 0.75rem;
+    }
+    .filter-row { display: flex; gap: 0.65rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+    .filter-row input[type="text"] { flex: 1; min-width: 180px; }
+
+    .setting-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 0.6rem 0; border-bottom: 1px solid var(--border);
+    }
+    .setting-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .setting-row:first-child { padding-top: 0; }
+
+    .action-row { display: flex; align-items: center; gap: 0.3rem; flex-wrap: nowrap; }
+    .act { padding: 0.18rem 0.45rem; border-radius: 4px; font-size: 0.72rem; }
+    .icon-btn { width: 24px; height: 24px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem; padding: 0; }
+
+    .section-hdr { display: flex; align-items: center; justify-content: space-between; cursor: pointer; width: 100%; background: none; border: none; color: inherit; padding: 0; margin-bottom: 0; }
+    .section-hdr h2 { margin-bottom: 0; }
+    .section-hdr .arrow { font-size: 0.8rem; color: var(--muted); }
+
+    .muted { color: var(--muted); }
+    .small { font-size: 0.8rem; }
+    .err-text { color: #fca5a5; font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(255,255,255,0.15); border-top-color: currentColor; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .sep { color: var(--border); margin: 0 1px; }
+  </style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<div id="login-overlay">
+  <div class="login-box">
+    <h1>palpal admin</h1>
+    <label for="api-key-input">API Key</label>
+    <input type="password" id="api-key-input" placeholder="Enter BLURB_API_KEY" autocomplete="current-password" />
+    <button class="btn btn-orange" onclick="login()">Sign in</button>
+    <div id="login-error" style="color:#fca5a5;font-size:0.8rem;text-align:center;margin-top:0.75rem;display:none"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="container">
+
+    <!-- Header -->
+    <div class="header">
+      <h1>conductor admin</h1>
+      <div class="header-right">
+        <span id="refresh-status" class="muted small"></span>
+        <button class="btn btn-ghost" onclick="doRefresh(true)">↻ refresh</button>
+        <button class="btn btn-ghost" onclick="logout()">logout</button>
+      </div>
+    </div>
+
+    <!-- Scheduler + Counts -->
+    <div class="grid-2">
+      <div class="card" id="scheduler-card">
+        <h2>⚡ scheduler</h2>
+        <div id="scheduler-body"><span class="muted">loading…</span></div>
+      </div>
+      <div class="card">
+        <h2>📊 episode counts</h2>
+        <div class="counts-grid" id="counts-grid"></div>
+      </div>
+    </div>
+
+    <!-- Pipeline Settings -->
+    <div class="card">
+      <h2>⚙️ pipeline controls</h2>
+      <div id="pipeline-body"></div>
+    </div>
+
+    <!-- Discover -->
+    <div class="card">
+      <h2>🔍 discover new episodes</h2>
+      <p class="muted small" style="margin-bottom:0.9rem">
+        Runs yt-dlp and adds newly found episodes as <span class="badge badge-discovered">discovered</span> without automatically processing them.
+      </p>
+      <div class="discover-grid" id="discover-grid"></div>
+    </div>
+
+    <!-- Episodes -->
+    <div class="card">
+      <button class="section-hdr" onclick="toggleEpisodesSection()">
+        <h2>episodes <span id="ep-filter-label" class="muted" style="font-size:0.75rem;font-weight:400;text-transform:none;letter-spacing:0"></span></h2>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <span id="ep-count" class="muted small">0</span>
+          <span id="ep-arrow" class="arrow">▾</span>
+        </div>
+      </button>
+
+      <div id="episodes-section" style="margin-top:1rem">
+        <div class="tabs" id="status-tabs"></div>
+        <div class="filter-row">
+          <input type="text" id="title-filter" placeholder="Filter by title…" oninput="applyFilters()" />
+          <select id="podcast-filter" onchange="applyFilters()">
+            <option value="all">All podcasts</option>
+          </select>
+        </div>
+        <div id="bulk-bar">
+          <span id="bulk-label" style="color:#fdba74;font-size:0.875rem;font-weight:500;min-width:6rem"></span>
+          <div id="bulk-actions" style="display:flex;gap:0.35rem;flex-wrap:wrap"></div>
+          <button class="btn btn-ghost small" style="margin-left:auto" onclick="clearSelection()">✕</button>
+        </div>
+        <div class="overflow-x">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:28px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" /></th>
+                <th>title</th>
+                <th>podcast</th>
+                <th>status</th>
+                <th>date</th>
+                <th>length</th>
+                <th>actions</th>
+              </tr>
+            </thead>
+            <tbody id="ep-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /container -->
+</div><!-- /app -->
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let apiKey = '';
+let autoRefreshTimer = null;
+
+const S = {
+  scheduler: null,
+  counts: {},
+  episodes: [],
+  podcasts: [],
+  pipelineSettings: { auto_discover: true, auto_download: true, auto_transcribe: true },
+  statusFilter: 'all',
+  titleFilter: '',
+  podcastFilter: 'all',
+  selected: new Set(),
+  pending: new Set(),
+  epExpanded: true,
+  confirmDeleteId: null,
+  confirmBulkDelete: false,
+};
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+function login() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key) return;
+  apiKey = key;
+  sessionStorage.setItem('palpal_key', key);
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  init();
+}
+
+function logout() {
+  sessionStorage.removeItem('palpal_key');
+  location.reload();
+}
+
+document.getElementById('api-key-input').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+
+{
+  const k = sessionStorage.getItem('palpal_key');
+  if (k) {
+    apiKey = k;
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    init();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API
+// ---------------------------------------------------------------------------
+async function api(method, path, body = null) {
+  const opts = { method, headers: { Authorization: `Bearer ${apiKey}` } };
+  if (body !== null) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+  return res;
+}
+
+// ---------------------------------------------------------------------------
+// Toast
+// ---------------------------------------------------------------------------
+let toastTimer = null;
+function toast(msg, ok = true) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = ok ? 'ok' : 'err';
+  el.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
+}
+
+// ---------------------------------------------------------------------------
+// Init & refresh
+// ---------------------------------------------------------------------------
+async function init() {
+  await doRefresh(false);
+  autoRefreshTimer = setInterval(() => doRefresh(true), 8000);
+}
+
+async function doRefresh(silent) {
+  const status = document.getElementById('refresh-status');
+  status.textContent = silent ? '↻' : 'loading…';
+  try {
+    const [schedRes, adminRes, epsRes, settingsRes, podsRes] = await Promise.all([
+      api('GET', '/admin/scheduler/status'),
+      api('GET', '/admin/status'),
+      api('GET', '/episodes'),
+      api('GET', '/admin/pipeline-settings'),
+      fetch('/podcasts'),
+    ]);
+    if (schedRes.ok)    S.scheduler        = await schedRes.json();
+    if (adminRes.ok)    S.counts           = (await adminRes.json()).counts || {};
+    if (epsRes.ok)      S.episodes         = await epsRes.json();
+    if (settingsRes.ok) S.pipelineSettings = await settingsRes.json();
+    if (podsRes.ok) {
+      S.podcasts = await podsRes.json();
+      renderDiscoverGrid();
+      renderPodcastFilter();
+    }
+    renderScheduler();
+    renderCounts();
+    renderPipelineSettings();
+    renderEpisodesTable();
+    status.textContent = '';
+  } catch (e) {
+    status.textContent = 'error';
+    if (!silent) console.error(e);
+  }
+}
+
+async function bustAndRefresh() {
+  try { await api('POST', '/admin/episodes/cache/bust'); } catch {}
+  await doRefresh(true);
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler
+// ---------------------------------------------------------------------------
+function renderScheduler() {
+  const s = S.scheduler;
+  if (!s) return;
+  const badge = s.paused
+    ? '<span class="badge badge-paused">PAUSED</span>'
+    : '<span class="badge badge-running">RUNNING</span>';
+  const jobs = (s.jobs || []).map(j => `
+    <div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:0.35rem">
+      <span class="muted">${esc(j.id)}</span>
+      <span class="muted">⏱ ${fmtNextRun(j.next_run)}</span>
+    </div>`).join('');
+  const btnCls = s.paused ? 'btn-green' : 'btn-orange';
+  const btnLbl = s.paused ? '▶ resume scheduler' : '⏸ pause scheduler';
+  document.getElementById('scheduler-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+      <span class="muted small">status</span>${badge}
+    </div>
+    ${jobs}
+    <button id="sched-btn" class="btn ${btnCls}" style="width:100%;margin-top:0.75rem" onclick="toggleScheduler()">${btnLbl}</button>
+  `;
+}
+
+async function toggleScheduler() {
+  if (S.pending.has('scheduler')) return;
+  S.pending.add('scheduler');
+  const btn = document.getElementById('sched-btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  try {
+    const action = S.scheduler?.paused ? 'resume' : 'pause';
+    const res = await api('POST', `/admin/scheduler/${action}`);
+    if (!res.ok) throw new Error(await res.text());
+    toast(`Scheduler ${action}d`);
+    await doRefresh(true);
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+    await doRefresh(true);
+  } finally {
+    S.pending.delete('scheduler');
+  }
+}
+
+function fmtNextRun(iso) {
+  if (!iso) return 'paused';
+  const diff = new Date(iso) - Date.now();
+  if (diff <= 0) return 'soon';
+  const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000);
+  return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+
+// ---------------------------------------------------------------------------
+// Counts
+// ---------------------------------------------------------------------------
+const SCOLOR = {
+  discovered: '#93c5fd', downloading: '#fde047', downloaded: '#67e8f9',
+  transcribing: '#d8b4fe', processed: '#86efac', failed: '#fca5a5',
+};
+
+function renderCounts() {
+  document.getElementById('counts-grid').innerHTML =
+    Object.keys(SCOLOR).map(s => `
+      <div class="count-item${S.statusFilter === s ? ' active' : ''}" onclick="setStatusFilter('${s}')">
+        <div class="count-num" style="color:${SCOLOR[s]}">${S.counts[s] ?? 0}</div>
+        <div class="count-label">${s}</div>
+      </div>`).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline settings
+// ---------------------------------------------------------------------------
+const SETTINGS_META = [
+  { key: 'auto_discover',   label: 'Auto Discover',   desc: 'Scheduled discovery runs every 24h' },
+  { key: 'auto_download',   label: 'Auto Download',   desc: 'Newly discovered episodes are downloaded automatically' },
+  { key: 'auto_transcribe', label: 'Auto Transcribe', desc: 'Downloaded episodes are submitted to blurb automatically' },
+];
+
+function renderPipelineSettings() {
+  document.getElementById('pipeline-body').innerHTML = SETTINGS_META.map(({ key, label, desc }) => `
+    <div class="setting-row">
+      <div>
+        <div style="font-size:0.875rem;font-weight:500">${label}</div>
+        <div class="muted small">${desc}</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${S.pipelineSettings[key] ? 'checked' : ''}
+          onchange="togglePipelineSetting('${key}', this)" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>`).join('');
+}
+
+async function togglePipelineSetting(key, cb) {
+  const val = cb.checked;
+  cb.disabled = true;
+  try {
+    const res = await api('POST', '/admin/pipeline-settings', { [key]: val });
+    if (!res.ok) throw new Error(await res.text());
+    S.pipelineSettings = await res.json();
+    toast(`${key} ${val ? 'enabled' : 'disabled'}`);
+    renderPipelineSettings();
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+    cb.checked = !val;
+    cb.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Discover
+// ---------------------------------------------------------------------------
+function renderDiscoverGrid() {
+  document.getElementById('discover-grid').innerHTML =
+    S.podcasts.map(p => `
+      <button class="discover-btn" id="db-${esc(p.id)}"
+        onclick="discover('${esc(p.id)}', '${esc(p.display_name)}')">
+        <span>${esc(p.display_name)}</span><span>▶</span>
+      </button>`).join('') + `
+    <button class="discover-btn discover-all-btn" id="db-all" onclick="discover()">
+      <span>Discover All Podcasts</span><span>▶</span>
+    </button>`;
+}
+
+async function discover(podcastId, podcastName) {
+  const key = `discover-${podcastId || 'all'}`;
+  if (S.pending.has(key)) return;
+  S.pending.add(key);
+  const btn = document.getElementById(`db-${podcastId || 'all'}`);
+  if (btn) { btn.disabled = true; btn.querySelector('span:last-child').innerHTML = '<span class="spinner"></span>'; }
+  try {
+    const qs = new URLSearchParams({ auto_queue: 'false' });
+    if (podcastId) qs.set('podcast_id', podcastId);
+    const res = await api('POST', `/admin/discover?${qs}`);
+    if (!res.ok) throw new Error(await res.text());
+    toast(`Discovery started${podcastName ? ` for ${podcastName}` : ''}`);
+    setTimeout(() => doRefresh(true), 3000);
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    S.pending.delete(key);
+    if (btn) { btn.disabled = false; btn.querySelector('span:last-child').textContent = '▶'; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Episodes table
+// ---------------------------------------------------------------------------
+const RETRYABLE   = new Set(['failed', 'transcribing', 'downloaded', 'downloading']);
+const PROCESSABLE = new Set(['discovered', 'downloaded']);
+const STATUS_TABS = ['all', 'discovered', 'downloading', 'downloaded', 'transcribing', 'failed', 'processed', 'blacklisted'];
+
+function getFiltered() {
+  let r = S.episodes;
+  if (S.statusFilter === 'blacklisted') r = r.filter(e => e.blacklisted);
+  else if (S.statusFilter !== 'all')    r = r.filter(e => e.status === S.statusFilter);
+  if (S.podcastFilter !== 'all')        r = r.filter(e => e.podcast_id === S.podcastFilter);
+  const q = S.titleFilter.trim().toLowerCase();
+  if (q) r = r.filter(e => e.title.toLowerCase().includes(q));
+  return r;
+}
+
+function setStatusFilter(s) {
+  S.statusFilter = S.statusFilter === s ? 'all' : s;
+  renderEpisodesTable();
+}
+
+function applyFilters() {
+  S.titleFilter  = document.getElementById('title-filter').value;
+  S.podcastFilter = document.getElementById('podcast-filter').value;
+  renderEpisodesTable();
+}
+
+function renderPodcastFilter() {
+  const sel = document.getElementById('podcast-filter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="all">All podcasts</option>' +
+    S.podcasts.map(p => `<option value="${esc(p.id)}">${esc(p.display_name)}</option>`).join('');
+  sel.value = cur;
+}
+
+function renderStatusTabs() {
+  const blCount = S.episodes.filter(e => e.blacklisted).length;
+  document.getElementById('status-tabs').innerHTML = STATUS_TABS.map(tab => {
+    const count = tab === 'all' ? S.episodes.length
+      : tab === 'blacklisted' ? blCount
+      : (S.counts[tab] ?? 0);
+    const active = S.statusFilter === tab;
+    const cls = active ? (tab === 'blacklisted' ? 'active-bl' : 'active') : '';
+    return `<button class="tab ${cls}" onclick="setStatusFilter('${tab}')">${tab === 'blacklisted' ? '⊘ ' : ''}${tab} (${count})</button>`;
+  }).join('');
+}
+
+function toggleEpisodesSection() {
+  S.epExpanded = !S.epExpanded;
+  document.getElementById('episodes-section').style.display = S.epExpanded ? '' : 'none';
+  document.getElementById('ep-arrow').textContent = S.epExpanded ? '▾' : '▸';
+}
+
+function renderEpisodesTable() {
+  renderStatusTabs();
+  renderCounts();
+  const filtered = getFiltered();
+  document.getElementById('ep-count').textContent = filtered.length;
+  document.getElementById('ep-filter-label').textContent = S.statusFilter !== 'all' ? `(${S.statusFilter})` : '';
+
+  const allSel  = filtered.length > 0 && filtered.every(e => S.selected.has(e.id));
+  const someSel = filtered.some(e => S.selected.has(e.id));
+  const sa = document.getElementById('select-all');
+  if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
+
+  document.getElementById('ep-tbody').innerHTML = filtered.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">No episodes match filters</td></tr>`
+    : filtered.map(renderEpRow).join('');
+
+  renderBulkBar(filtered);
+}
+
+function renderEpRow(ep) {
+  const sel = S.selected.has(ep.id);
+  const isDel = S.confirmDeleteId === ep.id;
+  const statusBadge = `<span class="badge badge-${ep.status}">${esc(ep.status)}</span>${ep.blacklisted ? ' <span class="badge badge-bl">⊘</span>' : ''}`;
+
+  let acts = '';
+  if (PROCESSABLE.has(ep.status)) {
+    const lbl = ep.status === 'downloaded' ? 'transcribe' : 'process';
+    acts += `<button class="btn btn-blue act" onclick="epAction('process','${ep.id}')">${lbl}</button>`;
+  }
+  if (RETRYABLE.has(ep.status) && ep.status !== 'downloaded') {
+    acts += `<button class="btn btn-yellow act" onclick="epAction('retry','${ep.id}')">retry</button>`;
+  }
+  if (ep.status === 'processed') {
+    acts += `<button class="btn btn-purple act" onclick="epAction('retranscribe','${ep.id}')">re-tx</button>`;
+  }
+  if (ep.status === 'processed' && ep.chunk_count > 0) {
+    acts += `<span style="color:var(--green);font-size:0.72rem;padding:0 0.15rem">${ep.chunk_count}</span>`;
+  }
+  acts += `<span class="sep">|</span>`;
+  const blCls = ep.blacklisted ? 'btn-orange' : 'btn-ghost';
+  acts += `<button class="btn ${blCls} icon-btn" onclick="epAction('${ep.blacklisted ? 'unblacklist' : 'blacklist'}','${ep.id}')" title="${ep.blacklisted ? 'Remove blacklist' : 'Blacklist'}">⊘</button>`;
+  if (isDel) {
+    acts += `<button class="btn btn-red act" onclick="confirmDelete('${ep.id}')">confirm</button>`;
+    acts += `<button class="btn btn-ghost icon-btn" onclick="cancelDelete()">✕</button>`;
+  } else {
+    acts += `<button class="btn btn-ghost icon-btn" onclick="startDelete('${ep.id}')" title="Delete" style="color:var(--muted)">🗑</button>`;
+  }
+
+  return `<tr class="${sel ? 'row-selected' : ''} ${ep.blacklisted ? 'row-blacklisted' : ''}">
+    <td><input type="checkbox" ${sel ? 'checked' : ''} onchange="toggleSelect('${ep.id}', this)" /></td>
+    <td>
+      <a href="${esc(ep.youtube_url)}" target="_blank" rel="noopener noreferrer"
+        title="${esc(ep.title)}" style="display:block;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ep.title)}</a>
+      ${ep.error_message ? `<div class="err-text" title="${esc(ep.error_message)}">${esc(ep.error_message)}</div>` : ''}
+    </td>
+    <td class="muted small" style="white-space:nowrap">${esc(ep.podcast_name)}</td>
+    <td style="white-space:nowrap">${statusBadge}</td>
+    <td class="muted small" style="white-space:nowrap">${ep.publication_date ?? '—'}</td>
+    <td class="muted small" style="white-space:nowrap">${fmtDur(ep.duration_seconds)}</td>
+    <td><div class="action-row">${acts}</div></td>
+  </tr>`;
+}
+
+function fmtDur(s) {
+  if (!s) return '—';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  return `${m}:${String(sec).padStart(2,'0')}`;
+}
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ---------------------------------------------------------------------------
+// Episode actions
+// ---------------------------------------------------------------------------
+async function epAction(action, id) {
+  const key = `${action}-${id}`;
+  if (S.pending.has(key)) return;
+  S.pending.add(key);
+  try {
+    const res = await api('POST', `/admin/episodes/${id}/${action}`);
+    if (!res.ok) throw new Error(await res.text());
+    const msgs = {
+      process: 'Episode queued', retry: 'Episode reset and queued',
+      retranscribe: 'Re-transcription queued',
+      blacklist: 'Episode blacklisted', unblacklist: 'Blacklist removed',
+    };
+    toast(msgs[action] || 'Done');
+    await bustAndRefresh();
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    S.pending.delete(key);
+  }
+}
+
+function startDelete(id)  { S.confirmDeleteId = id;   renderEpisodesTable(); }
+function cancelDelete()   { S.confirmDeleteId = null;  renderEpisodesTable(); }
+
+async function confirmDelete(id) {
+  if (S.pending.has(`delete-${id}`)) return;
+  S.pending.add(`delete-${id}`);
+  S.confirmDeleteId = null;
+  try {
+    const res = await api('POST', `/admin/episodes/${id}/delete`);
+    if (!res.ok) throw new Error(await res.text());
+    toast('Episode deleted');
+    S.selected.delete(id);
+    await bustAndRefresh();
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    S.pending.delete(`delete-${id}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Selection
+// ---------------------------------------------------------------------------
+function toggleSelect(id, cb) {
+  if (cb.checked) S.selected.add(id); else S.selected.delete(id);
+  renderBulkBar(getFiltered());
+  // update row highlight without full re-render
+  const rows = document.querySelectorAll('#ep-tbody tr');
+  rows.forEach(row => {
+    const chk = row.querySelector('input[type=checkbox]');
+    if (chk) {
+      const rowId = chk.getAttribute('onchange')?.match(/'([^']+)'/)?.[1];
+      if (rowId) {
+        row.classList.toggle('row-selected', S.selected.has(rowId));
+      }
+    }
+  });
+  const sa = document.getElementById('select-all');
+  const filtered = getFiltered();
+  const allSel  = filtered.length > 0 && filtered.every(e => S.selected.has(e.id));
+  const someSel = filtered.some(e => S.selected.has(e.id));
+  if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
+}
+
+function toggleSelectAll(cb) {
+  getFiltered().forEach(e => cb.checked ? S.selected.add(e.id) : S.selected.delete(e.id));
+  renderEpisodesTable();
+}
+
+function clearSelection() {
+  S.selected.clear();
+  S.confirmBulkDelete = false;
+  renderEpisodesTable();
+}
+
+function renderBulkBar(filtered) {
+  const bar = document.getElementById('bulk-bar');
+  if (S.selected.size === 0) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  document.getElementById('bulk-label').textContent = `${S.selected.size} selected`;
+
+  const inView = filtered.filter(e => S.selected.has(e.id));
+  const canRetry       = inView.some(e => RETRYABLE.has(e.status));
+  const canProcess     = inView.some(e => PROCESSABLE.has(e.status));
+  const canRetranscribe = inView.some(e => e.status === 'processed');
+  const canBlacklist   = inView.some(e => !e.blacklisted);
+  const canUnblacklist = inView.some(e => e.blacklisted);
+
+  let btns = '';
+  if (canRetry)        btns += `<button class="btn btn-yellow" style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="bulkAction('retry')">↺ retry</button>`;
+  if (canProcess)      btns += `<button class="btn btn-blue"   style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="bulkAction('process')">▶ process</button>`;
+  if (canRetranscribe) btns += `<button class="btn btn-purple" style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="bulkAction('retranscribe')">⟳ re-tx</button>`;
+  if (canBlacklist)    btns += `<button class="btn btn-orange" style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="bulkAction('blacklist')">⊘ blacklist</button>`;
+  if (canUnblacklist)  btns += `<button class="btn btn-ghost"  style="font-size:0.75rem;padding:0.2rem 0.6rem;border:1px solid var(--border)" onclick="bulkAction('unblacklist')">⊘ unblacklist</button>`;
+
+  if (S.confirmBulkDelete) {
+    btns += `<span style="color:#fca5a5;font-size:0.75rem">Delete ${S.selected.size}?</span>`;
+    btns += `<button class="btn btn-red"   style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="bulkAction('delete')">confirm</button>`;
+    btns += `<button class="btn btn-ghost" style="font-size:0.75rem;padding:0.2rem 0.5rem" onclick="S.confirmBulkDelete=false;renderBulkBar(getFiltered())">cancel</button>`;
+  } else {
+    btns += `<button class="btn btn-red"   style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="S.confirmBulkDelete=true;renderBulkBar(getFiltered())">🗑 delete</button>`;
+  }
+  document.getElementById('bulk-actions').innerHTML = btns;
+}
+
+async function bulkAction(action) {
+  if (S.selected.size === 0) return;
+  S.confirmBulkDelete = false;
+  try {
+    const res = await api('POST', '/admin/episodes/bulk-action', {
+      episode_ids: [...S.selected], action,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    toast(`${data.queued} / ${data.total} episodes: ${action}`);
+    S.selected.clear();
+    await bustAndRefresh();
+  } catch (e) {
+    toast(`Bulk action failed: ${e}`, false);
+  }
+}
+</script>
+</body>
+</html>

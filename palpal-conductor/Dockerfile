@@ -10,8 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 --ingroup appgroup appuser
+
+COPY --chown=appuser:appgroup . .
 
 ENV PYTHONUNBUFFERED=1
+
+USER appuser
 
 CMD ["python", "main.py"]

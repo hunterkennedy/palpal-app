@@ -2,8 +2,7 @@ import { z } from 'zod';
 
 export const searchSchema = z.object({
   q: z.string()
-    .max(500, 'Search query too long')
-    .refine((val) => val === '' || /^[a-zA-Z0-9\s\-_.!?'"(),:;]+$/.test(val), 'Search query contains invalid characters'),
+    .max(500, 'Search query too long'),
   limit: z.number()
     .int('Limit must be an integer')
     .min(1, 'Limit must be at least 1')

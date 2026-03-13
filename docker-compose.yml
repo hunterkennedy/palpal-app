@@ -33,7 +33,7 @@ services:
       - PORT=${APP_PORT}
       - NODE_ENV=${NODE_ENV}
       - CONDUCTOR_URL=${CONDUCTOR_URL}
-      - CONDUCTOR_ADMIN_KEY=${BLURB_API_KEY}
+      - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
     ports:
       - "127.0.0.1:${APP_PORT}:${APP_PORT}"
     depends_on:

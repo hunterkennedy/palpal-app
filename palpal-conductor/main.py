@@ -5,9 +5,11 @@ import os
 import time
 from contextlib import asynccontextmanager
 from datetime import date
+from pathlib import Path
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
 import db
 import pipeline_settings
@@ -54,6 +56,15 @@ app = FastAPI(title="palpal-conductor", lifespan=lifespan)
 # --------------------------------------------------------------------------- #
 # Admin endpoints                                                              #
 # --------------------------------------------------------------------------- #
+
+_ADMIN_HTML = Path(__file__).parent / "static" / "admin.html"
+
+
+@app.get("/admin", tags=["admin"], include_in_schema=False)
+async def admin_ui():
+    """Serve the admin panel UI."""
+    return FileResponse(_ADMIN_HTML, media_type="text/html")
+
 
 @app.get("/admin/pipeline-settings", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
 async def get_pipeline_settings():

@@ -1,8 +1,10 @@
 # TODO
 
 ## Admin Security
-- [ ] Add Next.js middleware with HTTP Basic Auth protecting `/admin*` routes (env: `ADMIN_PASSWORD`)
-- [ ] Remove admin link from Navbar (access by URL only)
+- [x] Conductor admin panel moved to `http://localhost:${CONDUCTOR_PORT}/admin` — local-only,
+      all API endpoints protected with Bearer token (CONDUCTOR_ADMIN_KEY). Secured.
+- [x] Frontend `/admin` page and proxy route deleted — admin is conductor-local only
+- [x] Admin link removed from Navbar
 
 ## Self-Service Podcast Addition
 - [ ] Admin panel form: podcast_id (manual text), display name, YouTube channel URL
