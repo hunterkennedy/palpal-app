@@ -293,12 +293,20 @@ async def retranscribe_episode(episode_id: str):
 
 
 @app.post("/admin/episodes/process-discovered", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
-async def process_all_discovered():
-    """Queue all episodes in 'discovered' status through the pipeline."""
+async def process_all_discovered(podcast_id: str | None = Query(None)):
+    """Queue discovered episodes through the pipeline, optionally filtered by podcast."""
     pool = db.get_pool()
-    rows = await pool.fetch(
-        "SELECT id::text FROM episodes WHERE status = 'discovered' AND blacklisted = FALSE"
-    )
+    if podcast_id:
+        rows = await pool.fetch(
+            """SELECT e.id::text FROM episodes e
+               JOIN sources s ON e.source_id = s.id
+               WHERE e.status = 'discovered' AND e.blacklisted = FALSE AND s.podcast_id = $1""",
+            podcast_id,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id::text FROM episodes WHERE status = 'discovered' AND blacklisted = FALSE"
+        )
     for row in rows:
         asyncio.create_task(run_episode(row["id"]))
     return {"queued": len(rows)}

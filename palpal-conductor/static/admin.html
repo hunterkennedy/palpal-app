@@ -219,18 +219,9 @@
     <div class="card">
       <h2>🔍 discover new episodes</h2>
       <p class="muted small" style="margin-bottom:0.9rem">
-        Runs yt-dlp and adds newly found episodes. Pipeline continues based on Auto Download / Auto Transcribe settings above.
+        Runs yt-dlp and adds newly found episodes. Also processes any already-discovered episodes through the pipeline. Continues based on Auto Download / Auto Transcribe settings above.
       </p>
       <div class="discover-grid" id="discover-grid"></div>
-    </div>
-
-    <!-- Process Discovered -->
-    <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
-      <div>
-        <div style="font-size:0.875rem;font-weight:500">Process Discovered</div>
-        <div class="muted small">Queue all <span class="badge badge-discovered">discovered</span> episodes through the pipeline now.</div>
-      </div>
-      <button class="btn btn-blue" id="process-discovered-btn" onclick="processDiscovered()">▶ run</button>
     </div>
 
     <!-- Episodes -->
@@ -534,9 +525,15 @@ async function discover(podcastId, podcastName) {
   try {
     const qs = new URLSearchParams({ auto_queue: 'true' });
     if (podcastId) qs.set('podcast_id', podcastId);
-    const res = await api('POST', `/admin/discover?${qs}`);
-    if (!res.ok) throw new Error(await res.text());
-    toast(`Discovery started${podcastName ? ` for ${podcastName}` : ''}`);
+    const processQs = podcastId ? `?podcast_id=${encodeURIComponent(podcastId)}` : '';
+    const [discoverRes, processRes] = await Promise.all([
+      api('POST', `/admin/discover?${qs}`),
+      api('POST', `/admin/episodes/process-discovered${processQs}`),
+    ]);
+    if (!discoverRes.ok) throw new Error(await discoverRes.text());
+    const processData = processRes.ok ? await processRes.json() : null;
+    const queuedMsg = processData?.queued ? `, ${processData.queued} existing queued` : '';
+    toast(`Discovery started${podcastName ? ` for ${podcastName}` : ''}${queuedMsg}`);
     setTimeout(() => doRefresh(true), 3000);
   } catch (e) {
     toast(`Failed: ${e}`, false);
