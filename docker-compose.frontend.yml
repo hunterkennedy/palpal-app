@@ -1,0 +1,13 @@
+services:
+
+  palpal-frontend:
+    image: ghcr.io/${GHCR_USER}/palpal-frontend:${IMAGE_TAG:-latest}
+    container_name: palpal-frontend
+    environment:
+      - PORT=${APP_PORT}
+      - NODE_ENV=production
+      - CONDUCTOR_URL=${CONDUCTOR_URL}
+      - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
+    ports:
+      - "127.0.0.1:${APP_PORT}:${APP_PORT}"
+    restart: unless-stopped

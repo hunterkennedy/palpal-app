@@ -21,30 +21,8 @@ services:
     networks:
       - palpal-network
 
-  palpal-frontend:
-    build:
-      context: ./palpal-frontend
-      dockerfile: Dockerfile
-      args:
-        - NEXT_TELEMETRY_DISABLED=${NEXT_TELEMETRY_DISABLED}
-    container_name: palpal-frontend
-    environment:
-      - PORT=${APP_PORT}
-      - NODE_ENV=${NODE_ENV}
-      - CONDUCTOR_URL=${CONDUCTOR_URL}
-      - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
-    ports:
-      - "127.0.0.1:${APP_PORT}:${APP_PORT}"
-    depends_on:
-      - palpal-conductor
-    restart: unless-stopped
-    networks:
-      - palpal-network
-
   palpal-conductor:
-    build:
-      context: ./palpal-conductor
-      dockerfile: Dockerfile
+    image: ghcr.io/${GHCR_USER}/palpal-conductor:${IMAGE_TAG:-latest}
     container_name: palpal-conductor
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -57,8 +35,6 @@ services:
       - "127.0.0.1:${CONDUCTOR_PORT}:${CONDUCTOR_PORT}"
     volumes:
       - ${AUDIO_HOST_PATH}:/audio:z
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
