@@ -76,7 +76,7 @@ class PodcastResult(BaseModel):
     display_name: str
     description: str
     image: str
-    theme: dict
+    has_icon: bool
     social_sections: list
     display_order: int
     sources: list[SourceInfo]

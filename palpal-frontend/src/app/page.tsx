@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -11,7 +11,6 @@ import WhatsNewBubble from '@/components/WhatsNewBubble';
 import { SortOption, DateRange } from '@/components/SearchFilters';
 import { SortDirection } from '@/components/SortFilter';
 import { GroupByOption } from '@/components/GroupByFilter';
-import { useDebounce } from '@/hooks/useDebounce';
 import { SearchHit, ErrorState } from '@/types';
 import { loadUserPreferences, saveUserPreferences } from '@/lib/cookies';
 import { PodcastConfig } from '@/types/podcast';
@@ -68,19 +67,19 @@ export default function Home() {
   const searchParams = useSearchParams();
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const [totalHits, setTotalHits] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
   const [searchError, setSearchError] = useState<ErrorState | null>(null);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [selectedPodcasts, setSelectedPodcasts] = useState<string[]>([]);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
 
-  // Track immediate search to prevent duplicate debounced search
-  const lastImmediateSearchRef = useRef<{ query: string; timestamp: number } | null>(null);
-
   // Filter states
-  const [sortBy, setSortBy] = useState<SortOption>('relevance');
+  const [sortBy, setSortBy] = useState<SortOption>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [dateRange, setDateRange] = useState<DateRange>('all');
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
@@ -102,7 +101,6 @@ export default function Home() {
     [podcasts]
   );
   const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   // Function to update URL with current search state
   const updateURL = useCallback((params: {
@@ -137,7 +135,7 @@ export default function Home() {
     }
 
     // Update sort parameters
-    if (params.sort !== undefined && params.sort !== 'relevance') {
+    if (params.sort !== undefined && params.sort !== 'date') {
       url.searchParams.set('sort', params.sort);
     } else if (params.sort !== undefined) {
       url.searchParams.delete('sort');
@@ -163,9 +161,9 @@ export default function Home() {
       url.searchParams.delete('groupBy');
     }
 
-    // Update URL without triggering a page reload
+    // Update URL without triggering a Next.js re-render
     const newURL = url.pathname + (url.search ? url.search : '');
-    router.replace(newURL, { scroll: false });
+    window.history.replaceState(null, '', newURL);
   }, [router, enabledPodcastIds]);
 
   const friendlyPlaceholders = [
@@ -177,11 +175,11 @@ export default function Home() {
     "pizza..."
   ];
 
-  // Rotate placeholder text every 3 seconds
+  // Rotate placeholder text every 5.5 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       setPlaceholderIndex((prev) => (prev + 1) % friendlyPlaceholders.length);
-    }, 3000);
+    }, 5500);
     return () => clearInterval(interval);
   }, [friendlyPlaceholders.length]);
 
@@ -261,7 +259,7 @@ export default function Home() {
       }
     }
 
-    if (urlSort && ['relevance', 'date', 'title'].includes(urlSort)) {
+    if (urlSort && ['date', 'duration'].includes(urlSort)) {
       setSortBy(urlSort);
     }
 
@@ -296,16 +294,21 @@ export default function Home() {
   }, [searchQuery, selectedPodcasts, sortBy, sortDirection, dateRange, groupBy, preferencesLoaded, updateURL]);
 
   // Reusable search function
-  const performSearch = useCallback(async (query: string) => {
+  const performSearch = useCallback(async (query: string, pageNum: number = 1, append: boolean = false) => {
     if (!query) {
       setSearchResults([]);
       setTotalHits(0);
+      setCurrentPage(1);
       setSearchError(null);
       setIsSearching(false);
       return;
     }
 
-    setIsSearching(true);
+    if (append) {
+      setIsLoadingMore(true);
+    } else {
+      setIsSearching(true);
+    }
     setSearchError(null);
 
     try {
@@ -320,7 +323,8 @@ export default function Home() {
         limit: '20',
         sort: sortBy,
         sortDirection,
-        dateRange: dateRange
+        dateRange: dateRange,
+        page: String(pageNum),
       });
 
       if (podcast_id) searchParams.set('podcast_id', podcast_id);
@@ -336,7 +340,12 @@ export default function Home() {
         throw new Error('Search request failed');
       }
       const results = await response.json();
-      setSearchResults(results.hits as SearchHit[]);
+      if (append) {
+        setSearchResults(prev => [...prev, ...results.hits as SearchHit[]]);
+      } else {
+        setSearchResults(results.hits as SearchHit[]);
+        setCurrentPage(1);
+      }
       setTotalHits(results.estimatedTotalHits || 0);
     } catch (err) {
       const errorState = getErrorState(err);
@@ -346,44 +355,31 @@ export default function Home() {
       setTotalHits(0);
     } finally {
       setIsSearching(false);
+      setIsLoadingMore(false);
     }
   }, [selectedPodcasts, podcasts, sortBy, sortDirection, dateRange, customStartDate, customEndDate]);
 
-  // Handle immediate search (e.g., on Enter key)
+  // Search only on explicit submit (Enter key or form submit)
   const handleImmediateSearch = (query: string) => {
-    // Record this immediate search to prevent duplicate debounced search
-    lastImmediateSearchRef.current = {
-      query: query.trim(),
-      timestamp: Date.now()
-    };
-    performSearch(query);
+    setHasSearched(true);
+    setCurrentPage(1);
+    performSearch(query, 1, false);
   };
 
-  // Handle search when debounced query changes
-  useEffect(() => {
-    // Check if we just performed an immediate search for the same query
-    const lastImmediate = lastImmediateSearchRef.current;
-    const currentQuery = debouncedSearchQuery.trim();
-
-    // Skip debounced search if:
-    // 1. We just did an immediate search for the same query
-    // 2. The immediate search was within the last 500ms (debounce timeout + buffer)
-    if (lastImmediate &&
-        lastImmediate.query === currentQuery &&
-        Date.now() - lastImmediate.timestamp < 500) {
-      return;
-    }
-
-    performSearch(debouncedSearchQuery);
-  }, [debouncedSearchQuery, performSearch]);
+  const handleLoadMore = useCallback(() => {
+    const nextPage = currentPage + 1;
+    setCurrentPage(nextPage);
+    performSearch(searchQuery, nextPage, true);
+  }, [currentPage, searchQuery, performSearch]);
 
   // Handle logo click to reset everything
   const handleLogoReset = () => {
     // Reset search query
     setSearchQuery('');
+    setHasSearched(false);
 
     // Reset filters to defaults
-    setSortBy('relevance');
+    setSortBy('date');
     setSortDirection('desc');
     setDateRange('all');
     setGroupBy('none');
@@ -395,8 +391,10 @@ export default function Home() {
     // Clear search results
     setSearchResults([]);
     setTotalHits(0);
+    setCurrentPage(1);
     setSearchError(null);
     setIsSearching(false);
+    setIsLoadingMore(false);
 
     // Clear URL parameters
     router.replace('/', { scroll: false });
@@ -426,9 +424,11 @@ export default function Home() {
               />
             </div>
           </div>
-          <p className="text-lg text-body max-w-xl mx-auto font-medium leading-relaxed mb-8">
-            The most intelligent search engine for your favorite podcasts
-          </p>
+          {!searchQuery && (
+            <p className="text-lg text-body max-w-xl mx-auto font-medium leading-relaxed mb-8">
+              Search every word of your favorite podcasts
+            </p>
+          )}
         </header>
 
         <div className="max-w-4xl mx-auto">
@@ -458,14 +458,18 @@ export default function Home() {
             onGroupByChange={setGroupBy}
           />
 
-          <div className={`transition-opacity duration-200 ${!debouncedSearchQuery ? 'hidden' : ''}`}>
+          <div className={`transition-opacity duration-200 ${!searchQuery ? 'hidden' : ''}`}>
             <SearchResults
               key="search-results"
-              query={debouncedSearchQuery || ''}
+              query={searchQuery || ''}
               results={searchResults}
               totalHits={totalHits}
               error={searchError}
               isSearching={isSearching}
+              hasSearched={hasSearched}
+              isLoadingMore={isLoadingMore}
+              hasMore={searchResults.length < totalHits && totalHits > 0}
+              onLoadMore={handleLoadMore}
               groupBy={groupBy}
               podcasts={podcasts}
             />

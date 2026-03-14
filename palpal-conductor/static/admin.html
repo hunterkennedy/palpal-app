@@ -219,9 +219,18 @@
     <div class="card">
       <h2>🔍 discover new episodes</h2>
       <p class="muted small" style="margin-bottom:0.9rem">
-        Runs yt-dlp and adds newly found episodes as <span class="badge badge-discovered">discovered</span> without automatically processing them.
+        Runs yt-dlp and adds newly found episodes. Pipeline continues based on Auto Download / Auto Transcribe settings above.
       </p>
       <div class="discover-grid" id="discover-grid"></div>
+    </div>
+
+    <!-- Process Discovered -->
+    <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+      <div>
+        <div style="font-size:0.875rem;font-weight:500">Process Discovered</div>
+        <div class="muted small">Queue all <span class="badge badge-discovered">discovered</span> episodes through the pipeline now.</div>
+      </div>
+      <button class="btn btn-blue" id="process-discovered-btn" onclick="processDiscovered()">▶ run</button>
     </div>
 
     <!-- Episodes -->
@@ -364,7 +373,7 @@ async function doRefresh(silent) {
     const [schedRes, adminRes, epsRes, settingsRes, podsRes] = await Promise.all([
       api('GET', '/admin/scheduler/status'),
       api('GET', '/admin/status'),
-      api('GET', '/episodes'),
+      api('GET', '/admin/episodes'),
       api('GET', '/admin/pipeline-settings'),
       fetch('/podcasts'),
     ]);
@@ -389,7 +398,6 @@ async function doRefresh(silent) {
 }
 
 async function bustAndRefresh() {
-  try { await api('POST', '/admin/episodes/cache/bust'); } catch {}
   await doRefresh(true);
 }
 
@@ -524,7 +532,7 @@ async function discover(podcastId, podcastName) {
   const btn = document.getElementById(`db-${podcastId || 'all'}`);
   if (btn) { btn.disabled = true; btn.querySelector('span:last-child').innerHTML = '<span class="spinner"></span>'; }
   try {
-    const qs = new URLSearchParams({ auto_queue: 'false' });
+    const qs = new URLSearchParams({ auto_queue: 'true' });
     if (podcastId) qs.set('podcast_id', podcastId);
     const res = await api('POST', `/admin/discover?${qs}`);
     if (!res.ok) throw new Error(await res.text());
@@ -579,7 +587,7 @@ function renderStatusTabs() {
   document.getElementById('status-tabs').innerHTML = STATUS_TABS.map(tab => {
     const count = tab === 'all' ? S.episodes.length
       : tab === 'blacklisted' ? blCount
-      : (S.counts[tab] ?? 0);
+      : S.episodes.filter(e => e.status === tab).length;
     const active = S.statusFilter === tab;
     const cls = active ? (tab === 'blacklisted' ? 'active-bl' : 'active') : '';
     return `<button class="tab ${cls}" onclick="setStatusFilter('${tab}')">${tab === 'blacklisted' ? '⊘ ' : ''}${tab} (${count})</button>`;
@@ -775,6 +783,25 @@ function renderBulkBar(filtered) {
     btns += `<button class="btn btn-red"   style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="S.confirmBulkDelete=true;renderBulkBar(getFiltered())">🗑 delete</button>`;
   }
   document.getElementById('bulk-actions').innerHTML = btns;
+}
+
+async function processDiscovered() {
+  const btn = document.getElementById('process-discovered-btn');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const res = await api('POST', '/admin/episodes/process-discovered');
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    toast(`${data.queued} episode(s) queued`);
+    setTimeout(() => doRefresh(true), 1500);
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ run';
+  }
 }
 
 async function bulkAction(action) {

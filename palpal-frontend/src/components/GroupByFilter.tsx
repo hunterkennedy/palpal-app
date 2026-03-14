@@ -43,7 +43,7 @@ export default function GroupByFilter({
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/20 rounded-lg text-white transition-all duration-200 w-40 h-10"
+        className={`filter-trigger flex items-center gap-2 px-3 py-2 rounded-lg w-40 h-10 ${groupBy !== 'none' ? 'is-active' : ''}`}
       >
         {/* Icon Section - Left aligned, fixed width */}
         <div className="flex items-center justify-start w-4 h-4 flex-shrink-0">
@@ -58,13 +58,8 @@ export default function GroupByFilter({
       </button>
 
       {isOpen && (
-        <div className="absolute top-full mt-1 right-0 w-44 rounded-lg shadow-xl z-[99999]" style={{
-          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%)',
-          backdropFilter: 'blur(16px)',
-          border: '2px solid rgba(255, 255, 255, 0.1)',
-          boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 24px rgba(0, 0, 0, 0.3)'
-        }}>
-          <div className="p-2">
+        <div className="filter-dropdown absolute top-full mt-1 right-0 w-44 rounded-lg z-[99999]">
+          <div className="p-1.5">
             {groupByOptions.map((option) => (
               <button
                 key={option.value}
@@ -72,14 +67,12 @@ export default function GroupByFilter({
                   onGroupByChange(option.value);
                   setIsOpen(false);
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${
-                  groupBy === option.value
-                    ? 'bg-orange-600 text-white'
-                    : 'hover:bg-white/10 text-gray-300'
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm ${
+                  groupBy === option.value ? 'filter-option-selected' : 'filter-option'
                 }`}
               >
                 <option.icon className="w-4 h-4" />
-                <span className="text-sm">{option.label}</span>
+                <span>{option.label}</span>
               </button>
             ))}
           </div>

@@ -4,7 +4,6 @@ CREATE TABLE IF NOT EXISTS podcasts (
     display_name    TEXT        NOT NULL,
     description     TEXT        NOT NULL DEFAULT '',
     image           TEXT        NOT NULL DEFAULT '',
-    theme           JSONB       NOT NULL DEFAULT '{}',
     social_sections JSONB       NOT NULL DEFAULT '[]',
     enabled         BOOLEAN     NOT NULL DEFAULT TRUE,
     display_order   INTEGER     NOT NULL DEFAULT 0,
@@ -17,11 +16,11 @@ CREATE TABLE IF NOT EXISTS sources (
     id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     podcast_id  TEXT        NOT NULL REFERENCES podcasts(id) ON DELETE CASCADE,
     name        TEXT        NOT NULL,
-    site        TEXT        NOT NULL,       -- "youtube" | "patreon"
-    type        TEXT        NOT NULL,       -- "playlist" | "channel" | "user"
+    site        TEXT        NOT NULL,
+    type        TEXT        NOT NULL,
     url         TEXT        NOT NULL,
-    fetch_url   TEXT,                       -- Patreon collection override URL
-    description TEXT,                      -- e.g. "Season 1"
+    fetch_url   TEXT,
+    description TEXT,
     filters     JSONB       NOT NULL DEFAULT '{}',
     enabled     BOOLEAN     NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -52,8 +51,9 @@ CREATE INDEX IF NOT EXISTS idx_episodes_source_id  ON episodes(source_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_pub_date   ON episodes(publication_date DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_episodes_video_id   ON episodes(video_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_status     ON episodes(status);
+CREATE INDEX IF NOT EXISTS idx_episodes_blacklisted ON episodes(blacklisted) WHERE blacklisted = TRUE;
 
--- RAW TRANSCRIPTS (source of truth for re-chunking)
+-- RAW TRANSCRIPTS
 CREATE TABLE IF NOT EXISTS transcripts (
     episode_id  UUID        PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE,
     language    TEXT,
@@ -65,31 +65,22 @@ CREATE TABLE IF NOT EXISTS transcripts (
 CREATE TABLE IF NOT EXISTS transcript_chunks (
     id               UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
     episode_id       UUID          NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
-
-    -- Content
     text             TEXT          NOT NULL,
     word_count       INTEGER       NOT NULL DEFAULT 0,
     chunk_index      INTEGER       NOT NULL,
-
-    -- Timing
     start_time       NUMERIC(10,3) NOT NULL,
     end_time         NUMERIC(10,3) NOT NULL,
     duration         NUMERIC(10,3) NOT NULL,
     start_formatted  TEXT          NOT NULL DEFAULT '',
     end_formatted    TEXT          NOT NULL DEFAULT '',
     start_minutes    NUMERIC(8,2)  NOT NULL DEFAULT 0,
-
-    -- Denormalized from parents (avoids JOINs on search path)
     podcast_id       TEXT          NOT NULL,
     podcast_name     TEXT          NOT NULL DEFAULT '',
     source_name      TEXT          NOT NULL DEFAULT '',
     episode_title    TEXT          NOT NULL DEFAULT '',
     video_id         TEXT          NOT NULL DEFAULT '',
     publication_date DATE,
-
-    -- Full-text search
     search_vector    TSVECTOR,
-
     created_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 

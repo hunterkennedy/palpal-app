@@ -89,7 +89,7 @@ export default function FilterModal({
   const handleReset = () => {
     const enabledPodcastIds = podcasts.filter(p => p.enabled).map(p => p.id);
     setLocalSelectedPodcasts(enabledPodcastIds);
-    setLocalSortBy('relevance');
+    setLocalSortBy('date');
     setLocalSortDirection('desc');
     setLocalDateRange('all');
     setLocalGroupBy('none');
@@ -193,9 +193,8 @@ export default function FilterModal({
               <h3 className="modal-item-title mb-3">Sort By</h3>
               <div className="space-y-2">
                 {[
-                  { value: 'relevance' as SortOption, label: 'Relevance' },
                   { value: 'date' as SortOption, label: 'Date' },
-                  { value: 'title' as SortOption, label: 'Title' }
+                  { value: 'duration' as SortOption, label: 'Duration' }
                 ].map(option => (
                   <label
                     key={option.value}

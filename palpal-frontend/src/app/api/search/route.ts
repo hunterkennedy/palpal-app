@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
   const rawDateRange = searchParams.get('dateRange');
   const rawStartDate = searchParams.get('startDate');
   const rawEndDate = searchParams.get('endDate');
+  const rawPage = searchParams.get('page');
 
   try {
     const validated = searchSchema.parse({
@@ -31,9 +32,9 @@ export async function GET(request: NextRequest) {
 
     const { q: query, limit } = validated;
 
-    // Map conductor sort values (relevance/date/duration)
-    const sortBy = rawSort || 'relevance';
-    const conductorSort = ['relevance', 'date', 'duration'].includes(sortBy) ? sortBy : 'relevance';
+    // Map conductor sort values (date/duration)
+    const sortBy = rawSort || 'date';
+    const conductorSort = ['date', 'duration'].includes(sortBy) ? sortBy : 'date';
 
     // Compute date_from / date_to from date range preset or custom dates
     let date_from: string | undefined;
@@ -64,6 +65,9 @@ export async function GET(request: NextRequest) {
 
     const sortDirection = rawSortDirection === 'asc' ? 'asc' : 'desc';
 
+    const parsedPage = rawPage ? parseInt(rawPage, 10) : 1;
+    const page = Number.isFinite(parsedPage) ? Math.min(Math.max(parsedPage, 1), 1000) : 1;
+
     const conductorResult = await searchChunks({
       q: query,
       podcast_id: rawPodcastId || undefined,
@@ -71,6 +75,7 @@ export async function GET(request: NextRequest) {
       sort_direction: sortDirection,
       date_from,
       date_to,
+      page,
       page_size: limit,
     });
 

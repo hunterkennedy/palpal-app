@@ -1,20 +1,16 @@
-import type { Metadata } from "next";
+'use client';
+
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
-import AboutPage from '@/components/AboutPage';
+import WatchlistPage from '@/components/WatchlistPage';
 
-export const metadata: Metadata = {
-  title: "About - palpal",
-  description: "Learn about palpal, the podcast search engine",
-};
-
-export default function About() {
+export default function Watchlist() {
   return (
     <div className="page-container">
-      <Navbar currentPage="about" />
+      <Navbar currentPage="watchlist" />
 
       <div className="content-container">
-        <AboutPage />
+        <WatchlistPage />
       </div>
 
       <footer className="footer-container">

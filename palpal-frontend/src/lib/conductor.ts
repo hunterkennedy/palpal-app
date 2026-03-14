@@ -3,7 +3,10 @@
  * Uses CONDUCTOR_URL (runtime env, no NEXT_PUBLIC_ prefix).
  */
 
-const CONDUCTOR_URL = process.env.CONDUCTOR_URL || 'http://localhost:8000';
+const CONDUCTOR_URL = process.env.CONDUCTOR_URL;
+if (!CONDUCTOR_URL) {
+  throw new Error('CONDUCTOR_URL environment variable is not set');
+}
 
 export interface ConductorSearchParams {
   q: string;
@@ -85,7 +88,7 @@ export interface ConductorPodcast {
   display_name: string;
   description: string | null;
   image: string | null;
-  theme: Record<string, string> | null;
+  has_icon: boolean;
   social_sections: Array<{
     title: string;
     titleColor: string;

@@ -1,16 +1,15 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Clock, Play, AlertTriangle, RefreshCw, Bookmark, BookmarkCheck, Calendar } from 'lucide-react';
+import { AlertTriangle, RefreshCw, ChevronDown } from 'lucide-react';
 import Image from 'next/image';
-import DOMPurify from 'dompurify';
 import { SearchHit, ErrorState } from '@/types';
 import { saveChunk, unsaveChunk, isChunkSaved } from '@/lib/cookies';
+import { getWatchedVideoIds } from '@/lib/watchlist';
 import { SearchResultsSkeleton } from '@/components/LoadingSkeleton';
 import { PodcastConfig } from '@/types/podcast';
 import { GroupByOption } from '@/components/GroupByFilter';
-import ChunkNotes from '@/components/ChunkNotes';
-import { getWatchUrl, getWatchText, isPatreonSource } from '@/lib/chunk-utils';
+import SearchResultCard from '@/components/SearchResultCard';
 
 interface SearchResultsProps {
   query: string;
@@ -18,45 +17,23 @@ interface SearchResultsProps {
   totalHits: number;
   error: ErrorState | null;
   isSearching: boolean;
+  hasSearched: boolean;
+  isLoadingMore?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
   refreshSaveStatus?: boolean;
   groupBy?: GroupByOption;
   podcasts?: PodcastConfig[];
 }
 
-// Helper function to format publication dates
-const formatPublicationDate = (dateString?: string): string => {
-  if (!dateString) return '';
 
-  try {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - date.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 1) {
-      return 'Yesterday';
-    } else if (diffDays < 7) {
-      return `${diffDays} days ago`;
-    } else if (diffDays < 30) {
-      const weeks = Math.floor(diffDays / 7);
-      return `${weeks} week${weeks > 1 ? 's' : ''} ago`;
-    } else if (diffDays < 365) {
-      const months = Math.floor(diffDays / 30);
-      return `${months} month${months > 1 ? 's' : ''} ago`;
-    } else {
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    }
-  } catch {
-    return '';
-  }
-};
-
-export default function SearchResults({ query, results, totalHits, error, isSearching, refreshSaveStatus, groupBy = 'none', podcasts }: SearchResultsProps) {
+export default function SearchResults({ query, results, totalHits, error, isSearching, hasSearched, isLoadingMore, hasMore, onLoadMore, refreshSaveStatus, groupBy = 'none', podcasts }: SearchResultsProps) {
   const [savedChunkIds, setSavedChunkIds] = useState<Set<string>>(new Set());
+  const [watchedVideoIds, setWatchedVideoIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setWatchedVideoIds(getWatchedVideoIds());
+  }, []);
   
   // Function to update saved state
   const updateSavedState = useCallback(() => {
@@ -191,10 +168,14 @@ export default function SearchResults({ query, results, totalHits, error, isSear
     return (
       <div className="empty-state">
         <div className="text-center py-8">
-          <p className="text-body mb-4">No results found for "{query}"</p>
-          <p className="text-meta">
-            Try different keywords or broaden your filters.
-          </p>
+          {hasSearched ? (
+            <>
+              <p className="text-body mb-4">No results found for &ldquo;{query}&rdquo;</p>
+              <p className="text-meta">Try different keywords or broaden your filters.</p>
+            </>
+          ) : (
+            <p className="text-meta">Press Enter to search</p>
+          )}
         </div>
       </div>
     );
@@ -208,20 +189,9 @@ export default function SearchResults({ query, results, totalHits, error, isSear
       aria-live="polite"
       aria-atomic="false"
     >
-      <div className="flex items-center justify-between">
-        <h2
-          id="results-heading"
-          className="heading-primary"
-        >
-          Search Results
-        </h2>
-        <p
-          className="text-body"
-          aria-describedby="results-heading"
-        >
-          {totalHits >= 1000 ? '1000+' : totalHits} result{totalHits !== 1 ? 's' : ''} for "{query}"
-        </p>
-      </div>
+      <p className="text-meta" aria-live="polite">
+        {totalHits >= 1000 ? '1000+' : totalHits} result{totalHits !== 1 ? 's' : ''} for &ldquo;{query}&rdquo;
+      </p>
 
       <div
         className="space-y-6"
@@ -247,6 +217,7 @@ export default function SearchResults({ query, results, totalHits, error, isSear
                         alt={`${hits[0]?.podcast_name} icon`}
                         width={24}
                         height={24}
+                        unoptimized
                         className="rounded-full flex-shrink-0"
                       />
                     ) : null;
@@ -262,162 +233,38 @@ export default function SearchResults({ query, results, totalHits, error, isSear
             {/* Results in this group */}
             <div className={`${groupBy !== 'none' ? 'ml-4 space-y-4' : 'space-y-4'}`}>
               {hits.map((hit, index) => (
-                <article
+                <SearchResultCard
                   key={hit.id || `${groupKey}-${index}`}
-                  role="listitem"
-                  className="card-primary hover:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-900 transition-all duration-200 group relative"
-                  aria-labelledby={`result-${groupKey}-${index}-title`}
-                  aria-describedby={`result-${groupKey}-${index}-content result-${groupKey}-${index}-meta`}
-                >
-
-                  <div className="mb-4">
-                    {hit.title_highlighted ? (
-                      <h3
-                        id={`result-${groupKey}-${index}-title`}
-                        className="heading-secondary [&_mark]:bg-orange-500 [&_mark]:text-white [&_mark]:px-1 [&_mark]:rounded"
-                        dangerouslySetInnerHTML={{
-                          __html: DOMPurify.sanitize(hit.title_highlighted, {
-                            ALLOWED_TAGS: ['mark'],
-                            ALLOWED_ATTR: []
-                          })
-                        }}
-                      />
-                    ) : (
-                      <h3
-                        id={`result-${groupKey}-${index}-title`}
-                        className="heading-secondary"
-                      >
-                        {hit.episode_title}
-                      </h3>
-                    )}
-
-              {/* Podcast metadata with icon and release date */}
-              <div className="flex items-center gap-3 mb-3">
-                {/* Podcast icon and name */}
-                <div className="flex items-center gap-2 flex-1">
-                  {(() => {
-                    const podcastConfig = podcasts?.find(p => p.id === hit.podcast_id) ?? null;
-                    return podcastConfig?.image ? (
-                      <Image
-                        src={podcastConfig.image}
-                        alt={`${hit.podcast_name} icon`}
-                        width={20}
-                        height={20}
-                        className="rounded-full flex-shrink-0"
-                      />
-                    ) : null;
-                  })()}
-
-                  <span className="text-meta font-medium">
-                    {hit.podcast_name}
-                  </span>
-                </div>
-
-                {/* Publication date */}
-                {hit.publication_date && (
-                  <div className="flex items-center gap-1 text-meta text-sm">
-                    <Calendar className="w-3 h-3" />
-                    <span>{formatPublicationDate(hit.publication_date)}</span>
-                  </div>
-                )}
-              </div>
-              
-              <div className="prose max-w-none">
-                    {hit.text_highlighted ? (
-                      <p
-                        id={`result-${groupKey}-${index}-content`}
-                        className="text-body leading-relaxed [&_mark]:bg-orange-500 [&_mark]:text-white [&_mark]:px-1 [&_mark]:rounded"
-                        dangerouslySetInnerHTML={{
-                          __html: DOMPurify.sanitize(hit.text_highlighted, {
-                            ALLOWED_TAGS: ['mark'],
-                            ALLOWED_ATTR: []
-                          })
-                        }}
-                      />
-                    ) : (
-                      <p
-                        id={`result-${groupKey}-${index}-content`}
-                        className="text-body leading-relaxed"
-                      >
-                        {hit.text}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Notes section - only show if chunk is saved */}
-                  {hit.id && savedChunkIds.has(hit.id) && (
-                    <ChunkNotes chunkId={hit.id} />
-                  )}
-                </div>
-
-                <div className="flex items-center justify-between">
-                    <div
-                      id={`result-${groupKey}-${index}-meta`}
-                      className="flex flex-wrap gap-4 text-sm text-gray-400"
-                    >
-                      <a
-                        href={getWatchUrl(hit)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`flex items-center gap-1 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 rounded-md p-1 -m-1 ${
-                          isPatreonSource(hit)
-                            ? 'text-orange-500 hover:text-orange-400 focus:ring-orange-500'
-                            : 'text-red-500 hover:text-red-400 focus:ring-red-500'
-                        }`}
-                        aria-label={`${getWatchText(hit).replace('Watch on ', `Watch "${hit.episode_title}" on `)}${isPatreonSource(hit) ? '' : ` starting at ${hit.start_formatted}`}`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Play className="w-4 h-4" aria-hidden="true" />
-                        <span>{getWatchText(hit)}</span>
-                      </a>
-
-
-                      <div
-                        className="flex items-center gap-1"
-                        aria-label={`Timestamp: ${hit.start_formatted}`}
-                      >
-                        <Clock className="w-4 h-4" aria-hidden="true" />
-                        <span>{hit.start_formatted}</span>
-                      </div>
-
-                      {hit.rank !== undefined && (
-                        <div
-                          className="flex items-center gap-1"
-                          aria-label={`Search relevance: ${Math.round(hit.rank * 100)} percent`}
-                        >
-                          <span className="text-orange-500">
-                            {Math.round(hit.rank * 100)}% relevance
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Save Button */}
-                    {hit.id && (
-                      <button
-                        onClick={(e) => handleSaveToggle(hit, e)}
-                        className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-medium transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 group/save ${
-                          savedChunkIds.has(hit.id)
-                            ? 'pill-selected text-orange-100 focus:ring-orange-500'
-                            : 'pill-enhanced text-gray-200 hover:border-orange-400/30 focus:ring-gray-500'
-                        }`}
-                        aria-label={savedChunkIds.has(hit.id) ? 'Remove from saved' : 'Save this chunk'}
-                      >
-                        {savedChunkIds.has(hit.id) ? (
-                          <BookmarkCheck className="w-4 h-4 group-hover/save:scale-110 transition-transform duration-200" aria-hidden="true" />
-                        ) : (
-                          <Bookmark className="w-4 h-4 group-hover/save:scale-110 transition-transform duration-200" aria-hidden="true" />
-                        )}
-                        <span>{savedChunkIds.has(hit.id) ? 'Saved' : 'Save'}</span>
-                      </button>
-                    )}
-                  </div>
-                </article>
+                  hit={hit}
+                  groupKey={groupKey}
+                  index={index}
+                  isSaved={hit.id ? savedChunkIds.has(hit.id) : false}
+                  isWatched={hit.video_id ? watchedVideoIds.has(hit.video_id) : false}
+                  onSaveToggle={handleSaveToggle}
+                  podcasts={podcasts}
+                />
               ))}
             </div>
           </div>
         ))}
       </div>
+
+      {hasMore && (
+        <div className="flex justify-center pt-2">
+          <button
+            onClick={onLoadMore}
+            disabled={isLoadingMore}
+            className="flex items-center gap-2 btn-secondary px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isLoadingMore ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <ChevronDown className="w-4 h-4" />
+            )}
+            <span>{isLoadingMore ? 'Loading...' : 'Load more'}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

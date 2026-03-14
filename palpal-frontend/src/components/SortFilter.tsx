@@ -36,7 +36,6 @@ export default function SortFilter({
   }, []);
 
   const sortOptions = [
-    { value: 'relevance' as SortOption, label: 'Relevance' },
     { value: 'date' as SortOption, label: 'Date' },
     { value: 'duration' as SortOption, label: 'Duration' }
   ];
@@ -62,7 +61,7 @@ export default function SortFilter({
         {/* Direction Toggle Button - Always visible on left */}
         <button
           onClick={toggleSortDirection}
-          className="flex items-center justify-center px-2 py-2 bg-white/10 hover:bg-white/15 border border-white/20 rounded-l-lg text-white transition-all duration-200 w-8 h-10"
+          className="filter-trigger flex items-center justify-center px-2 py-2 rounded-l-lg w-8 h-10"
           title={`Sort ${sortDirection === 'asc' ? 'ascending' : 'descending'}`}
         >
           <DirectionIcon className="w-3 h-3" />
@@ -71,7 +70,7 @@ export default function SortFilter({
         {/* Main Sort Button */}
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/15 border border-l-0 border-white/20 rounded-r-lg text-white transition-all duration-200 w-32 h-10"
+          className={`filter-trigger flex items-center gap-2 px-3 py-2 border-l-0 rounded-r-lg w-32 h-10 ${sortBy !== 'date' ? 'is-active' : ''}`}
         >
           {/* Text Section - Left aligned */}
           <span className="text-sm font-medium truncate flex-1 text-left min-w-0">{currentSort?.label}</span>
@@ -82,13 +81,8 @@ export default function SortFilter({
       </div>
 
       {isOpen && (
-        <div className="absolute top-full mt-1 right-0 w-40 rounded-lg shadow-xl z-[99999]" style={{
-          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%)',
-          backdropFilter: 'blur(16px)',
-          border: '2px solid rgba(255, 255, 255, 0.1)',
-          boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 24px rgba(0, 0, 0, 0.3)'
-        }}>
-          <div className="p-2">
+        <div className="filter-dropdown absolute top-full mt-1 right-0 w-40 rounded-lg z-[99999]">
+          <div className="p-1.5">
             {sortOptions.map((option) => (
               <button
                 key={option.value}
@@ -96,13 +90,11 @@ export default function SortFilter({
                   onSortChange(option.value);
                   setIsOpen(false);
                 }}
-                className={`w-full flex items-center px-3 py-2 rounded-md transition-colors ${
-                  sortBy === option.value
-                    ? 'bg-orange-600 text-white'
-                    : 'hover:bg-white/10 text-gray-300'
+                className={`w-full flex items-center px-3 py-2 rounded-md text-sm ${
+                  sortBy === option.value ? 'filter-option-selected' : 'filter-option'
                 }`}
               >
-                <span className="text-sm">{option.label}</span>
+                <span>{option.label}</span>
               </button>
             ))}
           </div>

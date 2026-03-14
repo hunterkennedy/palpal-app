@@ -3,6 +3,8 @@ import json
 import logging
 from typing import TypedDict
 
+import httpx
+
 import db
 
 logger = logging.getLogger(__name__)
@@ -47,11 +49,81 @@ async def get_enabled_youtube_sources(podcast_id: str | None = None) -> list[Sou
     ]
 
 
+async def fetch_channel_icon(podcast_id: str, source_url: str) -> None:
+    """
+    Fetch the YouTube channel avatar for a podcast using the channel/playlist URL.
+    Downloads the image bytes and stores them in podcasts.icon.
+    No-op if the icon is already up to date or if anything fails.
+    """
+    try:
+        cmd = [
+            "yt-dlp",
+            "--dump-single-json",
+            "--no-warnings",
+            "--flat-playlist",
+            "--playlist-items", "0",
+            source_url,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, _ = await proc.communicate()
+        if proc.returncode != 0 or not stdout_bytes:
+            return
+
+        info = json.loads(stdout_bytes.decode())
+        thumbnails: list[dict] = info.get("thumbnails") or []
+
+        # Prefer avatar_uncropped, then highest preference value
+        avatar = next((t for t in thumbnails if t.get("id") == "avatar_uncropped"), None)
+        if not avatar:
+            avatar = max(
+                (t for t in thumbnails if t.get("url")),
+                key=lambda t: t.get("preference", 0),
+                default=None,
+            )
+        if not avatar:
+            return
+
+        thumbnail_url = avatar["url"]
+
+        pool = db.get_pool()
+        row = await pool.fetchrow("SELECT image FROM podcasts WHERE id = $1", podcast_id)
+        if not row:
+            return
+        if row["image"] == thumbnail_url:
+            return  # already current
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(thumbnail_url)
+        if resp.status_code != 200:
+            return
+
+        content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+        await pool.execute(
+            """
+            UPDATE podcasts
+            SET image = $1, icon = $2, icon_content_type = $3, updated_at = NOW()
+            WHERE id = $4
+            """,
+            thumbnail_url,
+            resp.content,
+            content_type,
+            podcast_id,
+        )
+        logger.info(f"Updated channel icon for podcast {podcast_id}")
+    except Exception as exc:
+        logger.warning(f"fetch_channel_icon failed for podcast {podcast_id}: {exc}")
+
+
 async def discover_youtube_source(
     source_id: str,
     url: str,
     source_type: str,
     filters: dict,
+    podcast_id: str = "",
 ) -> list[NewEpisode]:
     """
     Run yt-dlp --flat-playlist against the source URL, insert new episodes,
@@ -151,4 +223,9 @@ async def discover_youtube_source(
     logger.info(
         f"Source {source_id}: {len(new_episodes)} new episodes inserted"
     )
+
+    # Update channel icon using the source URL (channel/playlist page)
+    if podcast_id:
+        asyncio.create_task(fetch_channel_icon(podcast_id, url))
+
     return new_episodes

@@ -1,20 +1,7 @@
 import { SocialLinkData } from '@/components/SocialLink';
 
-export interface PodcastTheme {
-  primary: string;
-  secondary: string;
-  accent: string;
-  background: string;
-  gradientFrom: string;
-  gradientTo: string;
-  textPrimary: string;
-  textSecondary: string;
-  border: string;
-}
-
 export interface PodcastSocialSection {
   title: string;
-  titleColor: string;
   links: SocialLinkData[];
 }
 
@@ -33,9 +20,8 @@ export interface PodcastConfig {
   description: string;
   indexName: string;
   image: string;
-  theme: PodcastTheme;
   socialSections: PodcastSocialSection[];
   sources: PodcastSource[];
   enabled: boolean;
-  order: number; // Lower numbers appear first
+  order: number;
 }

@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Calendar, SortAsc, Filter } from 'lucide-react';
 
-export type SortOption = 'relevance' | 'date' | 'duration';
+export type SortOption = 'date' | 'duration';
 export type DateRange = 'all' | 'last_week' | 'last_month' | 'last_3_months' | 'last_year' | 'custom';
 
 interface SearchFiltersProps {
@@ -37,7 +37,6 @@ export default function SearchFilters({
   }, []);
 
   const sortOptions = [
-    { value: 'relevance' as SortOption, label: 'Relevance', icon: SortAsc },
     { value: 'date' as SortOption, label: 'Date', icon: Calendar },
     { value: 'duration' as SortOption, label: 'Duration', icon: SortAsc }
   ];
@@ -52,7 +51,7 @@ export default function SearchFilters({
 
   const getActiveFiltersCount = () => {
     let count = 0;
-    if (sortBy !== 'relevance') count++;
+    if (sortBy !== 'date') count++;
     if (dateRange !== 'all') count++;
     return count;
   };
@@ -96,7 +95,7 @@ export default function SearchFilters({
                   >
                     <option.icon className="w-4 h-4" />
                     <span className="text-sm">{option.label}</span>
-                    {sortBy === option.value && option.value !== 'relevance' && (
+                    {sortBy === option.value && option.value !== 'date' && (
                       <span className="ml-auto text-xs opacity-75">(active)</span>
                     )}
                   </button>
@@ -133,7 +132,7 @@ export default function SearchFilters({
               <div className="pt-4 border-t border-gray-700">
                 <button
                   onClick={() => {
-                    onSortChange('relevance');
+                    onSortChange('date');
                     onDateRangeChange('all');
                   }}
                   className="w-full px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"

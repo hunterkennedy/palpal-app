@@ -2,9 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Start backend (docker compose)",
+      "label": "Stop frontend container",
       "type": "shell",
-      "command": "docker compose up -d postgres palpal-conductor",
+      "command": "docker compose stop palpal-frontend",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -12,6 +12,20 @@
         "reveal": "silent",
         "panel": "shared"
       },
+      "problemMatcher": []
+    },
+    {
+      "label": "Start backend (docker compose)",
+      "type": "shell",
+      "command": "docker compose up -d --build postgres palpal-conductor",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "dependsOn": "Stop frontend container",
       "problemMatcher": []
     }
   ]

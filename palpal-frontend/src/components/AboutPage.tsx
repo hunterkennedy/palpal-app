@@ -1,5 +1,7 @@
 'use client';
 
+import { Github } from 'lucide-react';
+
 export default function AboutPage() {
   return (
     <div>
@@ -71,6 +73,15 @@ export default function AboutPage() {
                   </p>
                 </div>
 
+                <div>
+                  <h3 className="heading-tertiary">↔️ Use OR for Either/Or Searches</h3>
+                  <p className="text-meta">
+                    Use the uppercase word <code>OR</code> between terms to match results containing either one.
+                    <br />
+                    For example, <code>marshmallows OR smores</code> will find content that mentions either word.
+                  </p>
+                </div>
+
               </div>
             </div>
           </div>
@@ -83,7 +94,7 @@ export default function AboutPage() {
             <h2 className="heading-secondary">Technical Overview</h2>
             <div className="text-body space-y-4">
               <p>
-                palpal is built with modern web technologies to deliver fast, intelligent search capabilities:
+                palpal is built with modern web technologies to deliver fast, precise full-text search:
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <a href="https://nextjs.org/" target="_blank" rel="noopener noreferrer" className="card-secondary cursor-pointer">
@@ -115,48 +126,36 @@ export default function AboutPage() {
           </div>
         </section>
 
-        {/* Credits Section */}
-        <section>
-          <div className="card-primary">
-            <h2 className="heading-secondary">Credits</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="card-secondary">
-                <div className="flex items-center space-x-3">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: 'var(--accent-secondary)'}}></div>
-                  <div>
-                    <h3 className="heading-tertiary mb-0">Courtney Carpenter</h3>
-                    <p className="text-meta">Logo and Title Images</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
         {/* Source Code */}
         <section>
           <div className="card-primary">
             <h2 className="heading-secondary">Source Code</h2>
-            <div className="text-body space-y-3">
-              <p>palpal is open source. Check out the code on GitHub:</p>
-              <div className="space-y-2">
-                <a
-                  href="https://github.com/hunterkennedy/palpal-app"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 nav-link-accent hover:text-orange-300 transition-colors"
-                >
-                  github.com/hunterkennedy/palpal-app
-                </a>
-                <a
-                  href="https://github.com/hunterkennedy/blurb"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 nav-link-accent hover:text-orange-300 transition-colors"
-                >
-                  github.com/hunterkennedy/blurb
-                </a>
-              </div>
+            <p className="text-body mb-4">palpal is open source. Check out the code on GitHub:</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <a
+                href="https://github.com/hunterkennedy/palpal-app"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="card-secondary cursor-pointer"
+              >
+                <h3 className="heading-tertiary mb-2 flex items-center gap-2">
+                  <Github size={16} className="text-orange-400" />
+                  <span className="text-orange-400">palpal-app</span>
+                </h3>
+                <p className="text-meta">Frontend, conductor pipeline, and infrastructure</p>
+              </a>
+              <a
+                href="https://github.com/hunterkennedy/blurb"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="card-secondary cursor-pointer"
+              >
+                <h3 className="heading-tertiary mb-2 flex items-center gap-2">
+                  <Github size={16} className="text-orange-400" />
+                  <span className="text-orange-400">blurb</span>
+                </h3>
+                <p className="text-meta">GPU-accelerated transcription service</p>
+              </a>
             </div>
           </div>
         </section>

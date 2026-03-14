@@ -66,7 +66,7 @@ export default function DateRangeFilter({
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/20 rounded-lg text-white transition-all duration-200 w-40 h-10"
+        className={`filter-trigger flex items-center gap-2 px-3 py-2 rounded-lg w-40 h-10 ${dateRange !== 'all' ? 'is-active' : ''}`}
       >
         {/* Icon Section - Left aligned, fixed width */}
         <div className="flex items-center justify-start w-4 h-4 flex-shrink-0">
@@ -81,13 +81,8 @@ export default function DateRangeFilter({
       </button>
 
       {isOpen && (
-        <div className="absolute top-full mt-1 right-0 w-44 rounded-lg shadow-xl z-[99999]" style={{
-          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%)',
-          backdropFilter: 'blur(16px)',
-          border: '2px solid rgba(255, 255, 255, 0.1)',
-          boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 24px rgba(0, 0, 0, 0.3)'
-        }}>
-          <div className="p-2">
+        <div className="filter-dropdown absolute top-full mt-1 right-0 w-44 rounded-lg z-[99999]">
+          <div className="p-1.5">
             {dateOptions.map((option) => (
               <button
                 key={option.value}
@@ -100,39 +95,38 @@ export default function DateRangeFilter({
                     setShowCustomInputs(false);
                   }
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${
-                  dateRange === option.value
-                    ? 'bg-orange-600 text-white'
-                    : 'hover:bg-white/10 text-gray-300'
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm ${
+                  dateRange === option.value ? 'filter-option-selected' : 'filter-option'
                 }`}
               >
                 <Calendar className="w-4 h-4" />
-                <span className="text-sm">{option.label}</span>
+                <span>{option.label}</span>
               </button>
             ))}
 
             {/* Custom Date Range Inputs */}
             {showCustomInputs && (
-              <div className="mt-3 pt-3 border-t border-white/10 space-y-3">
+              <div className="mt-2 pt-2 space-y-2" style={{ borderTop: '1px solid var(--border-primary)' }}>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Start Date</label>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Start Date</label>
                   <input
                     type="date"
                     value={customStartDate}
                     onChange={(e) => onCustomDateChange?.(e.target.value, customEndDate)}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-md text-white text-sm focus:outline-none focus:border-orange-400 transition-colors"
+                    className="w-full px-3 py-2 rounded-md text-sm focus:outline-none transition-colors"
+                    style={{ background: 'var(--surface-primary)', border: '1px solid var(--border-primary)', color: 'var(--text-primary)' }}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">End Date</label>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>End Date</label>
                   <input
                     type="date"
                     value={customEndDate}
                     onChange={(e) => onCustomDateChange?.(customStartDate, e.target.value)}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-md text-white text-sm focus:outline-none focus:border-orange-400 transition-colors"
+                    className="w-full px-3 py-2 rounded-md text-sm focus:outline-none transition-colors"
+                    style={{ background: 'var(--surface-primary)', border: '1px solid var(--border-primary)', color: 'var(--text-primary)' }}
                   />
                 </div>
-
               </div>
             )}
           </div>

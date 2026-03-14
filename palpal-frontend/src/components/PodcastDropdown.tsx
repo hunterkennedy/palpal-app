@@ -74,7 +74,7 @@ export default function PodcastDropdown({
         {/* Main Dropdown Button - Always same width */}
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-3 px-4 py-2 bg-white/10 hover:bg-white/15 border border-white/20 rounded-l-lg text-white transition-all duration-200 h-10 w-40"
+          className={`filter-trigger flex items-center gap-3 px-4 py-2 rounded-l-lg h-10 w-40 ${selectedPodcasts.length > 0 ? 'is-active' : ''}`}
         >
           {/* Icons Section - Larger, more prominent */}
           <div className="flex items-center justify-start flex-shrink-0">
@@ -87,19 +87,20 @@ export default function PodcastDropdown({
                     alt={podcast.displayName}
                     width={24}
                     height={24}
-                    className="w-6 h-6 rounded-full border-2 border-gray-700 object-cover"
-                    style={{ zIndex: getSelectedPodcastImages().length - index }}
+                    unoptimized
+                    className="w-6 h-6 rounded-full object-cover"
+                    style={{ border: '2px solid var(--bg-secondary)', zIndex: getSelectedPodcastImages().length - index }}
                   />
                 ))}
                 {selectedPodcasts.length > 4 && (
-                  <div className="w-6 h-6 rounded-full bg-orange-600 border-2 border-gray-700 flex items-center justify-center text-xs font-bold text-white" style={{ zIndex: 0 }}>
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: 'var(--accent-primary)', color: 'var(--bg-tertiary)', border: '2px solid var(--bg-secondary)', zIndex: 0 }}>
                     +{selectedPodcasts.length - 4}
                   </div>
                 )}
               </div>
             ) : (
-              <div className="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center">
-                <span className="text-xs font-bold text-gray-300">All</span>
+              <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-elevated)', border: '1px solid var(--border-primary)' }}>
+                <span className="text-xs font-bold" style={{ color: 'var(--text-muted)' }}>All</span>
               </div>
             )}
           </div>
@@ -117,7 +118,7 @@ export default function PodcastDropdown({
         </button>
 
         {/* Clear Button Area - Always visible, stable layout */}
-        <div className="flex items-center justify-center px-3 py-2 bg-white/10 border border-l-0 border-white/20 rounded-r-lg text-white transition-all duration-200 w-12 h-10">
+        <div className="filter-trigger flex items-center justify-center px-3 py-2 border-l-0 rounded-r-lg w-12 h-10">
           {selectedPodcasts.length > 0 ? (
             <button
               onClick={clearSelection}
@@ -135,45 +136,48 @@ export default function PodcastDropdown({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute top-full mt-1 right-0 w-72 rounded-lg shadow-xl z-[99999] max-h-80 overflow-hidden" style={{
-          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%)',
-          backdropFilter: 'blur(16px)',
-          border: '2px solid rgba(255, 255, 255, 0.1)',
-          boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 24px rgba(0, 0, 0, 0.3)'
-        }}>
+        <div className="filter-dropdown absolute top-full mt-1 right-0 w-72 rounded-lg z-[99999] max-h-80 overflow-hidden">
           {/* Search Input */}
-          <div className="p-3 border-b border-white/10">
+          <div className="p-2.5" style={{ borderBottom: '1px solid var(--border-primary)' }}>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search podcasts..."
-                className="w-full pl-10 pr-10 py-2 bg-white/5 border border-white/20 rounded-md text-white placeholder-gray-400 focus:outline-none focus:border-orange-400 transition-colors"
+                className="w-full pl-9 pr-8 py-2 rounded-md text-sm focus:outline-none transition-colors"
+                style={{
+                  background: 'var(--surface-primary)',
+                  border: '1px solid var(--border-primary)',
+                  color: 'var(--text-primary)',
+                }}
               />
               {searchTerm && (
                 <button
                   onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
+                  style={{ color: 'var(--text-muted)' }}
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
           </div>
 
           {/* Quick Actions */}
-          <div className="p-2 border-b border-gray-700 flex gap-2">
+          <div className="flex gap-2 px-2.5 py-2" style={{ borderBottom: '1px solid var(--border-primary)' }}>
             <button
               onClick={() => onSelectionChange(enabledPodcasts.map(p => p.id))}
-              className="px-3 py-1 text-xs bg-orange-600 hover:bg-orange-700 text-white rounded-md transition-colors"
+              className="px-3 py-1 text-xs rounded-md transition-colors"
+              style={{ background: 'rgba(255,140,66,0.15)', color: 'var(--accent-primary)' }}
             >
               Select All
             </button>
             <button
               onClick={() => onSelectionChange([])}
-              className="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors"
+              className="px-3 py-1 text-xs rounded-md transition-colors"
+              style={{ background: 'var(--surface-primary)', color: 'var(--text-muted)', border: '1px solid var(--border-primary)' }}
             >
               Clear All
             </button>
@@ -182,7 +186,7 @@ export default function PodcastDropdown({
           {/* Podcast List */}
           <div className="max-h-48 overflow-y-auto">
             {filteredPodcasts.length === 0 ? (
-              <div className="p-4 text-center text-gray-400 text-sm">
+              <div className="p-4 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
                 No podcasts found
               </div>
             ) : (
@@ -192,8 +196,8 @@ export default function PodcastDropdown({
                   <button
                     key={podcast.id}
                     onClick={() => togglePodcast(podcast.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-white/10 transition-colors ${
-                      isSelected ? 'bg-orange-900/30' : ''
+                    className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${
+                      isSelected ? 'filter-option-selected' : 'filter-option'
                     }`}
                   >
                     <Image
@@ -201,13 +205,14 @@ export default function PodcastDropdown({
                       alt=""
                       width={32}
                       height={32}
+                      unoptimized
                       className="w-8 h-8 rounded-full object-cover flex-shrink-0"
                     />
-                    <span className="text-white text-sm font-medium flex-1 text-left truncate">
+                    <span className="text-sm font-medium flex-1 text-left truncate">
                       {podcast.displayName}
                     </span>
                     {isSelected && (
-                      <div className="w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center">
+                      <div className="w-4 h-4 rounded-full flex items-center justify-center" style={{ background: 'var(--accent-primary)' }}>
                         <div className="w-2 h-2 bg-white rounded-full" />
                       </div>
                     )}

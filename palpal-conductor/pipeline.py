@@ -84,7 +84,8 @@ async def run_discovery(
     for source in sources:
         try:
             new_episodes = await discover_youtube_source(
-                source["id"], source["url"], source["type"], source["filters"]
+                source["id"], source["url"], source["type"], source["filters"],
+                podcast_id=source["podcast_id"],
             )
             for ep in new_episodes:
                 total_new.append(ep["episode_id"])

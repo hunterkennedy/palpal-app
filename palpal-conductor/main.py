@@ -9,7 +9,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 import db
 import pipeline_settings
@@ -292,6 +292,18 @@ async def retranscribe_episode(episode_id: str):
     return {"status": "retranscribing", "episode_id": episode_id}
 
 
+@app.post("/admin/episodes/process-discovered", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def process_all_discovered():
+    """Queue all episodes in 'discovered' status through the pipeline."""
+    pool = db.get_pool()
+    rows = await pool.fetch(
+        "SELECT id::text FROM episodes WHERE status = 'discovered' AND blacklisted = FALSE"
+    )
+    for row in rows:
+        asyncio.create_task(run_episode(row["id"]))
+    return {"queued": len(rows)}
+
+
 @app.post("/admin/episodes/bulk-action", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
 async def bulk_episode_action(body: BulkActionRequest):
     """Apply an action to a list of episode IDs. Returns per-episode results."""
@@ -441,6 +453,12 @@ async def list_episodes() -> list[EpisodeInfo]:
     return data
 
 
+@app.get("/admin/episodes", tags=["admin"], response_model=list[EpisodeInfo], dependencies=[Depends(verify_blurb_token)])
+async def admin_list_episodes() -> list[EpisodeInfo]:
+    """All episodes — always live from DB, no cache. For admin panel use."""
+    return await _fetch_episodes()
+
+
 @app.post("/admin/episodes/cache/bust", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
 async def bust_episodes_cache() -> dict:
     """Force the next /episodes request to re-query the DB."""
@@ -468,7 +486,7 @@ async def search(
     sort: str = Query("relevance", pattern="^(relevance|date|duration)$", description="Sort order"),
     date_from: date | None = Query(None, description="Filter: publication date from (inclusive)"),
     date_to: date | None = Query(None, description="Filter: publication date to (inclusive)"),
-    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page: int = Query(1, ge=1, le=1000, description="Page number (1-based)"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
 ) -> SearchResponse:
     order_clause = {
@@ -538,6 +556,8 @@ async def chunks(
     )
     if not center:
         raise HTTPException(status_code=404, detail="Chunk not found")
+    chunk_low = center["chunk_index"] - radius
+    chunk_high = center["chunk_index"] + radius
     rows = await pool.fetch(
         """
         SELECT id::text, episode_id::text, chunk_index, text, start_time, end_time,
@@ -545,10 +565,10 @@ async def chunks(
                podcast_id, podcast_name, source_name, episode_title, video_id, publication_date
         FROM transcript_chunks
         WHERE episode_id = $1
-          AND chunk_index BETWEEN $2 - $3 AND $2 + $3
+          AND chunk_index BETWEEN $2 AND $3
         ORDER BY chunk_index
         """,
-        center["episode_id"], center["chunk_index"], radius,
+        center["episode_id"], chunk_low, chunk_high,
     )
     return [ChunkResult(**dict(row)) for row in rows]
 
@@ -557,7 +577,8 @@ async def _fetch_podcasts() -> list[PodcastResult]:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
-        SELECT p.id, p.display_name, p.description, p.image, p.theme,
+        SELECT p.id, p.display_name, p.description, p.image,
+               (p.icon IS NOT NULL) AS has_icon,
                p.social_sections, p.display_order,
                COALESCE(
                    json_agg(
@@ -597,6 +618,23 @@ async def podcasts() -> list[PodcastResult]:
     _podcasts_cache["data"] = data
     _podcasts_cache["fetched_at"] = time.monotonic()
     return data
+
+
+@app.get("/podcasts/{podcast_id}/image", tags=["search"])
+async def get_podcast_image(podcast_id: str) -> Response:
+    """Return the stored channel icon for a podcast."""
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        "SELECT icon, icon_content_type FROM podcasts WHERE id = $1 AND enabled = TRUE",
+        podcast_id,
+    )
+    if not row or not row["icon"]:
+        raise HTTPException(status_code=404, detail="No icon available")
+    return Response(
+        content=bytes(row["icon"]),
+        media_type=row["icon_content_type"] or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/episodes/check", tags=["episodes"])

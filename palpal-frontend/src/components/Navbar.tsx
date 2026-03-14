@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Search, Info, Heart } from 'lucide-react';
+import { Search, Info, Heart, Tv2 } from 'lucide-react';
 
 interface NavbarProps {
   currentPage: string;
@@ -57,6 +57,13 @@ export default function Navbar({ currentPage }: NavbarProps) {
             Saved
           </Link>
           <Link
+            href="/watchlist"
+            className={`${getButtonClasses('watchlist')} nav-pill px-6 py-3 transition-all duration-300 shadow-lg`}
+          >
+            <Tv2 className="w-4 h-4 mr-2" />
+            Episodes
+          </Link>
+          <Link
             href="/about"
             className={`${getButtonClasses('about')} nav-pill px-6 py-3 transition-all duration-300 shadow-lg`}
           >
@@ -80,6 +87,13 @@ export default function Navbar({ currentPage }: NavbarProps) {
             aria-label="Saved"
           >
             <Heart className="w-4 h-4" />
+          </Link>
+          <Link
+            href="/watchlist"
+            className={`${getButtonClasses('watchlist')} nav-pill px-3 py-2.5 transition-all duration-300 shadow-lg`}
+            aria-label="Episodes"
+          >
+            <Tv2 className="w-4 h-4" />
           </Link>
           <Link
             href="/about"

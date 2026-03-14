@@ -17,25 +17,25 @@
   /* Border colors - warm neutral tones */
   --border-primary: rgba(255, 248, 240, 0.12);   /* warm white/12 - main borders */
   --border-secondary: rgba(255, 248, 240, 0.06); /* warm white/6 - subtle borders */
-  --border-accent: rgba(255, 140, 66, 0.5);      /* peach/50 - accent borders */
+  --border-accent: rgba(254, 133, 0, 0.5);      /* peach/50 - accent borders */
 
   /* Text colors - warm whites and softer grays */
   --text-primary: #faf8f5;      /* Warm white - headings */
   --text-secondary: #eaeaea;    /* Soft warm gray - body text */
   --text-tertiary: #d0cdc7;     /* Warm medium gray - secondary text */
-  --text-muted: #a8a5a0;        /* Warm muted gray - muted text */
-  --text-subtle: #6b6862;       /* Warm dark gray - subtle text */
+  --text-muted: #b0ada8;        /* Warm muted gray - muted text (~6.5:1 on surface-primary) */
+  --text-subtle: #7a7671;       /* Warm dark gray - subtle/decorative text only */
 
-  /* Accent colors - friendly orange to peach gradient */
-  --accent-primary: #ff8c42;    /* Warm orange - main accent */
-  --accent-secondary: #ff7733;  /* Vibrant orange - stronger accent */
-  --accent-tertiary: #e86c28;   /* Deep warm orange - darkest accent */
-  --accent-light: #ffab80;      /* Soft peach - light accent */
-  --accent-glow: #ffb366;       /* Warm glow color */
+  /* Accent colors - matches logo orange (#fe8500) */
+  --accent-primary: #fe8500;    /* Pure logo orange - main accent */
+  --accent-secondary: #e07600;  /* Darker orange - stronger accent */
+  --accent-tertiary: #c46500;   /* Deep orange - darkest accent */
+  --accent-light: #ffaa33;      /* Warm amber - light accent */
+  --accent-glow: #ffaa33;       /* Warm amber glow */
 
   /* Friendly gradient colors */
-  --gradient-warm: linear-gradient(135deg, #ff8c42, #ffab80, #ffd4a3);
-  --gradient-sunset: linear-gradient(135deg, #ff8c42, #ff7733);
+  --gradient-warm: linear-gradient(135deg, #fe8500, #ffaa33, #ffd480);
+  --gradient-sunset: linear-gradient(135deg, #fe8500, #e07600);
 
   /* Semantic colors - warmer tones */
   --success: #2dd4aa;
@@ -296,7 +296,7 @@ code {
   height: 100vh;
   background:
     linear-gradient(to bottom, #242220 0%, #151413 100%),
-    radial-gradient(circle at 20% 20%, rgba(255, 140, 66, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 20% 20%, rgba(254, 133, 0, 0.08) 0%, transparent 50%),
     radial-gradient(circle at 80% 80%, rgba(255, 179, 102, 0.05) 0%, transparent 50%),
     radial-gradient(circle at 50% 50%, rgba(255, 183, 107, 0.02) 0%, transparent 70%);
   pointer-events: none;
@@ -330,7 +330,11 @@ code {
   backdrop-filter: blur(4px);
 }
 
-/* .card-secondary:hover removed - no hover effects */
+/* Hover only for card-secondary used as interactive elements */
+a.card-secondary:hover, button.card-secondary:hover {
+  border-color: rgba(254, 133, 0, 0.25);
+  background: rgba(40, 40, 40, 0.8);
+}
 
 .card-elevated {
   @apply rounded-xl p-6 border transition-all duration-200;
@@ -374,54 +378,53 @@ code {
 .btn-primary {
   @apply inline-block px-6 py-3 rounded-2xl font-medium transition-all duration-300 shadow-lg;
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  box-shadow: 0 4px 15px rgba(255, 140, 66, 0.3);
+  color: var(--bg-tertiary);
+  box-shadow: 0 4px 15px rgba(254, 133, 0, 0.3);
 }
 
 .btn-primary:hover {
   background: linear-gradient(135deg, var(--accent-secondary), var(--accent-tertiary));
-  color: white;
-  box-shadow: 0 6px 20px rgba(255, 140, 66, 0.4), 0 0 20px rgba(255, 140, 66, 0.2);
+  color: var(--bg-tertiary);
+  box-shadow: 0 6px 20px rgba(254, 133, 0, 0.45);
 }
 
 .btn-secondary {
-  @apply px-4 py-2 rounded-2xl font-medium transition-all duration-300 border-2;
-  background: rgba(42, 42, 42, 0.8);
-  border-color: rgba(255, 248, 240, 0.15);
-  color: var(--text-tertiary);
+  @apply px-4 py-2 rounded-2xl font-medium transition-all duration-300 border;
+  background: var(--surface-primary);
+  border-color: var(--border-primary);
+  color: var(--text-secondary);
   backdrop-filter: blur(12px);
 }
 
 .btn-secondary:hover {
-  background: rgba(50, 48, 45, 0.9);
-  border-color: rgba(255, 140, 66, 0.4);
-  color: var(--text-secondary);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3), 0 0 12px rgba(255, 140, 66, 0.15);
+  background: var(--surface-elevated);
+  border-color: rgba(254, 133, 0, 0.35);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .btn-active {
-  @apply px-4 py-2 rounded-2xl font-medium transition-all duration-300 border-2 shadow-lg;
-  background: linear-gradient(135deg, #c14d0c, #d45a1a);
-  border-color: #c14d0c;
-  color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-  box-shadow: 0 4px 15px rgba(255, 140, 66, 0.4), 0 0 20px rgba(255, 140, 66, 0.2);
+  @apply px-4 py-2 rounded-2xl font-medium transition-all duration-300 border;
+  background: var(--surface-primary);
+  border-color: rgba(254, 133, 0, 0.6);
+  color: var(--accent-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .btn-active:hover {
-  background: linear-gradient(135deg, #a5420a, #c14d0c);
-  box-shadow: 0 6px 20px rgba(255, 140, 66, 0.5), 0 0 25px rgba(255, 140, 66, 0.3);
-  color: #ffffff;
+  background: var(--surface-elevated);
+  border-color: rgba(254, 133, 0, 0.8);
+  color: var(--accent-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
-/* Enhanced nav pill styling with Neon & Wires motif */
+/* Nav pill — border/bg handled by btn-secondary / btn-active */
 .nav-pill {
-  @apply rounded-2xl font-medium backdrop-blur-sm border-2 transition-all duration-300;
+  @apply rounded-2xl backdrop-blur-sm transition-all duration-300;
 }
 
 .nav-pill:hover {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 15px rgba(255, 140, 66, 0.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
 /* Navigation Components */
@@ -544,55 +547,98 @@ code {
 
 .pill-enhanced:hover {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
-  border-color: rgba(255, 140, 66, 0.3);
+  border-color: rgba(254, 133, 0, 0.3);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.15),
     0 2px 8px rgba(0, 0, 0, 0.25),
-    0 0 12px rgba(255, 140, 66, 0.15);
+    0 0 12px rgba(254, 133, 0, 0.15);
 }
 
 .pill-selected {
-  background: linear-gradient(135deg, rgba(255, 140, 66, 0.25) 0%, rgba(255, 115, 51, 0.15) 100%);
-  border: 1px solid rgba(255, 140, 66, 0.5);
+  background: linear-gradient(135deg, rgba(254, 133, 0, 0.25) 0%, rgba(224, 118, 0, 0.15) 100%);
+  border: 1px solid rgba(254, 133, 0, 0.5);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 2px 8px rgba(255, 140, 66, 0.3),
-    0 0 12px rgba(255, 140, 66, 0.2);
+    0 2px 8px rgba(254, 133, 0, 0.3),
+    0 0 12px rgba(254, 133, 0, 0.2);
 }
 
 .pill-all-mode {
-  background: linear-gradient(135deg, rgba(255, 140, 66, 0.12) 0%, rgba(255, 140, 66, 0.06) 100%);
-  border: 1px solid rgba(255, 140, 66, 0.25);
+  background: linear-gradient(135deg, rgba(254, 133, 0, 0.12) 0%, rgba(254, 133, 0, 0.06) 100%);
+  border: 1px solid rgba(254, 133, 0, 0.25);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 2px 8px rgba(255, 140, 66, 0.1);
+    0 2px 8px rgba(254, 133, 0, 0.1);
 }
 
 .pill-all-mode:hover {
-  background: linear-gradient(135deg, rgba(255, 140, 66, 0.18) 0%, rgba(255, 140, 66, 0.08) 100%);
-  border: 1px solid rgba(255, 140, 66, 0.4);
+  background: linear-gradient(135deg, rgba(254, 133, 0, 0.18) 0%, rgba(254, 133, 0, 0.08) 100%);
+  border: 1px solid rgba(254, 133, 0, 0.4);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.15),
-    0 2px 8px rgba(255, 140, 66, 0.15),
-    0 0 12px rgba(255, 140, 66, 0.1);
+    0 2px 8px rgba(254, 133, 0, 0.15),
+    0 0 12px rgba(254, 133, 0, 0.1);
 }
 
 /* Enhanced Search Bar */
 .search-bar-enhanced {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
+  background: var(--surface-primary);
   backdrop-filter: blur(16px);
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-primary);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 4px 24px rgba(0, 0, 0, 0.3);
 }
 
 .search-bar-enhanced:focus-within {
-  border-color: rgba(255, 140, 66, 0.8);
+  border-color: rgba(254, 133, 0, 0.6);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 4px 32px rgba(0, 0, 0, 0.4),
-    0 0 20px 3px rgba(255, 140, 66, 1.0);
+    0 0 0 3px rgba(254, 133, 0, 0.08),
+    0 0 24px rgba(254, 133, 0, 0.25);
+}
+
+/* Search input placeholder — use muted token for accessible contrast */
+.search-bar-enhanced input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Filter Dropdown Components — shared across SortFilter, DateRangeFilter, GroupByFilter, PodcastDropdown */
+.filter-trigger {
+  background: var(--surface-primary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.filter-trigger:hover {
+  background: var(--surface-elevated);
+  border-color: rgba(254, 133, 0, 0.35);
+  color: var(--text-primary);
+}
+.filter-trigger.is-active {
+  border-color: rgba(254, 133, 0, 0.5);
+  color: var(--accent-light);  /* #ffab80 — more readable than accent-primary on dark bg */
+}
+.filter-dropdown {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-primary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.filter-option {
+  color: var(--text-secondary);
+  transition: background 0.12s, color 0.12s;
+}
+.filter-option:hover {
+  background: rgba(255, 248, 240, 0.06);
+  color: var(--text-primary);
+}
+.filter-option-selected {
+  background: rgba(254, 133, 0, 0.14);
+  color: var(--accent-primary);
+}
+.filter-option-selected:hover {
+  background: rgba(254, 133, 0, 0.2);
 }
 
 /* Saved Page Components */
