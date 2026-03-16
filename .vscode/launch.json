@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Dev (frontend + backend)",
+      "name": "Dev (frontend + live conductor)",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}/palpal-frontend",
@@ -14,7 +14,7 @@
         "uriFormat": "%s",
         "action": "openExternally"
       },
-      "preLaunchTask": "Start backend (docker compose)"
-    }
+      "preLaunchTask": "Run conductor (live)"
+    },
   ]
 }

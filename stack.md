@@ -12,8 +12,8 @@ palpal is a podcast transcript search app.
 [Pipeline in conductor]
   - Episode discovery (yt-dlp --flat-playlist → DB insert)
   - Download (yt-dlp → Docker volume, one at a time via semaphore)
-  - POST audio to blurb
-  - Webhook receiver → transcript processing → DB write
+  - POST audio to blurb, poll until complete
+  - Transcript processing → DB write
 
 [FastAPI in conductor]
   - GET  /search                              (FTS with ts_headline highlights)
@@ -24,7 +24,6 @@ palpal is a podcast transcript search app.
   - GET  /health
   - GET  /admin/status
   - GET  /admin/scheduler/status
-  - POST /blurb/webhook/{job_id}
   - POST /admin/discover                      (?podcast_id=, ?auto_queue=)
   - POST /admin/scheduler/pause
   - POST /admin/scheduler/resume
@@ -33,7 +32,7 @@ palpal is a podcast transcript search app.
   - POST /admin/episodes/cache/bust
 
 [palpal-frontend] → [FastAPI in conductor] → [Postgres]
-[palpal-blurb]    → receives audio POST, sends webhook back to conductor
+[palpal-blurb]    → receives audio POST; conductor polls for result
 ```
 
 ---
@@ -60,10 +59,9 @@ Data management and orchestration platform. Contains two things running together
 
 ### Blurb coordination
 - Auth: shared API key in `Authorization` header, configured via env vars on both sides
-- Blurb POSTs completed transcripts to `/blurb/webhook/{job_id}`
+- Conductor polls `GET /jobs/{job_id}` until complete, then fetches result from `GET /jobs/{job_id}/result`
 
 ### Transcript processing
-- Webhook receiver accepts raw transcript from blurb
 - Chunks transcript into searchable segments
 - Writes chunks + episode metadata to postgres
 - Raw segments also saved to `transcripts` table (source of truth for re-chunking)
@@ -85,8 +83,8 @@ Transcription app. Lives on local PC, uses GPU. Operates at random hours. Runs n
 - API key auth system (this doubles as the shared secret mechanism with conductor)
 - Job status tracking in memory
 - Startup/shutdown hooks — registers/deregisters with conductor (conductor ignores unknown routes gracefully)
-- Webhook push — POSTs completed transcript to `{CONDUCTOR_URL}/blurb/webhook/{job_id}` (no polling)
-- Job timeout — configurable via `JOB_TIMEOUT_SECONDS`, marks job failed and notifies conductor
+- Polling-based: conductor submits job then polls `GET /jobs/{job_id}` until done
+- Job timeout — configurable via `JOB_TIMEOUT_SECONDS`, marks job failed
 - Concurrency guard — rejects new jobs with 503 while one is active (single GPU)
 - Manager UI — `blurb_manager.py` Tkinter window with start/stop and live stats; auto-starts on login
 

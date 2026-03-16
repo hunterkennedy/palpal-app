@@ -6,6 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -22,7 +23,6 @@ from models import (
     EpisodeInfo,
     PodcastResult,
     SearchResponse,
-    SourceInfo,
 )
 from pipeline import (
     run_discovery, run_episode, start_scheduler, stop_scheduler,
@@ -76,7 +76,10 @@ async def get_pipeline_settings():
 async def update_pipeline_settings(body: dict):
     """Update one or more pipeline settings. Pass {key: bool} pairs."""
     for key, value in body.items():
-        await pipeline_settings.set(key, bool(value))
+        if key in pipeline_settings.KNOWN_INT_KEYS:
+            await pipeline_settings.set_int(key, int(value))
+        else:
+            await pipeline_settings.set(key, bool(value))
     return await pipeline_settings.get_all()
 
 
@@ -292,6 +295,29 @@ async def retranscribe_episode(episode_id: str):
     return {"status": "retranscribing", "episode_id": episode_id}
 
 
+@app.get("/admin/status/by-podcast", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def admin_status_by_podcast():
+    """Per-podcast episode counts by status. Used to populate the pipeline table."""
+    pool = db.get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT s.podcast_id, p.display_name,
+               COUNT(*) FILTER (WHERE e.status = 'discovered')   AS discovered,
+               COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
+               COUNT(*) FILTER (WHERE e.status = 'downloaded')   AS downloaded,
+               COUNT(*) FILTER (WHERE e.status = 'transcribing') AS transcribing,
+               COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
+               COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed
+        FROM episodes e
+        JOIN sources s ON e.source_id = s.id
+        JOIN podcasts p ON s.podcast_id = p.id
+        GROUP BY s.podcast_id, p.display_name, p.display_order
+        ORDER BY p.display_order
+        """
+    )
+    return [dict(r) for r in rows]
+
+
 @app.post("/admin/episodes/process-discovered", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
 async def process_all_discovered(podcast_id: str | None = Query(None)):
     """Queue discovered episodes through the pipeline, optionally filtered by podcast."""
@@ -309,6 +335,26 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
         )
     for row in rows:
         asyncio.create_task(run_episode(row["id"]))
+    return {"queued": len(rows)}
+
+
+@app.post("/admin/episodes/process-downloaded", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def process_all_downloaded(podcast_id: str | None = Query(None)):
+    """Queue downloaded episodes for transcription, optionally filtered by podcast."""
+    pool = db.get_pool()
+    if podcast_id:
+        rows = await pool.fetch(
+            """SELECT e.id::text FROM episodes e
+               JOIN sources s ON e.source_id = s.id
+               WHERE e.status = 'downloaded' AND e.blacklisted = FALSE AND s.podcast_id = $1""",
+            podcast_id,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id::text FROM episodes WHERE status = 'downloaded' AND blacklisted = FALSE"
+        )
+    for row in rows:
+        asyncio.create_task(submit_downloaded_episode(row["id"]))
     return {"queued": len(rows)}
 
 
@@ -427,7 +473,7 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
             p.display_name  AS podcast_name,
             s.name          AS source_name,
             COUNT(tc.id)       AS chunk_count,
-            MAX(tc.end_time)   AS duration_seconds
+            COALESCE(e.duration_seconds, MAX(tc.end_time)) AS duration_seconds
         FROM episodes e
         JOIN sources  s  ON s.id  = e.source_id
         JOIN podcasts p  ON p.id  = s.podcast_id
@@ -481,6 +527,138 @@ async def bust_podcasts_cache() -> dict:
     _podcasts_cache["data"] = None
     _podcasts_cache["fetched_at"] = 0.0
     return {"status": "busted"}
+
+
+def _bust_caches():
+    _podcasts_cache["data"] = None
+    _podcasts_cache["fetched_at"] = 0.0
+
+
+@app.get("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def admin_list_podcasts():
+    """All podcasts (including disabled) with all sources and filter config."""
+    pool = db.get_pool()
+    pod_rows = await pool.fetch(
+        "SELECT id, display_name, description, enabled, display_order FROM podcasts ORDER BY display_order, id"
+    )
+    src_rows = await pool.fetch(
+        "SELECT id::text, podcast_id, name, site, url, enabled, filters FROM sources ORDER BY name"
+    )
+    pods = {r["id"]: {**dict(r), "sources": []} for r in pod_rows}
+    for s in src_rows:
+        entry = dict(s)
+        f = entry["filters"]
+        entry["filters"] = f if isinstance(f, dict) else (json.loads(f) if isinstance(f, str) else {})
+        pid = entry.pop("podcast_id")
+        if pid in pods:
+            pods[pid]["sources"].append(entry)
+    return list(pods.values())
+
+
+@app.post("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def create_podcast(body: dict):
+    """Create a new podcast."""
+    pod_id = str(body.get("id", "")).strip()
+    if not pod_id:
+        raise HTTPException(status_code=400, detail="id is required")
+    pool = db.get_pool()
+    try:
+        await pool.execute(
+            "INSERT INTO podcasts (id, display_name, description, enabled, display_order) VALUES ($1, $2, $3, $4, $5)",
+            pod_id, body.get("display_name", pod_id), body.get("description", ""),
+            bool(body.get("enabled", True)), int(body.get("display_order", 0)),
+        )
+    except Exception as e:
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(status_code=409, detail="Podcast ID already exists")
+        raise
+    _bust_caches()
+    return {"status": "created", "id": pod_id}
+
+
+@app.put("/admin/podcasts/{podcast_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def update_podcast(podcast_id: str, body: dict):
+    """Update podcast metadata."""
+    pool = db.get_pool()
+    result = await pool.execute(
+        "UPDATE podcasts SET display_name=$1, description=$2, enabled=$3, display_order=$4 WHERE id=$5",
+        body.get("display_name", podcast_id), body.get("description", ""),
+        bool(body.get("enabled", True)), int(body.get("display_order", 0)), podcast_id,
+    )
+    if result == "UPDATE 0":
+        raise HTTPException(status_code=404, detail="Podcast not found")
+    _bust_caches()
+    return {"status": "updated"}
+
+
+@app.delete("/admin/podcasts/{podcast_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def admin_delete_podcast(podcast_id: str):
+    """Delete a podcast and all its sources and episodes (cascade)."""
+    pool = db.get_pool()
+    result = await pool.execute("DELETE FROM podcasts WHERE id = $1", podcast_id)
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Podcast not found")
+    _bust_caches()
+    return {"status": "deleted"}
+
+
+
+def _normalize_youtube_url(url: str) -> str:
+    """
+    If a YouTube URL contains a playlist param, return the canonical playlist URL.
+    e.g. https://youtu.be/VIDEO?list=PL... → https://www.youtube.com/playlist?list=PL...
+    """
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "list" in qs:
+        playlist_id = qs["list"][0]
+        return f"https://www.youtube.com/playlist?list={playlist_id}"
+    return url
+
+
+@app.post("/admin/podcasts/{podcast_id}/sources", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def create_source(podcast_id: str, body: dict):
+    """Add a source to a podcast."""
+    pool = db.get_pool()
+    filters = body.get("filters", {})
+    url = _normalize_youtube_url(body.get("url", ""))
+    enabled = bool(body.get("enabled", True))
+    row = await pool.fetchrow(
+        "INSERT INTO sources (podcast_id, name, site, url, enabled, filters) VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING id::text",
+        podcast_id, body.get("name", ""), body.get("site", "youtube"),
+        url, enabled, json.dumps(filters),
+    )
+    _bust_caches()
+    return {"status": "created"}
+
+
+@app.put("/admin/sources/{source_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def update_source(source_id: str, body: dict):
+    """Update a source."""
+    pool = db.get_pool()
+    filters = body.get("filters", {})
+    url = _normalize_youtube_url(body.get("url", ""))
+    enabled = bool(body.get("enabled", True))
+    site = body.get("site", "youtube")
+    row = await pool.fetchrow(
+        "UPDATE sources SET name=$1, site=$2, url=$3, enabled=$4, filters=$5::jsonb WHERE id=$6::uuid RETURNING podcast_id",
+        body.get("name", ""), site, url, enabled, json.dumps(filters), source_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Source not found")
+    _bust_caches()
+    return {"status": "updated"}
+
+
+@app.delete("/admin/sources/{source_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def admin_delete_source(source_id: str):
+    """Delete a source (cascades to its episodes)."""
+    pool = db.get_pool()
+    result = await pool.execute("DELETE FROM sources WHERE id = $1::uuid", source_id)
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Source not found")
+    _bust_caches()
+    return {"status": "deleted"}
 
 
 # --------------------------------------------------------------------------- #
@@ -585,31 +763,17 @@ async def _fetch_podcasts() -> list[PodcastResult]:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
-        SELECT p.id, p.display_name, p.description, p.image,
-               (p.icon IS NOT NULL) AS has_icon,
-               p.social_sections, p.display_order,
-               COALESCE(
-                   json_agg(
-                       json_build_object(
-                           'id', s.id::text, 'name', s.name, 'site', s.site,
-                           'type', s.type, 'description', s.description
-                       ) ORDER BY s.name
-                   ) FILTER (WHERE s.id IS NOT NULL),
-                   '[]'::json
-               ) AS sources
-        FROM podcasts p
-        LEFT JOIN sources s ON s.podcast_id = p.id AND s.enabled = TRUE
-        WHERE p.enabled = TRUE
-        GROUP BY p.id
-        ORDER BY p.display_order
+        SELECT id, display_name, description, image,
+               (icon IS NOT NULL) AS has_icon,
+               social_sections, display_order
+        FROM podcasts
+        WHERE enabled = TRUE
+        ORDER BY display_order
         """
     )
     results = []
     for row in rows:
-        d = dict(row)
-        if isinstance(d["sources"], str):
-            d["sources"] = json.loads(d["sources"])
-        results.append(PodcastResult(**d))
+        results.append(PodcastResult(**dict(row)))
     return results
 
 

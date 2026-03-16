@@ -14,7 +14,7 @@ Frontend VPS (palpal.app via Cloudflare tunnel)
   └─ palpal-frontend  →  https://api.palpal.app
 
 Local PC (GPU)
-  └─ palpal-blurb  →  https://api.palpal.app/blurb/webhook/{job_id}
+  └─ palpal-blurb  ←  polled by conductor at https://api.palpal.app
 ```
 
 ---
@@ -182,10 +182,10 @@ Point it at `http://localhost:3001` (or whatever `APP_PORT` is). No path restric
 
 ## Update blurb
 
-Blurb needs to post its webhook to the conductor's public URL. In your blurb config, set:
+Conductor polls blurb for job status. In your blurb config, set the API key:
 
 ```
-CONDUCTOR_URL=https://api.palpal.app
+BLURB_API_KEY=<shared secret>
 ```
 
 ---

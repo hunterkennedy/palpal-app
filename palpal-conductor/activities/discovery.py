@@ -6,6 +6,8 @@ from typing import TypedDict
 import httpx
 
 import db
+import pipeline_settings as settings
+from activities.utils import yt_dlp_path
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +15,6 @@ logger = logging.getLogger(__name__)
 class SourceRow(TypedDict):
     id: str
     url: str
-    type: str
     filters: dict
     podcast_id: str
 
@@ -28,21 +29,31 @@ async def get_enabled_youtube_sources(podcast_id: str | None = None) -> list[Sou
     pool = db.get_pool()
     if podcast_id:
         rows = await pool.fetch(
-            "SELECT id::text, url, type, filters, podcast_id FROM sources "
+            "SELECT id::text, url, filters, podcast_id FROM sources "
             "WHERE site = 'youtube' AND enabled = TRUE AND podcast_id = $1",
             podcast_id,
         )
     else:
         rows = await pool.fetch(
-            "SELECT id::text, url, type, filters, podcast_id FROM sources "
+            "SELECT id::text, url, filters, podcast_id FROM sources "
             "WHERE site = 'youtube' AND enabled = TRUE"
         )
+    def _coerce_filters(f) -> dict:
+        if isinstance(f, dict):
+            return f
+        if isinstance(f, str):
+            try:
+                parsed = json.loads(f)
+                return parsed if isinstance(parsed, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return {}
+
     return [
         SourceRow(
             id=str(row["id"]),
             url=row["url"],
-            type=row["type"],
-            filters=dict(row["filters"]) if row["filters"] else {},
+            filters=_coerce_filters(row["filters"]),
             podcast_id=row["podcast_id"],
         )
         for row in rows
@@ -57,7 +68,7 @@ async def fetch_channel_icon(podcast_id: str, source_url: str) -> None:
     """
     try:
         cmd = [
-            "yt-dlp",
+            yt_dlp_path(),
             "--dump-single-json",
             "--no-warnings",
             "--flat-playlist",
@@ -121,7 +132,6 @@ async def fetch_channel_icon(podcast_id: str, source_url: str) -> None:
 async def discover_youtube_source(
     source_id: str,
     url: str,
-    source_type: str,
     filters: dict,
     podcast_id: str = "",
 ) -> list[NewEpisode]:
@@ -132,7 +142,7 @@ async def discover_youtube_source(
     logger.info(f"Discovering source {source_id} ({url})")
 
     cmd = [
-        "yt-dlp",
+        yt_dlp_path(),
         "--flat-playlist",
         "--dump-json",
         "--no-warnings",
@@ -152,7 +162,6 @@ async def discover_youtube_source(
     title_exclude: list[str] = [
         s.lower() for s in filters.get("title_exclude", [])
     ]
-    max_new: int | None = filters.get("max_new")  # cap new episodes per run
 
     entries: list[dict] = []
     for line in stdout_bytes.decode().splitlines():
@@ -171,6 +180,11 @@ async def discover_youtube_source(
         if not video_id:
             continue
 
+        # Skip unavailable videos — they'll be re-evaluated on the next discovery run
+        if title.startswith("[") and title.endswith("]"):
+            logger.debug(f"Skipping unavailable video {video_id} ('{title}')")
+            continue
+
         # Apply title_exclude filter
         if any(excl in title.lower() for excl in title_exclude):
             logger.debug(f"Skipping '{title}' (title_exclude match)")
@@ -181,8 +195,10 @@ async def discover_youtube_source(
         if upload_date and len(upload_date) == 8:
             pub_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
 
+        duration: float | None = entry.get("duration")
+
         entries.append(
-            {"video_id": video_id, "title": title, "pub_date": pub_date}
+            {"video_id": video_id, "title": title, "pub_date": pub_date, "duration": duration}
         )
 
     logger.info(
@@ -194,13 +210,31 @@ async def discover_youtube_source(
 
     # Bulk-insert with RETURNING to get only newly inserted IDs
     pool = db.get_pool()
+    min_duration = await settings.get_int("min_episode_duration_seconds")
+    durations = [e["duration"] for e in entries]
+    none_count = sum(1 for d in durations if d is None)
+    logger.info(
+        f"Source {source_id}: min_duration={min_duration}s, "
+        f"duration missing for {none_count}/{len(entries)} entries"
+    )
     new_episodes: list[NewEpisode] = []
+    auto_blacklisted = 0
 
     for entry in entries:
+        duration: float | None = entry["duration"]
+        should_blacklist = (
+            min_duration > 0
+            and duration is not None
+            and duration < min_duration
+        )
+        blacklist_reason = (
+            f"Auto-blacklisted: duration {duration:.0f}s < minimum {min_duration}s"
+            if should_blacklist else None
+        )
         row = await pool.fetchrow(
             """
-            INSERT INTO episodes (source_id, video_id, title, publication_date)
-            VALUES ($1::uuid, $2, $3, $4::date)
+            INSERT INTO episodes (source_id, video_id, title, publication_date, duration_seconds, blacklisted, error_message)
+            VALUES ($1::uuid, $2, $3, $4::date, $5, $6, $7)
             ON CONFLICT (source_id, video_id) DO NOTHING
             RETURNING id::text
             """,
@@ -208,21 +242,53 @@ async def discover_youtube_source(
             entry["video_id"],
             entry["title"],
             entry["pub_date"],
+            duration,
+            should_blacklist,
+            blacklist_reason,
         )
         if row:
-            new_episodes.append(
-                NewEpisode(episode_id=row["id"], video_id=entry["video_id"])
-            )
-
-    if max_new is not None and len(new_episodes) > max_new:
-        logger.info(
-            f"Source {source_id}: capping at {max_new} of {len(new_episodes)} new episodes (max_new filter)"
-        )
-        new_episodes = new_episodes[:max_new]
+            if should_blacklist:
+                auto_blacklisted += 1
+                logger.info(f"Auto-blacklisted '{entry['title']}' ({duration:.0f}s < {min_duration}s min)")
+            else:
+                new_episodes.append(
+                    NewEpisode(episode_id=row["id"], video_id=entry["video_id"])
+                )
 
     logger.info(
         f"Source {source_id}: {len(new_episodes)} new episodes inserted"
+        + (f", {auto_blacklisted} auto-blacklisted (too short)" if auto_blacklisted else "")
     )
+
+    # Retroactively blacklist existing unprocessed episodes whose duration is now known
+    # and falls below the threshold. This catches episodes inserted before the setting
+    # was configured, or before duration data was available.
+    if min_duration > 0:
+        short_video_ids = [
+            e["video_id"]
+            for e in entries
+            if e["duration"] is not None and e["duration"] < min_duration
+        ]
+        if short_video_ids:
+            retro = await pool.execute(
+                """
+                UPDATE episodes
+                SET blacklisted     = TRUE,
+                    error_message   = 'Auto-blacklisted: duration too short',
+                    updated_at      = NOW()
+                WHERE source_id     = $1::uuid
+                  AND video_id      = ANY($2)
+                  AND blacklisted   = FALSE
+                  AND status NOT IN ('processed', 'downloading', 'transcribing')
+                """,
+                source_id,
+                short_video_ids,
+            )
+            retro_count = int(retro.split()[-1])
+            if retro_count:
+                logger.info(
+                    f"Source {source_id}: retroactively blacklisted {retro_count} existing episode(s) (too short)"
+                )
 
     # Update channel icon using the source URL (channel/playlist page)
     if podcast_id:

@@ -9,7 +9,6 @@ export async function GET(_request: NextRequest) {
       id: p.id,
       displayName: p.display_name,
       description: p.description || '',
-      indexName: '',
       image: p.has_icon ? `/api/podcast-image/${p.id}` : '',
       socialSections: (p.social_sections || []).map(section => ({
         title: section.title,
@@ -21,13 +20,6 @@ export async function GET(_request: NextRequest) {
           icon: null,
           hoverColor: link.hoverColor,
         })),
-      })),
-      sources: p.sources.map(s => ({
-        site: s.site,
-        name: s.name,
-        url: '',
-        type: s.type,
-        enabled: true,
       })),
       enabled: true,
       order: p.display_order,

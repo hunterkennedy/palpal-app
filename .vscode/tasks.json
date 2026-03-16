@@ -15,6 +15,44 @@
       "problemMatcher": []
     },
     {
+      "label": "Start DB (docker)",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.yml up -d postgres",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run conductor (live)",
+      "type": "shell",
+      "command": "set -a && source .env.dev && set +a && .venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --reload",
+      "options": {
+        "cwd": "${workspaceFolder}/palpal-conductor"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "INFO:.*Started",
+          "endsPattern": "INFO:.*Application startup complete"
+        }
+      },
+      "dependsOn": "Start DB (docker)"
+    },
+    {
       "label": "Start backend (docker compose)",
       "type": "shell",
       "command": "docker compose -f docker-compose.yml up -d --build postgres palpal-conductor",

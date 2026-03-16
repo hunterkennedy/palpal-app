@@ -156,6 +156,11 @@
     .action-row { display: flex; align-items: center; gap: 0.3rem; flex-wrap: nowrap; }
     .act { padding: 0.18rem 0.45rem; border-radius: 4px; font-size: 0.72rem; }
     .icon-btn { width: 24px; height: 24px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem; padding: 0; }
+    .drag-handle { cursor: grab; color: var(--muted); font-size: 1rem; line-height: 1; user-select: none; padding: 0 0.2rem; }
+    .drag-handle:active { cursor: grabbing; }
+    tr[data-pod-id].dragging { opacity: 0.35; }
+    tr[data-pod-id].drag-over td { background: rgba(249,115,22,0.08); }
+    tr[data-pod-id].drag-over td:first-child { box-shadow: inset 3px 0 0 var(--orange); }
 
     .section-hdr { display: flex; align-items: center; justify-content: space-between; cursor: pointer; width: 100%; background: none; border: none; color: inherit; padding: 0; margin-bottom: 0; }
     .section-hdr h2 { margin-bottom: 0; }
@@ -168,6 +173,31 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .sep { color: var(--border); margin: 0 1px; }
+
+    /* Podcast grid with edit button */
+    .pod-btn-wrap { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; transition: border-color 0.15s; }
+    .pod-btn-wrap:hover { border-color: rgba(249,115,22,0.5); }
+    .pod-main-btn { flex: 1; background: none; border: none; border-radius: 0; color: var(--text); padding: 0.65rem 0.9rem; cursor: pointer; display: flex; align-items: center; justify-content: space-between; font-family: inherit; font-size: 0.875rem; gap: 0.5rem; }
+    .pod-main-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .pod-edit-btn { background: none; border: none; border-left: 1px solid var(--border); color: var(--muted); padding: 0 0.55rem; cursor: pointer; font-size: 0.85rem; transition: all 0.15s; }
+    .pod-edit-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 50; }
+    .modal-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; padding: 1.5rem; }
+    .modal-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; }
+    .modal-hdr h2 { margin-bottom: 0; }
+    .form-row { margin-bottom: 0.75rem; }
+    .form-row label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .form-row input[type="text"], .form-row input[type="number"] { width: 100%; }
+    .form-row-inline { display: flex; gap: 0.65rem; align-items: flex-end; margin-bottom: 0.75rem; }
+    .form-row-inline .form-row { flex: 1; margin-bottom: 0; }
+    .modal-sep { border: none; border-top: 1px solid var(--border); margin: 1.1rem 0; }
+    .modal-footer { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .src-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+    .src-row:last-child { border-bottom: none; }
+    .src-info { flex: 1; min-width: 0; overflow: hidden; }
+    .src-edit-form { padding: 0.85rem; background: var(--bg3); border-radius: 6px; margin: 0.35rem 0 0.5rem; border: 1px solid var(--border); }
   </style>
 </head>
 <body>
@@ -197,31 +227,38 @@
       </div>
     </div>
 
-    <!-- Scheduler + Counts -->
-    <div class="grid-2">
-      <div class="card" id="scheduler-card">
-        <h2>⚡ scheduler</h2>
-        <div id="scheduler-body"><span class="muted">loading…</span></div>
-      </div>
-      <div class="card">
-        <h2>📊 episode counts</h2>
-        <div class="counts-grid" id="counts-grid"></div>
-      </div>
-    </div>
-
-    <!-- Pipeline Settings -->
-    <div class="card">
-      <h2>⚙️ pipeline controls</h2>
+    <!-- Scheduler & Pipeline -->
+    <div class="card" id="scheduler-card">
+      <h2>⚡ scheduler &amp; pipeline</h2>
+      <div id="scheduler-body"><span class="muted">loading…</span></div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
       <div id="pipeline-body"></div>
     </div>
 
-    <!-- Discover -->
+    <!-- Podcast Pipeline -->
     <div class="card">
-      <h2>🔍 discover new episodes</h2>
-      <p class="muted small" style="margin-bottom:0.9rem">
-        Runs yt-dlp and adds newly found episodes. Also processes any already-discovered episodes through the pipeline. Continues based on Auto Download / Auto Transcribe settings above.
-      </p>
-      <div class="discover-grid" id="discover-grid"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+        <h2 style="margin-bottom:0">🎙 podcast pipeline</h2>
+        <button class="btn btn-ghost" style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="openNewPodModal()">+ new podcast</button>
+      </div>
+      <div class="overflow-x">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:20px"></th>
+              <th>podcast</th>
+              <th style="text-align:center">discovered</th>
+              <th style="text-align:center">downloading</th>
+              <th style="text-align:center">downloaded</th>
+              <th style="text-align:center">transcribing</th>
+              <th style="text-align:center">processed</th>
+              <th style="text-align:center">failed</th>
+              <th>actions</th>
+            </tr>
+          </thead>
+          <tbody id="pipeline-tbody"></tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Episodes -->
@@ -269,6 +306,87 @@
   </div><!-- /container -->
 </div><!-- /app -->
 
+<!-- Podcast modal -->
+<div id="pod-modal-overlay" class="modal-overlay" style="display:none" onclick="podModalOverlayClick(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-hdr">
+      <h2 id="pod-modal-title">New Podcast</h2>
+      <button class="btn btn-ghost icon-btn" style="font-size:1rem" onclick="closePodModal()">✕</button>
+    </div>
+
+    <div class="form-row">
+      <label>Display Name</label>
+      <input type="text" id="pm-name" placeholder="My Podcast" oninput="updateSlugPreview()" />
+      <div id="pm-slug-preview" class="muted small" style="margin-top:0.3rem;display:none">slug: <code id="pm-slug-val" style="color:var(--text)"></code><input type="hidden" id="pm-id" /></div>
+    </div>
+    <div class="form-row">
+      <label>Description</label>
+      <input type="text" id="pm-desc" placeholder="Optional" />
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row" style="flex:0 0 auto">
+        <label>Display Order</label>
+        <input type="number" id="pm-order" value="0" min="0" style="width:80px" />
+      </div>
+      <div class="form-row" style="display:flex;align-items:center;gap:0.6rem;padding-bottom:0.05rem">
+        <label style="margin-bottom:0;white-space:nowrap">Enabled</label>
+        <label class="toggle">
+          <input type="checkbox" id="pm-enabled" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Sources (edit mode only) -->
+    <div id="pm-sources-section" style="display:none">
+      <hr class="modal-sep">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+        <h2 style="margin-bottom:0;font-size:0.82rem">Sources</h2>
+        <button class="btn btn-green" style="font-size:0.72rem;padding:0.18rem 0.55rem" onclick="openAddSourceForm()">+ add source</button>
+      </div>
+      <div id="pm-sources-list"></div>
+
+      <!-- Source edit form (hidden until needed) -->
+      <div id="pm-src-form" class="src-edit-form" style="display:none">
+        <div class="form-row-inline">
+          <div class="form-row">
+            <label>Name</label>
+            <input type="text" id="sf-name" placeholder="e.g. Main Channel" />
+          </div>
+          <div class="form-row" style="flex:0 0 90px">
+            <label>Site</label>
+            <input type="text" id="sf-site" value="youtube" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>URL</label>
+          <input type="text" id="sf-url" placeholder="https://www.youtube.com/@channel" />
+        </div>
+        <div class="form-row">
+          <label>Exclude titles <span class="muted">(comma-separated)</span></label>
+          <input type="text" id="sf-exclude" placeholder="clip, short, …" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:0.5rem">
+            <label style="font-size:0.8rem;color:var(--muted);margin:0">Enabled</label>
+            <label class="toggle"><input type="checkbox" id="sf-enabled" checked /><span class="toggle-slider"></span></label>
+          </div>
+          <div style="display:flex;gap:0.4rem">
+            <button class="btn btn-ghost" onclick="cancelSourceForm()">cancel</button>
+            <button class="btn btn-green" id="sf-save-btn" onclick="saveSourceForm()">save source</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closePodModal()">Cancel</button>
+      <button id="pm-delete-btn" class="btn btn-red" style="display:none;margin-right:auto" onclick="deletePodcast()">Delete Podcast</button>
+      <button id="pm-save-btn" class="btn btn-orange" onclick="savePodcast()">Save Podcast</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ---------------------------------------------------------------------------
 // State
@@ -278,7 +396,7 @@ let autoRefreshTimer = null;
 
 const S = {
   scheduler: null,
-  counts: {},
+  podStats: [],
   episodes: [],
   podcasts: [],
   pipelineSettings: { auto_discover: true, auto_download: true, auto_transcribe: true },
@@ -361,25 +479,27 @@ async function doRefresh(silent) {
   const status = document.getElementById('refresh-status');
   status.textContent = silent ? '↻' : 'loading…';
   try {
-    const [schedRes, adminRes, epsRes, settingsRes, podsRes] = await Promise.all([
+    const [schedRes, podStatsRes, epsRes, settingsRes, podsRes] = await Promise.all([
       api('GET', '/admin/scheduler/status'),
-      api('GET', '/admin/status'),
+      api('GET', '/admin/status/by-podcast'),
       api('GET', '/admin/episodes'),
       api('GET', '/admin/pipeline-settings'),
-      fetch('/podcasts'),
+      api('GET', '/admin/podcasts'),
     ]);
-    if (schedRes.ok)    S.scheduler        = await schedRes.json();
-    if (adminRes.ok)    S.counts           = (await adminRes.json()).counts || {};
-    if (epsRes.ok)      S.episodes         = await epsRes.json();
-    if (settingsRes.ok) S.pipelineSettings = await settingsRes.json();
+    const failures = [];
+    if (schedRes.ok)     S.scheduler        = await schedRes.json();    else failures.push(`scheduler/status ${schedRes.status}`);
+    if (podStatsRes.ok)  S.podStats         = await podStatsRes.json(); else failures.push(`status/by-podcast ${podStatsRes.status}`);
+    if (epsRes.ok)       S.episodes         = await epsRes.json();      else failures.push(`episodes ${epsRes.status}`);
+    if (settingsRes.ok)  S.pipelineSettings = await settingsRes.json(); else failures.push(`pipeline-settings ${settingsRes.status}`);
     if (podsRes.ok) {
       S.podcasts = await podsRes.json();
-      renderDiscoverGrid();
       renderPodcastFilter();
-    }
+    } else { failures.push(`podcasts ${podsRes.status}`); }
+    if (failures.length) toast(`API error: ${failures.join(', ')}`, false);
     renderScheduler();
-    renderCounts();
     renderPipelineSettings();
+    renderPodcastPipeline(S.podStats);
+    initPodDragDrop();
     renderEpisodesTable();
     status.textContent = '';
   } catch (e) {
@@ -445,20 +565,183 @@ function fmtNextRun(iso) {
 }
 
 // ---------------------------------------------------------------------------
-// Counts
+// Podcast pipeline table
 // ---------------------------------------------------------------------------
 const SCOLOR = {
   discovered: '#93c5fd', downloading: '#fde047', downloaded: '#67e8f9',
   transcribing: '#d8b4fe', processed: '#86efac', failed: '#fca5a5',
 };
+const PIPELINE_PHASES = ['discovered', 'downloading', 'downloaded', 'transcribing', 'processed', 'failed'];
 
-function renderCounts() {
-  document.getElementById('counts-grid').innerHTML =
-    Object.keys(SCOLOR).map(s => `
-      <div class="count-item${S.statusFilter === s ? ' active' : ''}" onclick="setStatusFilter('${s}')">
-        <div class="count-num" style="color:${SCOLOR[s]}">${S.counts[s] ?? 0}</div>
-        <div class="count-label">${s}</div>
-      </div>`).join('');
+function renderPodcastPipeline(podStats) {
+  const statsMap = {};
+  for (const row of (podStats || [])) statsMap[row.podcast_id] = row;
+
+  const rows = S.podcasts.map(p => {
+    const st = statsMap[p.id] || {};
+    const cells = PIPELINE_PHASES.map(phase => {
+      const n = st[phase] ?? 0;
+      if (n === 0) return `<td style="text-align:center;color:var(--muted)">—</td>`;
+      return `<td style="text-align:center"><button class="btn btn-ghost" style="color:${SCOLOR[phase]};font-weight:700;padding:0.1rem 0.35rem;font-size:0.875rem" onclick="filterEpisodes('${esc(p.id)}','${phase}')">${n}</button></td>`;
+    }).join('');
+    return `<tr draggable="true" data-pod-id="${esc(p.id)}">
+      <td><span class="drag-handle" title="Drag to reorder">⠿</span></td>
+      <td><span>${esc(p.display_name)}</span>${!p.enabled ? ' <span class="muted" style="font-size:0.72rem">(disabled)</span>' : ''}</td>
+      ${cells}
+      <td><div class="action-row">
+        <button class="btn btn-blue act" id="pp-disc-${esc(p.id)}" onclick="triggerDiscover('${esc(p.id)}')">▶ disc</button>
+        <button class="btn btn-yellow act" id="pp-dl-${esc(p.id)}" onclick="triggerDownload('${esc(p.id)}')">▶ dl</button>
+        <button class="btn btn-purple act" id="pp-tx-${esc(p.id)}" onclick="triggerTranscribe('${esc(p.id)}')">▶ tx</button>
+        <button class="btn btn-ghost icon-btn" onclick="openEditPodModal('${esc(p.id)}')" title="Edit">⚙</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+
+  const allRow = `<tr style="border-top:2px solid var(--border)">
+    <td></td>
+    <td style="color:var(--muted);font-style:italic">all podcasts</td>
+    ${PIPELINE_PHASES.map(() => '<td></td>').join('')}
+    <td><div class="action-row">
+      <button class="btn btn-blue act" id="pp-disc-all" onclick="triggerDiscover(null)">▶ disc</button>
+      <button class="btn btn-yellow act" id="pp-dl-all" onclick="triggerDownload(null)">▶ dl</button>
+      <button class="btn btn-purple act" id="pp-tx-all" onclick="triggerTranscribe(null)">▶ tx</button>
+    </div></td>
+  </tr>`;
+
+  document.getElementById('pipeline-tbody').innerHTML = rows + allRow;
+}
+
+function initPodDragDrop() {
+  const tbody = document.getElementById('pipeline-tbody');
+  let dragSrc = null;
+  tbody.querySelectorAll('tr[data-pod-id]').forEach(row => {
+    row.addEventListener('dragstart', e => {
+      dragSrc = row;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      tbody.querySelectorAll('tr[data-pod-id]').forEach(r => r.classList.remove('drag-over'));
+      dragSrc = null;
+    });
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (row !== dragSrc) {
+        tbody.querySelectorAll('tr[data-pod-id]').forEach(r => r.classList.remove('drag-over'));
+        row.classList.add('drag-over');
+      }
+    });
+    row.addEventListener('dragleave', e => {
+      if (!row.contains(e.relatedTarget)) row.classList.remove('drag-over');
+    });
+    row.addEventListener('drop', async e => {
+      e.preventDefault();
+      if (!dragSrc || dragSrc === row) return;
+      tbody.querySelectorAll('tr[data-pod-id]').forEach(r => r.classList.remove('drag-over'));
+      const allRows = [...tbody.querySelectorAll('tr[data-pod-id]')];
+      const srcIdx = allRows.indexOf(dragSrc);
+      const tgtIdx = allRows.indexOf(row);
+      if (srcIdx < tgtIdx) row.after(dragSrc); else row.before(dragSrc);
+      await savePodOrder();
+    });
+  });
+}
+
+async function savePodOrder() {
+  const tbody = document.getElementById('pipeline-tbody');
+  const rows = [...tbody.querySelectorAll('tr[data-pod-id]')];
+  const updates = [];
+  rows.forEach((row, i) => {
+    const pod = S.podcasts.find(p => p.id === row.dataset.podId);
+    if (pod && pod.display_order !== i) updates.push({ pod, order: i });
+  });
+  if (!updates.length) return;
+  S.podcasts = rows.map(r => S.podcasts.find(p => p.id === r.dataset.podId));
+  try {
+    await Promise.all(updates.map(({ pod, order }) =>
+      api('PUT', `/admin/podcasts/${pod.id}`, {
+        display_name: pod.display_name,
+        description: pod.description || '',
+        enabled: pod.enabled,
+        display_order: order,
+      })
+    ));
+    toast('Order saved');
+    renderPodcastFilter();
+  } catch (e) {
+    toast(`Failed to save order: ${e}`, false);
+  }
+}
+
+function filterEpisodes(podcastId, status) {
+  S.podcastFilter = podcastId;
+  S.statusFilter = status;
+  document.getElementById('podcast-filter').value = podcastId;
+  renderEpisodesTable();
+  document.getElementById('episodes-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function triggerDiscover(podcastId) {
+  const key = `pp-disc-${podcastId ?? 'all'}`;
+  if (S.pending.has(key)) return;
+  S.pending.add(key);
+  const btn = document.getElementById(`pp-disc-${podcastId ?? 'all'}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  try {
+    const qs = new URLSearchParams({ auto_queue: 'false' });
+    if (podcastId) qs.set('podcast_id', podcastId);
+    const res = await api('POST', `/admin/discover?${qs}`);
+    if (!res.ok) throw new Error(await res.text());
+    toast('Discovery started');
+    setTimeout(() => doRefresh(true), 5000);
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    S.pending.delete(key);
+    await doRefresh(true);
+  }
+}
+
+async function triggerDownload(podcastId) {
+  const key = `pp-dl-${podcastId ?? 'all'}`;
+  if (S.pending.has(key)) return;
+  S.pending.add(key);
+  const btn = document.getElementById(`pp-dl-${podcastId ?? 'all'}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  try {
+    const qs = podcastId ? `?podcast_id=${encodeURIComponent(podcastId)}` : '';
+    const res = await api('POST', `/admin/episodes/process-discovered${qs}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    toast(`${data.queued} episode(s) queued for download`);
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    S.pending.delete(key);
+    await doRefresh(true);
+  }
+}
+
+async function triggerTranscribe(podcastId) {
+  const key = `pp-tx-${podcastId ?? 'all'}`;
+  if (S.pending.has(key)) return;
+  S.pending.add(key);
+  const btn = document.getElementById(`pp-tx-${podcastId ?? 'all'}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  try {
+    const qs = podcastId ? `?podcast_id=${encodeURIComponent(podcastId)}` : '';
+    const res = await api('POST', `/admin/episodes/process-downloaded${qs}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    toast(`${data.queued} episode(s) queued for transcription`);
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    S.pending.delete(key);
+    await doRefresh(true);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -501,47 +784,6 @@ async function togglePipelineSetting(key, cb) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Discover
-// ---------------------------------------------------------------------------
-function renderDiscoverGrid() {
-  document.getElementById('discover-grid').innerHTML =
-    S.podcasts.map(p => `
-      <button class="discover-btn" id="db-${esc(p.id)}"
-        onclick="discover('${esc(p.id)}', '${esc(p.display_name)}')">
-        <span>${esc(p.display_name)}</span><span>▶</span>
-      </button>`).join('') + `
-    <button class="discover-btn discover-all-btn" id="db-all" onclick="discover()">
-      <span>Discover All Podcasts</span><span>▶</span>
-    </button>`;
-}
-
-async function discover(podcastId, podcastName) {
-  const key = `discover-${podcastId || 'all'}`;
-  if (S.pending.has(key)) return;
-  S.pending.add(key);
-  const btn = document.getElementById(`db-${podcastId || 'all'}`);
-  if (btn) { btn.disabled = true; btn.querySelector('span:last-child').innerHTML = '<span class="spinner"></span>'; }
-  try {
-    const qs = new URLSearchParams({ auto_queue: 'true' });
-    if (podcastId) qs.set('podcast_id', podcastId);
-    const processQs = podcastId ? `?podcast_id=${encodeURIComponent(podcastId)}` : '';
-    const [discoverRes, processRes] = await Promise.all([
-      api('POST', `/admin/discover?${qs}`),
-      api('POST', `/admin/episodes/process-discovered${processQs}`),
-    ]);
-    if (!discoverRes.ok) throw new Error(await discoverRes.text());
-    const processData = processRes.ok ? await processRes.json() : null;
-    const queuedMsg = processData?.queued ? `, ${processData.queued} existing queued` : '';
-    toast(`Discovery started${podcastName ? ` for ${podcastName}` : ''}${queuedMsg}`);
-    setTimeout(() => doRefresh(true), 3000);
-  } catch (e) {
-    toast(`Failed: ${e}`, false);
-  } finally {
-    S.pending.delete(key);
-    if (btn) { btn.disabled = false; btn.querySelector('span:last-child').textContent = '▶'; }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Episodes table
@@ -599,7 +841,6 @@ function toggleEpisodesSection() {
 
 function renderEpisodesTable() {
   renderStatusTabs();
-  renderCounts();
   const filtered = getFiltered();
   document.getElementById('ep-count').textContent = filtered.length;
   document.getElementById('ep-filter-label').textContent = S.statusFilter !== 'all' ? `(${S.statusFilter})` : '';
@@ -798,6 +1039,228 @@ async function processDiscovered() {
   } finally {
     btn.disabled = false;
     btn.textContent = '▶ run';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Podcast modal
+// ---------------------------------------------------------------------------
+const PM = { mode: 'create', podcast: null, editingSourceId: null };
+
+function toSlug(s) {
+  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function updateSlugPreview() {
+  if (PM.mode !== 'create') return;
+  const name = document.getElementById('pm-name').value;
+  const slug = toSlug(name);
+  document.getElementById('pm-id').value = slug;
+  document.getElementById('pm-slug-val').textContent = slug || '…';
+  document.getElementById('pm-slug-preview').style.display = name ? '' : 'none';
+}
+
+function podModalOverlayClick(e) {
+  if (e.target === document.getElementById('pod-modal-overlay')) closePodModal();
+}
+
+function openNewPodModal() {
+  PM.mode = 'create';
+  PM.podcast = null;
+  PM.editingSourceId = null;
+  document.getElementById('pod-modal-title').textContent = 'New Podcast';
+  document.getElementById('pm-id').value = '';
+  document.getElementById('pm-name').value = '';
+  document.getElementById('pm-desc').value = '';
+  document.getElementById('pm-order').value = '0';
+  document.getElementById('pm-enabled').checked = true;
+  document.getElementById('pm-sources-section').style.display = 'none';
+  document.getElementById('pm-src-form').style.display = 'none';
+  document.getElementById('pm-delete-btn').style.display = 'none';
+  document.getElementById('pm-slug-preview').style.display = 'none';
+  document.getElementById('pod-modal-overlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('pm-name').focus(), 50);
+}
+
+function openEditPodModal(podId) {
+  const pod = S.podcasts.find(p => p.id === podId);
+  if (!pod) return;
+  PM.mode = 'edit';
+  PM.podcast = pod;
+  PM.editingSourceId = null;
+  document.getElementById('pod-modal-title').textContent = `Edit: ${pod.display_name}`;
+  document.getElementById('pm-id').value = pod.id;
+  document.getElementById('pm-slug-val').textContent = pod.id;
+  document.getElementById('pm-slug-preview').style.display = '';
+  document.getElementById('pm-name').value = pod.display_name;
+  document.getElementById('pm-desc').value = pod.description || '';
+  document.getElementById('pm-order').value = pod.display_order ?? 0;
+  document.getElementById('pm-enabled').checked = pod.enabled !== false;
+  document.getElementById('pm-sources-section').style.display = '';
+  document.getElementById('pm-src-form').style.display = 'none';
+  document.getElementById('pm-delete-btn').style.display = '';
+  renderModalSources();
+  document.getElementById('pod-modal-overlay').style.display = 'flex';
+}
+
+function closePodModal() {
+  document.getElementById('pod-modal-overlay').style.display = 'none';
+}
+
+function renderModalSources() {
+  const pod = PM.podcast;
+  if (!pod) return;
+  const sources = pod.sources || [];
+  const el = document.getElementById('pm-sources-list');
+  if (sources.length === 0) {
+    el.innerHTML = '<div class="muted small" style="padding:0.4rem 0 0.6rem">No sources yet.</div>';
+    return;
+  }
+  el.innerHTML = sources.map(s => `
+    <div class="src-row" id="srcrow-${esc(s.id)}">
+      <div class="src-info">
+        <span style="font-weight:500">${esc(s.name)}</span>
+        <span class="muted"> · ${esc(s.site)} · </span>
+        <span class="muted small">${esc(s.url.length > 45 ? s.url.slice(0, 45) + '…' : s.url)}</span>
+        ${!s.enabled ? ' <span class="badge badge-paused">disabled</span>' : ''}
+      </div>
+      <button class="btn btn-ghost icon-btn" onclick="startEditSource('${esc(s.id)}')" title="Edit">✎</button>
+      <button class="btn btn-ghost icon-btn" style="color:var(--muted)" onclick="deleteSource('${esc(s.id)}')" title="Delete">🗑</button>
+    </div>`).join('');
+}
+
+function openAddSourceForm() {
+  PM.editingSourceId = null;
+  document.getElementById('sf-name').value = '';
+  document.getElementById('sf-site').value = 'youtube';
+  document.getElementById('sf-url').value = '';
+  document.getElementById('sf-exclude').value = '';
+  document.getElementById('sf-enabled').checked = true;
+  document.getElementById('pm-src-form').style.display = '';
+  document.getElementById('sf-name').focus();
+}
+
+function startEditSource(sourceId) {
+  const src = PM.podcast?.sources?.find(s => s.id === sourceId);
+  if (!src) return;
+  PM.editingSourceId = sourceId;
+  document.getElementById('sf-name').value = src.name;
+  document.getElementById('sf-site').value = src.site || 'youtube';
+  document.getElementById('sf-url').value = src.url;
+  document.getElementById('sf-exclude').value = (src.filters?.title_exclude || []).join(', ');
+  document.getElementById('sf-enabled').checked = src.enabled !== false;
+  document.getElementById('pm-src-form').style.display = '';
+  document.getElementById('sf-name').focus();
+}
+
+function cancelSourceForm() {
+  PM.editingSourceId = null;
+  document.getElementById('pm-src-form').style.display = 'none';
+}
+
+async function saveSourceForm() {
+  const btn = document.getElementById('sf-save-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const excl = document.getElementById('sf-exclude').value.trim();
+    const filters = {};
+    if (excl) filters.title_exclude = excl.split(',').map(s => s.trim()).filter(Boolean);
+    const body = {
+      name: document.getElementById('sf-name').value.trim(),
+      site: document.getElementById('sf-site').value.trim() || 'youtube',
+      url: document.getElementById('sf-url').value.trim(),
+      enabled: document.getElementById('sf-enabled').checked,
+      filters,
+    };
+    const res = PM.editingSourceId
+      ? await api('PUT', `/admin/sources/${PM.editingSourceId}`, body)
+      : await api('POST', `/admin/podcasts/${PM.podcast.id}/sources`, body);
+    if (!res.ok) throw new Error(await res.text());
+    toast(PM.editingSourceId ? 'Source updated' : 'Source added');
+    PM.editingSourceId = null;
+    document.getElementById('pm-src-form').style.display = 'none';
+    await _refreshPodcastsInModal();
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'save source';
+  }
+}
+
+async function deleteSource(sourceId) {
+  const src = PM.podcast?.sources?.find(s => s.id === sourceId);
+  if (!src) return;
+  if (!confirm(`Delete source "${src.name}"?\nAll episodes from this source will also be deleted.`)) return;
+  try {
+    const res = await api('DELETE', `/admin/sources/${sourceId}`);
+    if (!res.ok) throw new Error(await res.text());
+    toast('Source deleted');
+    await _refreshPodcastsInModal();
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  }
+}
+
+async function savePodcast() {
+  const btn = document.getElementById('pm-save-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const body = {
+      id: document.getElementById('pm-id').value.trim(),
+      display_name: document.getElementById('pm-name').value.trim(),
+      description: document.getElementById('pm-desc').value.trim(),
+      display_order: parseInt(document.getElementById('pm-order').value) || 0,
+      enabled: document.getElementById('pm-enabled').checked,
+    };
+    const res = PM.mode === 'create'
+      ? await api('POST', '/admin/podcasts', body)
+      : await api('PUT', `/admin/podcasts/${PM.podcast.id}`, body);
+    if (!res.ok) throw new Error(await res.text());
+    toast(PM.mode === 'create' ? 'Podcast created' : 'Podcast updated');
+    await _refreshPodcastsInModal();
+    if (PM.mode === 'create') {
+      PM.mode = 'edit';
+      PM.podcast = S.podcasts.find(p => p.id === body.id);
+      document.getElementById('pod-modal-title').textContent = `Edit: ${PM.podcast.display_name}`;
+      document.getElementById('pm-slug-val').textContent = PM.podcast.id;
+      document.getElementById('pm-slug-preview').style.display = '';
+      document.getElementById('pm-sources-section').style.display = '';
+      document.getElementById('pm-delete-btn').style.display = '';
+      renderModalSources();
+    }
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Podcast';
+  }
+}
+
+async function deletePodcast() {
+  if (!PM.podcast) return;
+  if (!confirm(`Delete podcast "${PM.podcast.display_name}"?\nAll sources and episodes will also be permanently deleted.`)) return;
+  try {
+    const res = await api('DELETE', `/admin/podcasts/${PM.podcast.id}`);
+    if (!res.ok) throw new Error(await res.text());
+    toast('Podcast deleted');
+    closePodModal();
+    await _refreshPodcastsInModal();
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  }
+}
+
+async function _refreshPodcastsInModal() {
+  const res = await api('GET', '/admin/podcasts');
+  if (res.ok) {
+    S.podcasts = await res.json();
+    renderPodcastPipeline(S.podStats);
+    renderPodcastFilter();
+    if (PM.podcast) PM.podcast = S.podcasts.find(p => p.id === PM.podcast.id) || null;
+    if (PM.mode === 'edit' && PM.podcast) renderModalSources();
   }
 }
 

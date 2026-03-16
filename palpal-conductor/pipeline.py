@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import db
 import pipeline_settings as settings
 from activities.discovery import get_enabled_youtube_sources, discover_youtube_source
-from activities.download import download_audio
+from activities.download import download_audio, EpisodeTooShortError, EpisodeUnavailableError
 from activities.blurb import transcribe_episode
 from activities.process import process_transcript
 
@@ -58,6 +58,18 @@ async def run_episode(episode_id: str) -> None:
         else:
             logger.info("Episode %s downloaded; auto_transcribe is off, stopping here", episode_id)
 
+    except EpisodeUnavailableError as exc:
+        logger.info(f"Episode {episode_id} is private/unavailable, will retry on next discovery: {exc}")
+        await pool.execute(
+            "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
+            episode_id,
+        )
+    except EpisodeTooShortError as exc:
+        logger.info(f"Episode {episode_id} blacklisted at download: {exc}")
+        await pool.execute(
+            "UPDATE episodes SET status='discovered', blacklisted=TRUE, error_message=$1 WHERE id=$2::uuid",
+            str(exc), episode_id,
+        )
     except Exception as exc:
         logger.error(f"Episode {episode_id} failed: {exc}")
         await pool.execute(
@@ -84,7 +96,7 @@ async def run_discovery(
     for source in sources:
         try:
             new_episodes = await discover_youtube_source(
-                source["id"], source["url"], source["type"], source["filters"],
+                source["id"], source["url"], source["filters"],
                 podcast_id=source["podcast_id"],
             )
             for ep in new_episodes:

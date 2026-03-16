@@ -18,7 +18,6 @@ export async function GET(request: NextRequest) {
   const rawLimit = searchParams.get('limit');
   const rawPodcastId = searchParams.get('podcast_id');
   const rawSort = searchParams.get('sort');
-  const rawSortDirection = searchParams.get('sortDirection');
   const rawDateRange = searchParams.get('dateRange');
   const rawStartDate = searchParams.get('startDate');
   const rawEndDate = searchParams.get('endDate');
@@ -63,8 +62,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const sortDirection = rawSortDirection === 'asc' ? 'asc' : 'desc';
-
     const parsedPage = rawPage ? parseInt(rawPage, 10) : 1;
     const page = Number.isFinite(parsedPage) ? Math.min(Math.max(parsedPage, 1), 1000) : 1;
 
@@ -72,7 +69,6 @@ export async function GET(request: NextRequest) {
       q: query,
       podcast_id: rawPodcastId || undefined,
       sort: conductorSort,
-      sort_direction: sortDirection,
       date_from,
       date_to,
       page,

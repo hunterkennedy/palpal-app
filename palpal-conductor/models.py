@@ -42,14 +42,6 @@ class SearchResponse(BaseModel):
     results: list[ChunkResult]
 
 
-class SourceInfo(BaseModel):
-    id: str
-    name: str
-    site: str
-    type: str
-    description: Optional[str]
-
-
 class EpisodeInfo(BaseModel):
     id: str
     video_id: str
@@ -79,4 +71,3 @@ class PodcastResult(BaseModel):
     has_icon: bool
     social_sections: list
     display_order: int
-    sources: list[SourceInfo]

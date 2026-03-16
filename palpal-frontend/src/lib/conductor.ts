@@ -12,7 +12,6 @@ export interface ConductorSearchParams {
   q: string;
   podcast_id?: string;
   sort?: string;
-  sort_direction?: 'asc' | 'desc';
   date_from?: string;
   date_to?: string;
   page?: number;
@@ -53,7 +52,6 @@ export async function searchChunks(params: ConductorSearchParams): Promise<Condu
   qs.set('q', params.q);
   if (params.podcast_id) qs.set('podcast_id', params.podcast_id);
   if (params.sort) qs.set('sort', params.sort);
-  if (params.sort_direction) qs.set('sort_direction', params.sort_direction);
   if (params.date_from) qs.set('date_from', params.date_from);
   if (params.date_to) qs.set('date_to', params.date_to);
   if (params.page != null) qs.set('page', String(params.page));
@@ -95,7 +93,6 @@ export interface ConductorPodcast {
     links: Array<{ site: string; title: string; link: string; icon: string; hoverColor: string }>;
   }> | null;
   display_order: number;
-  sources: Array<{ id: string; name: string; site: string; type: string; description: string | null }>;
 }
 
 export async function getPodcasts(): Promise<ConductorPodcast[]> {
