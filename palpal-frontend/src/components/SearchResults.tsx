@@ -73,13 +73,15 @@ export default function SearchResults({ query, results, totalHits, error, isSear
         return next;
       });
     } else {
+      const endSecs = Math.floor(hit.end_time);
+      const endFormatted = `${String(Math.floor(endSecs / 60)).padStart(2, '0')}:${String(endSecs % 60).padStart(2, '0')}`;
       const chunkData = {
         id: hit.id,
         text: hit.text,
         episode_title: hit.episode_title,
         video_id: hit.video_id,
         start_formatted: hit.start_formatted,
-        end_formatted: hit.end_formatted,
+        end_formatted: endFormatted,
         podcast_name: hit.podcast_name,
         source_name: hit.source_name
       };

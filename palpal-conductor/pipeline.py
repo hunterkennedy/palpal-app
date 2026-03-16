@@ -20,13 +20,14 @@ _scheduler = AsyncIOScheduler()
 async def submit_downloaded_episode(episode_id: str) -> None:
     """Transcribe a downloaded episode via blurb (polling) and process the result."""
     pool = db.get_pool()
-    await pool.execute(
-        "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
-    )
     async with _transcribe_sem:
+        await pool.execute(
+            "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
+        )
         try:
+            target_words = await settings.get_int("chunk_target_words") or 50
             result = await transcribe_episode(episode_id)
-            await process_transcript(episode_id, result)
+            await process_transcript(episode_id, result, target_words=target_words)
             await pool.execute(
                 "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
             )

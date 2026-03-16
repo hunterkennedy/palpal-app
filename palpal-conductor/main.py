@@ -29,6 +29,7 @@ from pipeline import (
     get_scheduler_status, pause_scheduler, resume_scheduler,
     submit_downloaded_episode, recover_interrupted_downloads,
 )
+from activities.process import process_transcript
 
 logging.basicConfig(
     level=logging.INFO,
@@ -293,6 +294,46 @@ async def retranscribe_episode(episode_id: str):
         asyncio.create_task(run_episode(episode_id))
 
     return {"status": "retranscribing", "episode_id": episode_id}
+
+
+@app.post("/admin/episodes/rechunk", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+async def rechunk_all_episodes(podcast_id: str | None = Query(None)):
+    """
+    Re-chunk all processed episodes from stored raw segments using the current
+    chunk_target_words setting. Runs in the background; returns episode count queued.
+    """
+    pool = db.get_pool()
+    target_words = await pipeline_settings.get_int("chunk_target_words") or 50
+
+    if podcast_id:
+        rows = await pool.fetch(
+            """SELECT e.id::text FROM episodes e
+               JOIN sources s ON e.source_id = s.id
+               WHERE e.status = 'processed' AND s.podcast_id = $1""",
+            podcast_id,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id::text FROM episodes WHERE status = 'processed'"
+        )
+
+    sem = asyncio.Semaphore(4)
+
+    async def _rechunk(episode_id: str) -> None:
+        async with sem:
+            row = await pool.fetchrow(
+                "SELECT language, segments FROM transcripts WHERE episode_id = $1::uuid",
+                episode_id,
+            )
+            if not row:
+                return
+            transcript = {"language": row["language"], "segments": row["segments"]}
+            await process_transcript(episode_id, transcript, target_words=target_words)
+
+    for row in rows:
+        asyncio.create_task(_rechunk(row["id"]))
+
+    return {"queued": len(rows), "target_words": target_words}
 
 
 @app.get("/admin/status/by-podcast", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
@@ -683,6 +724,7 @@ async def search(
 
     pool = db.get_pool()
     offset = (page - 1) * page_size
+    chunk_target_words = await pipeline_settings.get_int("chunk_target_words") or 50
 
     main_q = f"""
         SELECT
@@ -692,7 +734,7 @@ async def search(
             tc.source_name, tc.episode_title, tc.video_id, tc.publication_date,
             ts_rank(tc.search_vector, query) AS rank,
             ts_headline('english', tc.text, query,
-                'StartSel=<mark>, StopSel=</mark>, MaxWords=30, MinWords=15, MaxFragments=1'
+                'StartSel=<mark>, StopSel=</mark>, MaxWords={chunk_target_words}, MinWords={chunk_target_words // 2}, MaxFragments=1'
             ) AS text_highlighted,
             ts_headline('english', tc.episode_title, query,
                 'StartSel=<mark>, StopSel=</mark>'
@@ -736,26 +778,24 @@ async def chunks(
     radius: int = Query(2, ge=0, le=10, description="Number of chunks on each side"),
 ) -> list[ChunkResult]:
     pool = db.get_pool()
-    center = await pool.fetchrow(
-        "SELECT episode_id, chunk_index FROM transcript_chunks WHERE id = $1::uuid",
-        chunk_id,
-    )
-    if not center:
-        raise HTTPException(status_code=404, detail="Chunk not found")
-    chunk_low = center["chunk_index"] - radius
-    chunk_high = center["chunk_index"] + radius
     rows = await pool.fetch(
         """
-        SELECT id::text, episode_id::text, chunk_index, text, start_time, end_time,
-               duration, start_formatted, start_minutes, word_count,
-               podcast_id, podcast_name, source_name, episode_title, video_id, publication_date
-        FROM transcript_chunks
-        WHERE episode_id = $1
-          AND chunk_index BETWEEN $2 AND $3
-        ORDER BY chunk_index
+        WITH center AS (
+            SELECT episode_id, chunk_index FROM transcript_chunks WHERE id = $1::uuid
+        )
+        SELECT tc.id::text, tc.episode_id::text, tc.chunk_index, tc.text,
+               tc.start_time, tc.end_time, tc.duration, tc.start_formatted,
+               tc.start_minutes, tc.word_count, tc.podcast_id, tc.podcast_name,
+               tc.source_name, tc.episode_title, tc.video_id, tc.publication_date
+        FROM transcript_chunks tc, center
+        WHERE tc.episode_id = center.episode_id
+          AND tc.chunk_index BETWEEN center.chunk_index - $2 AND center.chunk_index + $2
+        ORDER BY tc.chunk_index
         """,
-        center["episode_id"], chunk_low, chunk_high,
+        chunk_id, radius,
     )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Chunk not found")
     return [ChunkResult(**dict(row)) for row in rows]
 
 

@@ -754,7 +754,7 @@ const SETTINGS_META = [
 ];
 
 function renderPipelineSettings() {
-  document.getElementById('pipeline-body').innerHTML = SETTINGS_META.map(({ key, label, desc }) => `
+  const toggleRows = SETTINGS_META.map(({ key, label, desc }) => `
     <div class="setting-row">
       <div>
         <div style="font-size:0.875rem;font-weight:500">${label}</div>
@@ -766,6 +766,72 @@ function renderPipelineSettings() {
         <span class="toggle-slider"></span>
       </label>
     </div>`).join('');
+
+  const chunkWords = S.pipelineSettings.chunk_target_words ?? 50;
+  const minDur     = S.pipelineSettings.min_episode_duration_seconds ?? 0;
+
+  const intRows = `
+    <div class="setting-row">
+      <div>
+        <div style="font-size:0.875rem;font-weight:500">Chunk Size</div>
+        <div class="muted small">Target words per search chunk (current: ${chunkWords})</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <input type="number" id="chunk-words-input" value="${chunkWords}" min="10" max="500" step="10"
+          style="width:70px" />
+        <button class="btn btn-orange act" onclick="saveChunkWords()">save</button>
+        <button class="btn btn-purple act" id="rechunk-btn" onclick="triggerRechunk()">re-chunk all</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div style="font-size:0.875rem;font-weight:500">Min Episode Duration</div>
+        <div class="muted small">Episodes shorter than this (seconds) are auto-blacklisted at discovery. 0 = disabled.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <input type="number" id="min-dur-input" value="${minDur}" min="0" step="60"
+          style="width:80px" />
+        <button class="btn btn-orange act" onclick="saveMinDur()">save</button>
+      </div>
+    </div>`;
+
+  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows;
+}
+
+async function saveChunkWords() {
+  const val = parseInt(document.getElementById('chunk-words-input').value);
+  if (!val || val < 10) return toast('Enter a valid chunk size (min 10)', false);
+  const res = await api('POST', '/admin/pipeline-settings', { chunk_target_words: val });
+  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
+  S.pipelineSettings = await res.json();
+  toast(`Chunk size set to ${val} words`);
+  renderPipelineSettings();
+}
+
+async function saveMinDur() {
+  const val = parseInt(document.getElementById('min-dur-input').value) || 0;
+  const res = await api('POST', '/admin/pipeline-settings', { min_episode_duration_seconds: val });
+  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
+  S.pipelineSettings = await res.json();
+  toast(`Min duration set to ${val}s`);
+  renderPipelineSettings();
+}
+
+async function triggerRechunk() {
+  const btn = document.getElementById('rechunk-btn');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const res = await api('POST', '/admin/episodes/rechunk');
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    toast(`Re-chunking ${data.queued} episode(s) at ${data.target_words} words/chunk`);
+  } catch (e) {
+    toast(`Failed: ${e}`, false);
+  } finally {
+    renderPipelineSettings();
+  }
 }
 
 async function togglePipelineSetting(key, cb) {

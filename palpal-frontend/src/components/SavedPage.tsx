@@ -148,7 +148,7 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
 
                       <div className="flex items-center gap-2 text-meta p-1 -m-1">
                         <Clock className="w-4 h-4" aria-hidden="true" />
-                        <span>{chunk.start_formatted} - {chunk.end_formatted}</span>
+                        <span>{chunk.start_formatted}{chunk.end_formatted ? ` - ${chunk.end_formatted}` : ''}</span>
                       </div>
 
                       <div className="flex items-center gap-2 text-meta p-1 -m-1">

@@ -13,9 +13,10 @@ import db
 logger = logging.getLogger(__name__)
 
 KNOWN_KEYS = {"auto_discover", "auto_download", "auto_transcribe"}
-KNOWN_INT_KEYS = {"min_episode_duration_seconds"}
+KNOWN_INT_KEYS = {"min_episode_duration_seconds", "chunk_target_words"}
 
 _cache: dict[str, bool] | None = None
+_int_cache: dict[str, int] | None = None
 
 
 async def get_all() -> dict[str, Any]:
@@ -31,16 +32,8 @@ async def get_all() -> dict[str, Any]:
             _cache.setdefault(key, True)
         result = dict(_cache)
 
-    # Fetch int settings live (not worth caching separately)
-    pool = db.get_pool()
-    int_rows = await pool.fetch("SELECT key, value FROM settings WHERE key = ANY($1)", list(KNOWN_INT_KEYS))
-    for row in int_rows:
-        try:
-            result[row["key"]] = int(row["value"])
-        except (ValueError, TypeError):
-            result[row["key"]] = 0
     for key in KNOWN_INT_KEYS:
-        result.setdefault(key, 0)
+        result[key] = await get_int(key, default=0)
 
     return result
 
@@ -56,7 +49,8 @@ async def set(key: str, value: bool) -> None:
         raise ValueError(f"Unknown setting: {key}")
     pool = db.get_pool()
     await pool.execute(
-        "UPDATE settings SET value=$1, updated_at=NOW() WHERE key=$2",
+        """INSERT INTO settings (key, value) VALUES ($2, $1)
+           ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()""",
         str(value).lower(), key,
     )
     if _cache is not None:
@@ -65,24 +59,31 @@ async def set(key: str, value: bool) -> None:
 
 
 async def get_int(key: str, default: int = 0) -> int:
+    global _int_cache
     if key not in KNOWN_INT_KEYS:
         raise ValueError(f"Unknown int setting: {key}")
+    if _int_cache is not None and key in _int_cache:
+        return _int_cache[key]
     pool = db.get_pool()
-    row = await pool.fetchrow("SELECT value FROM settings WHERE key = $1", key)
-    if row:
+    rows = await pool.fetch("SELECT key, value FROM settings WHERE key = ANY($1)", list(KNOWN_INT_KEYS))
+    _int_cache = {}
+    for row in rows:
         try:
-            return int(row["value"])
+            _int_cache[row["key"]] = int(row["value"])
         except (ValueError, TypeError):
-            return default
-    return default
+            pass
+    return _int_cache.get(key, default)
 
 
 async def set_int(key: str, value: int) -> None:
+    global _int_cache
     if key not in KNOWN_INT_KEYS:
         raise ValueError(f"Unknown int setting: {key}")
     pool = db.get_pool()
     await pool.execute(
-        "UPDATE settings SET value=$1, updated_at=NOW() WHERE key=$2",
+        """INSERT INTO settings (key, value) VALUES ($2, $1)
+           ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()""",
         str(value), key,
     )
+    _int_cache = None
     logger.info("Pipeline setting %s = %s", key, value)

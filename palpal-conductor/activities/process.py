@@ -6,17 +6,44 @@ logger = logging.getLogger(__name__)
 
 
 def chunk_segments(segments: list[dict], target_words: int = 50) -> list[list[dict]]:
-    """Group Whisper segments into ~target_words-word chunks."""
+    """
+    Group Whisper word-level timestamps into ~target_words-word chunks.
+
+    Each returned chunk is a list of word dicts:
+        {"word": str, "start": float, "end": float, "probability": float}
+
+    Falls back to splitting segment text evenly if no word-level data is present.
+    """
+    # Flatten all words across all segments into one stream
+    words: list[dict] = []
+    for seg in segments:
+        seg_words = seg.get("words") or []
+        if seg_words:
+            words.extend(seg_words)
+        else:
+            # No word timestamps — synthesise from segment boundaries
+            seg_text_words = seg["text"].split()
+            if not seg_text_words:
+                continue
+            duration = (seg["end"] - seg["start"]) / len(seg_text_words)
+            for i, w in enumerate(seg_text_words):
+                words.append({
+                    "word": w,
+                    "start": seg["start"] + i * duration,
+                    "end": seg["start"] + (i + 1) * duration,
+                    "probability": 1.0,
+                })
+
+    if not words:
+        return []
+
     chunks: list[list[dict]] = []
     current: list[dict] = []
-    word_count = 0
-    for seg in segments:
-        current.append(seg)
-        word_count += len(seg["text"].split())
-        if word_count >= target_words:
+    for word in words:
+        current.append(word)
+        if len(current) >= target_words:
             chunks.append(current)
             current = []
-            word_count = 0
     if current:
         chunks.append(current)
     return chunks
@@ -30,11 +57,11 @@ def format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-async def process_transcript(episode_id: str, transcript: dict) -> None:
+async def process_transcript(episode_id: str, transcript: dict, target_words: int = 50) -> None:
     """
     Chunk the transcript segments and bulk-insert into transcript_chunks.
     Fetches denormalized fields (podcast_id, podcast_name, source_name, etc.)
-    from the DB.
+    from the DB. Deletes existing chunks first so this is safe to call for re-chunking.
     """
     pool = db.get_pool()
 
@@ -71,9 +98,9 @@ async def process_transcript(episode_id: str, transcript: dict) -> None:
         )
         return
 
-    chunks = chunk_segments(segments)
+    chunks = chunk_segments(segments, target_words=target_words)
     logger.info(
-        f"Episode {episode_id}: {len(segments)} segments → {len(chunks)} chunks"
+        f"Episode {episode_id}: {len(segments)} segments → {len(chunks)} chunks (target_words={target_words})"
     )
 
     async with pool.acquire() as conn:
@@ -91,14 +118,19 @@ async def process_transcript(episode_id: str, transcript: dict) -> None:
                 transcript.get("segments", []),
             )
 
-            for chunk_index, chunk_segs in enumerate(chunks):
-                text = " ".join(seg["text"].strip() for seg in chunk_segs)
-                start_time = float(chunk_segs[0]["start"])
-                end_time = float(chunk_segs[-1]["end"])
+            await conn.execute(
+                "DELETE FROM transcript_chunks WHERE episode_id = $1::uuid",
+                episode_id,
+            )
+
+            for chunk_index, chunk_words in enumerate(chunks):
+                text = " ".join(w["word"].strip() for w in chunk_words)
+                start_time = float(chunk_words[0]["start"])
+                end_time = float(chunk_words[-1]["end"])
                 duration = end_time - start_time
                 start_formatted = format_timestamp(start_time)
                 start_minutes = start_time / 60
-                word_count = len(text.split())
+                word_count = len(chunk_words)
 
                 await conn.execute(
                     """
@@ -117,7 +149,6 @@ async def process_transcript(episode_id: str, transcript: dict) -> None:
                         $10, $11, $12,
                         $13, $14, $15::date
                     )
-                    ON CONFLICT (episode_id, chunk_index) DO NOTHING
                     """,
                     episode_id, chunk_index,
                     text, word_count,

@@ -12,7 +12,7 @@ interface SavedChunk {
   episode_title: string;
   video_id: string;
   start_formatted: string;
-  end_formatted: string;
+  end_formatted?: string;
   podcast_name: string;
   source_name?: string;
   savedAt: number; // timestamp
@@ -20,7 +20,8 @@ interface SavedChunk {
 }
 
 const PREFERENCES_COOKIE = 'palpal_preferences';
-const SAVED_CHUNKS_COOKIE = 'palpal_saved_chunks';
+const SAVED_CHUNKS_KEY = 'palpal_saved_chunks'; // localStorage key
+const SAVED_CHUNKS_COOKIE = 'palpal_saved_chunks'; // legacy cookie name (for migration)
 const WHATS_NEW_COOKIE = 'palpal_whats_new_dismissed';
 const COOKIE_EXPIRY_DAYS = 365; // 1 year
 
@@ -100,6 +101,23 @@ export function getDefaultPreferences(): UserPreferences {
   };
 }
 
+function lsGet(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function lsSet(key: string, value: string): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(key, value); } catch (e) {
+    console.warn('localStorage write failed:', e);
+  }
+}
+
+function lsRemove(key: string): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
 /**
  * Save a chunk to the saved chunks list
  */
@@ -109,7 +127,7 @@ export function saveChunk(chunk: {
   episode_title: string;
   video_id: string;
   start_formatted: string;
-  end_formatted: string;
+  end_formatted?: string;
   podcast_name: string;
   source_name?: string;
   notes?: string;
@@ -129,8 +147,7 @@ export function saveChunk(chunk: {
     // Keep only the most recent 100 chunks
     const trimmed = filtered.slice(0, 100);
 
-    const chunksString = JSON.stringify(trimmed);
-    setCookie(SAVED_CHUNKS_COOKIE, chunksString);
+    lsSet(SAVED_CHUNKS_KEY, JSON.stringify(trimmed));
   } catch (error) {
     console.warn('Failed to save chunk:', error);
   }
@@ -143,42 +160,46 @@ export function unsaveChunk(chunkId: string): void {
   try {
     const savedChunks = getSavedChunks();
     const filtered = savedChunks.filter(saved => saved.id !== chunkId);
-    
-    const chunksString = JSON.stringify(filtered);
-    setCookie(SAVED_CHUNKS_COOKIE, chunksString);
+    lsSet(SAVED_CHUNKS_KEY, JSON.stringify(filtered));
   } catch (error) {
     console.warn('Failed to unsave chunk:', error);
   }
 }
 
 /**
- * Get all saved chunks
+ * Get all saved chunks. Migrates legacy cookie data to localStorage on first read.
  */
 export function getSavedChunks(): SavedChunk[] {
   try {
-    const chunksString = getCookie(SAVED_CHUNKS_COOKIE);
+    let raw = lsGet(SAVED_CHUNKS_KEY);
 
-    if (!chunksString) {
-      return [];
+    // One-time migration: move data from old cookie storage to localStorage
+    if (!raw) {
+      const legacy = getCookie(SAVED_CHUNKS_COOKIE);
+      if (legacy) {
+        lsSet(SAVED_CHUNKS_KEY, legacy);
+        setCookie(SAVED_CHUNKS_COOKIE, '', -1); // expire the old cookie
+        raw = legacy;
+      }
     }
 
-    const chunks = JSON.parse(chunksString) as SavedChunk[];
+    if (!raw) return [];
 
-    // Validate the loaded chunks
+    const chunks = JSON.parse(raw) as SavedChunk[];
+
     if (Array.isArray(chunks)) {
-      const validChunks = chunks.filter(chunk =>
+      return chunks.filter(chunk =>
         chunk &&
         typeof chunk.id === 'string' &&
         typeof chunk.text === 'string' &&
         typeof chunk.episode_title === 'string' &&
         typeof chunk.video_id === 'string' &&
         typeof chunk.start_formatted === 'string' &&
-        typeof chunk.end_formatted === 'string' &&
+        (chunk.end_formatted === undefined || typeof chunk.end_formatted === 'string') &&
         typeof chunk.podcast_name === 'string' &&
         typeof chunk.savedAt === 'number' &&
         (chunk.source_name === undefined || typeof chunk.source_name === 'string')
       );
-      return validChunks;
     }
     return [];
   } catch (error) {
@@ -191,9 +212,7 @@ export function getSavedChunks(): SavedChunk[] {
  * Check if a chunk is saved
  */
 export function isChunkSaved(chunkId: string): boolean {
-  const savedChunks = getSavedChunks();
-  const isSaved = savedChunks.some(chunk => chunk.id === chunkId);
-  return isSaved;
+  return getSavedChunks().some(chunk => chunk.id === chunkId);
 }
 
 /**
@@ -205,9 +224,7 @@ export function updateChunkNotes(chunkId: string, notes: string): void {
     const updatedChunks = savedChunks.map(chunk =>
       chunk.id === chunkId ? { ...chunk, notes } : chunk
     );
-
-    const chunksString = JSON.stringify(updatedChunks);
-    setCookie(SAVED_CHUNKS_COOKIE, chunksString);
+    lsSet(SAVED_CHUNKS_KEY, JSON.stringify(updatedChunks));
   } catch (error) {
     console.warn('Failed to update chunk notes:', error);
   }
@@ -217,8 +234,7 @@ export function updateChunkNotes(chunkId: string, notes: string): void {
  * Get notes for a specific chunk
  */
 export function getChunkNotes(chunkId: string): string {
-  const savedChunks = getSavedChunks();
-  const chunk = savedChunks.find(c => c.id === chunkId);
+  const chunk = getSavedChunks().find(c => c.id === chunkId);
   return chunk?.notes || '';
 }
 
@@ -227,7 +243,7 @@ export function getChunkNotes(chunkId: string): string {
  */
 export function clearSavedChunks(): void {
   try {
-    setCookie(SAVED_CHUNKS_COOKIE, '[]');
+    lsRemove(SAVED_CHUNKS_KEY);
   } catch (error) {
     console.warn('Failed to clear saved chunks:', error);
   }
