@@ -93,10 +93,7 @@ async def process_transcript(episode_id: str, transcript: dict, target_words: in
 
     segments: list[dict] = transcript.get("segments", [])
     if not segments:
-        logger.warning(
-            f"Episode {episode_id}: transcript has no segments"
-        )
-        return
+        raise RuntimeError(f"Episode {episode_id}: transcript has no segments")
 
     chunks = chunk_segments(segments, target_words=target_words)
     logger.info(

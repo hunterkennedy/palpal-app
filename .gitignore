@@ -1,6 +1,8 @@
-# env
+# env — ignore all .env* variants except .example files
 .env
+.env.*
 !.env.example
+!.env.*.example
 
 # dependencies
 node_modules/

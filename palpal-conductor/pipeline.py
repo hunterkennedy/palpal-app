@@ -1,19 +1,20 @@
 import asyncio
 import logging
+import os
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import db
 import pipeline_settings as settings
 from activities.discovery import get_enabled_youtube_sources, discover_youtube_source
-from activities.download import download_audio, EpisodeTooShortError, EpisodeUnavailableError
+from activities.download import download_audio, EpisodeTooShortError, EpisodeUnavailableError, EpisodeRateLimitedError
 from activities.blurb import transcribe_episode
 from activities.process import process_transcript
 
 logger = logging.getLogger(__name__)
 
-_download_sem = asyncio.Semaphore(1)
-_transcribe_sem = asyncio.Semaphore(1)
+_download_sem = asyncio.Semaphore(int(os.environ.get("DOWNLOAD_CONCURRENCY", 1)))
+_transcribe_sem = asyncio.Semaphore(int(os.environ.get("TRANSCRIBE_CONCURRENCY", 1)))
 _scheduler = AsyncIOScheduler()
 
 
@@ -61,6 +62,12 @@ async def run_episode(episode_id: str) -> None:
 
     except EpisodeUnavailableError as exc:
         logger.info(f"Episode {episode_id} is private/unavailable, will retry on next discovery: {exc}")
+        await pool.execute(
+            "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
+            episode_id,
+        )
+    except EpisodeRateLimitedError as exc:
+        logger.warning(f"Episode {episode_id} rate limited by YouTube, resetting to discovered: {exc}")
         await pool.execute(
             "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
             episode_id,
@@ -120,11 +127,20 @@ async def recover_interrupted_downloads() -> None:
     or scheduled discovery pick it up cleanly.
     """
     pool = db.get_pool()
+    # Episodes stuck in 'downloading' with audio already on disk → skip re-download
+    r_dl_done = await pool.execute(
+        """
+        UPDATE episodes
+        SET status = 'downloaded', error_message = 'Reset: download completed but status not updated before restart'
+        WHERE status = 'downloading' AND audio_path IS NOT NULL AND blacklisted = FALSE
+        """
+    )
+    # Episodes stuck in 'downloading' with no audio → full restart
     r1 = await pool.execute(
         """
         UPDATE episodes
         SET status = 'discovered', error_message = 'Reset: download interrupted by conductor restart'
-        WHERE status = 'downloading' AND blacklisted = FALSE
+        WHERE status = 'downloading' AND audio_path IS NULL AND blacklisted = FALSE
         """
     )
     r2 = await pool.execute(
@@ -134,9 +150,14 @@ async def recover_interrupted_downloads() -> None:
         WHERE status = 'transcribing' AND audio_path IS NOT NULL AND blacklisted = FALSE
         """
     )
+    n_dl_done = int(r_dl_done.split()[-1])
     n1, n2 = int(r1.split()[-1]), int(r2.split()[-1])
-    if n1 or n2:
-        logger.warning("Startup recovery: reset %d downloading → discovered, %d transcribing → downloaded", n1, n2)
+    if n_dl_done or n1 or n2:
+        logger.warning(
+            "Startup recovery: %d downloading→downloaded (audio on disk), "
+            "%d downloading→discovered (no audio), %d transcribing→downloaded",
+            n_dl_done, n1, n2,
+        )
     else:
         logger.info("Startup recovery: no interrupted episodes found")
 

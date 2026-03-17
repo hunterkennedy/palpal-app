@@ -4,7 +4,6 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -15,7 +14,7 @@ from fastapi.responses import FileResponse, Response
 import db
 import pipeline_settings
 from db_migrations import run_migrations
-from auth import verify_blurb_token
+from auth import verify_admin_token
 from models import (
     BulkActionRequest,
     ChunkResult,
@@ -67,13 +66,13 @@ async def admin_ui():
     return FileResponse(_ADMIN_HTML, media_type="text/html")
 
 
-@app.get("/admin/pipeline-settings", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.get("/admin/pipeline-settings", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def get_pipeline_settings():
     """Get current pipeline auto-progression settings."""
     return await pipeline_settings.get_all()
 
 
-@app.post("/admin/pipeline-settings", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/pipeline-settings", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def update_pipeline_settings(body: dict):
     """Update one or more pipeline settings. Pass {key: bool} pairs."""
     for key, value in body.items():
@@ -84,7 +83,7 @@ async def update_pipeline_settings(body: dict):
     return await pipeline_settings.get_all()
 
 
-@app.post("/admin/discover", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/discover", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def trigger_discovery(
     podcast_id: str | None = Query(None, description="Limit discovery to one podcast ID"),
     auto_queue: bool = Query(True, description="Automatically queue new episodes for processing"),
@@ -94,27 +93,27 @@ async def trigger_discovery(
     return {"status": "started", "podcast_id": podcast_id, "auto_queue": auto_queue}
 
 
-@app.get("/admin/scheduler/status", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.get("/admin/scheduler/status", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_status():
     """Current scheduler state and job next-run times."""
     return get_scheduler_status()
 
 
-@app.post("/admin/scheduler/pause", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/scheduler/pause", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_pause():
     """Pause the APScheduler (stops automatic discovery and recovery jobs)."""
     pause_scheduler()
     return {"status": "paused"}
 
 
-@app.post("/admin/scheduler/resume", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/scheduler/resume", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_resume():
     """Resume the APScheduler."""
     resume_scheduler()
     return {"status": "running"}
 
 
-@app.post("/admin/episodes/{episode_id}/process", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/{episode_id}/process", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def process_episode(episode_id: str):
     """Queue a discovered or downloaded episode through the pipeline."""
     pool = db.get_pool()
@@ -135,7 +134,7 @@ async def process_episode(episode_id: str):
     return {"status": "queued", "episode_id": episode_id}
 
 
-@app.get("/admin/status", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.get("/admin/status", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_status():
     """Pipeline health dashboard — episode counts and recent failures."""
     pool = db.get_pool()
@@ -186,7 +185,7 @@ async def admin_status():
     }
 
 
-@app.post("/admin/episodes/{episode_id}/retry", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/{episode_id}/retry", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def retry_episode(episode_id: str):
     """Retry a failed or stuck episode. Skips re-download if audio is already on disk."""
     pool = db.get_pool()
@@ -226,7 +225,7 @@ async def retry_episode(episode_id: str):
     return {"status": "queued", "episode_id": episode_id}
 
 
-@app.post("/admin/episodes/{episode_id}/delete", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/{episode_id}/delete", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def delete_episode(episode_id: str):
     """Hard-delete an episode and all associated data (transcript, chunks). Removes audio file if present."""
     pool = db.get_pool()
@@ -244,7 +243,7 @@ async def delete_episode(episode_id: str):
     return {"status": "deleted", "episode_id": episode_id}
 
 
-@app.post("/admin/episodes/{episode_id}/blacklist", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/{episode_id}/blacklist", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def blacklist_episode(episode_id: str):
     """Mark an episode as blacklisted — kept in DB to prevent re-discovery, but skipped by automatic processing."""
     pool = db.get_pool()
@@ -256,7 +255,7 @@ async def blacklist_episode(episode_id: str):
     return {"status": "blacklisted", "episode_id": episode_id}
 
 
-@app.post("/admin/episodes/{episode_id}/unblacklist", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/{episode_id}/unblacklist", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def unblacklist_episode(episode_id: str):
     """Remove the blacklist flag from an episode."""
     pool = db.get_pool()
@@ -268,7 +267,7 @@ async def unblacklist_episode(episode_id: str):
     return {"status": "unblacklisted", "episode_id": episode_id}
 
 
-@app.post("/admin/episodes/{episode_id}/retranscribe", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/{episode_id}/retranscribe", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def retranscribe_episode(episode_id: str):
     """Delete existing transcript/chunks and re-run transcription. Uses cached audio if available."""
     pool = db.get_pool()
@@ -296,7 +295,7 @@ async def retranscribe_episode(episode_id: str):
     return {"status": "retranscribing", "episode_id": episode_id}
 
 
-@app.post("/admin/episodes/rechunk", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/rechunk", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def rechunk_all_episodes(podcast_id: str | None = Query(None)):
     """
     Re-chunk all processed episodes from stored raw segments using the current
@@ -336,7 +335,7 @@ async def rechunk_all_episodes(podcast_id: str | None = Query(None)):
     return {"queued": len(rows), "target_words": target_words}
 
 
-@app.get("/admin/status/by-podcast", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.get("/admin/status/by-podcast", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_status_by_podcast():
     """Per-podcast episode counts by status. Used to populate the pipeline table."""
     pool = db.get_pool()
@@ -359,7 +358,7 @@ async def admin_status_by_podcast():
     return [dict(r) for r in rows]
 
 
-@app.post("/admin/episodes/process-discovered", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/process-discovered", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def process_all_discovered(podcast_id: str | None = Query(None)):
     """Queue discovered episodes through the pipeline, optionally filtered by podcast."""
     pool = db.get_pool()
@@ -379,7 +378,7 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
     return {"queued": len(rows)}
 
 
-@app.post("/admin/episodes/process-downloaded", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/process-downloaded", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def process_all_downloaded(podcast_id: str | None = Query(None)):
     """Queue downloaded episodes for transcription, optionally filtered by podcast."""
     pool = db.get_pool()
@@ -399,7 +398,7 @@ async def process_all_downloaded(podcast_id: str | None = Query(None)):
     return {"queued": len(rows)}
 
 
-@app.post("/admin/episodes/bulk-action", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/bulk-action", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def bulk_episode_action(body: BulkActionRequest):
     """Apply an action to a list of episode IDs. Returns per-episode results."""
     if body.action not in ("retry", "process", "delete", "blacklist", "unblacklist", "retranscribe"):
@@ -548,13 +547,13 @@ async def list_episodes() -> list[EpisodeInfo]:
     return data
 
 
-@app.get("/admin/episodes", tags=["admin"], response_model=list[EpisodeInfo], dependencies=[Depends(verify_blurb_token)])
+@app.get("/admin/episodes", tags=["admin"], response_model=list[EpisodeInfo], dependencies=[Depends(verify_admin_token)])
 async def admin_list_episodes() -> list[EpisodeInfo]:
     """All episodes — always live from DB, no cache. For admin panel use."""
     return await _fetch_episodes()
 
 
-@app.post("/admin/episodes/cache/bust", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/episodes/cache/bust", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def bust_episodes_cache() -> dict:
     """Force the next /episodes request to re-query the DB."""
     _episodes_cache["data"] = None
@@ -562,7 +561,7 @@ async def bust_episodes_cache() -> dict:
     return {"status": "busted"}
 
 
-@app.post("/admin/podcasts/cache/bust", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/podcasts/cache/bust", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def bust_podcasts_cache() -> dict:
     """Force the next /podcasts request to re-query the DB."""
     _podcasts_cache["data"] = None
@@ -575,7 +574,7 @@ def _bust_caches():
     _podcasts_cache["fetched_at"] = 0.0
 
 
-@app.get("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.get("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_list_podcasts():
     """All podcasts (including disabled) with all sources and filter config."""
     pool = db.get_pool()
@@ -596,7 +595,7 @@ async def admin_list_podcasts():
     return list(pods.values())
 
 
-@app.post("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def create_podcast(body: dict):
     """Create a new podcast."""
     pod_id = str(body.get("id", "")).strip()
@@ -617,7 +616,7 @@ async def create_podcast(body: dict):
     return {"status": "created", "id": pod_id}
 
 
-@app.put("/admin/podcasts/{podcast_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.put("/admin/podcasts/{podcast_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def update_podcast(podcast_id: str, body: dict):
     """Update podcast metadata."""
     pool = db.get_pool()
@@ -632,7 +631,7 @@ async def update_podcast(podcast_id: str, body: dict):
     return {"status": "updated"}
 
 
-@app.delete("/admin/podcasts/{podcast_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.delete("/admin/podcasts/{podcast_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_delete_podcast(podcast_id: str):
     """Delete a podcast and all its sources and episodes (cascade)."""
     pool = db.get_pool()
@@ -657,7 +656,7 @@ def _normalize_youtube_url(url: str) -> str:
     return url
 
 
-@app.post("/admin/podcasts/{podcast_id}/sources", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.post("/admin/podcasts/{podcast_id}/sources", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def create_source(podcast_id: str, body: dict):
     """Add a source to a podcast."""
     pool = db.get_pool()
@@ -673,7 +672,7 @@ async def create_source(podcast_id: str, body: dict):
     return {"status": "created"}
 
 
-@app.put("/admin/sources/{source_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.put("/admin/sources/{source_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def update_source(source_id: str, body: dict):
     """Update a source."""
     pool = db.get_pool()
@@ -691,7 +690,7 @@ async def update_source(source_id: str, body: dict):
     return {"status": "updated"}
 
 
-@app.delete("/admin/sources/{source_id}", tags=["admin"], dependencies=[Depends(verify_blurb_token)])
+@app.delete("/admin/sources/{source_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_delete_source(source_id: str):
     """Delete a source (cascades to its episodes)."""
     pool = db.get_pool()
@@ -710,17 +709,10 @@ async def admin_delete_source(source_id: str):
 async def search(
     q: str = Query(..., description="Full-text search query"),
     podcast_id: str | None = Query(None, description="Filter to a single podcast ID"),
-    sort: str = Query("relevance", pattern="^(relevance|date|duration)$", description="Sort order"),
-    date_from: date | None = Query(None, description="Filter: publication date from (inclusive)"),
-    date_to: date | None = Query(None, description="Filter: publication date to (inclusive)"),
     page: int = Query(1, ge=1, le=1000, description="Page number (1-based)"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
 ) -> SearchResponse:
-    order_clause = {
-        "relevance": "ts_rank(tc.search_vector, query) DESC",
-        "date": "tc.publication_date DESC NULLS LAST",
-        "duration": "tc.duration DESC",
-    }[sort]
+    order_clause = "ts_rank(tc.search_vector, query) DESC"
 
     pool = db.get_pool()
     offset = (page - 1) * page_size
@@ -743,10 +735,8 @@ async def search(
              websearch_to_tsquery('english', $1) query
         WHERE tc.search_vector @@ query
           AND ($2::text IS NULL OR tc.podcast_id = $2)
-          AND ($3::date IS NULL OR tc.publication_date >= $3)
-          AND ($4::date IS NULL OR tc.publication_date <= $4)
         ORDER BY {order_clause}
-        LIMIT $5 OFFSET $6
+        LIMIT $3 OFFSET $4
     """
     count_q = """
         SELECT COUNT(*)
@@ -754,13 +744,11 @@ async def search(
              websearch_to_tsquery('english', $1) query
         WHERE tc.search_vector @@ query
           AND ($2::text IS NULL OR tc.podcast_id = $2)
-          AND ($3::date IS NULL OR tc.publication_date >= $3)
-          AND ($4::date IS NULL OR tc.publication_date <= $4)
     """
 
     rows, total_row = await asyncio.gather(
-        pool.fetch(main_q, q, podcast_id, date_from, date_to, page_size, offset),
-        pool.fetchrow(count_q, q, podcast_id, date_from, date_to),
+        pool.fetch(main_q, q, podcast_id, page_size, offset),
+        pool.fetchrow(count_q, q, podcast_id),
     )
 
     results = [ChunkResult(**dict(row)) for row in rows]

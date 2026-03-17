@@ -19,6 +19,10 @@ class EpisodeUnavailableError(Exception):
     """Raised when yt-dlp reports the video is private or unavailable."""
 
 
+class EpisodeRateLimitedError(Exception):
+    """Raised when YouTube rate-limits the download request (transient — will be retried)."""
+
+
 async def download_audio(episode_id: str) -> str:
     """
     Download audio for the episode using yt-dlp.
@@ -63,13 +67,13 @@ async def download_audio(episode_id: str) -> str:
         stderr=asyncio.subprocess.PIPE,
     )
 
-    await proc.wait()
-    stdout_bytes = await proc.stdout.read()
-    stderr_bytes = await proc.stderr.read()
+    stdout_bytes, stderr_bytes = await proc.communicate()
     if proc.returncode != 0:
         stderr = stderr_bytes.decode()
         if any(phrase in stderr for phrase in ("Private video", "This video is private", "Video unavailable")):
             raise EpisodeUnavailableError(f"Video {video_id} is private or unavailable")
+        if any(phrase in stderr for phrase in ("HTTP Error 429", "Too Many Requests", "Sign in to confirm")):
+            raise EpisodeRateLimitedError(f"Rate limited by YouTube for {video_id} — will retry next run")
         raise RuntimeError(
             f"yt-dlp download failed for {video_id}: {stderr[:500]}"
         )

@@ -8,8 +8,7 @@ import SearchResults from '@/components/SearchResults';
 import SearchBar from '@/components/SearchBar';
 import Navbar from '@/components/Navbar';
 import WhatsNewBubble from '@/components/WhatsNewBubble';
-import { SortOption, DateRange } from '@/components/SearchFilters';
-import { SortDirection } from '@/components/SortFilter';
+import { DateRange } from '@/components/SearchFilters';
 import { GroupByOption } from '@/components/GroupByFilter';
 import { SearchHit, ErrorState } from '@/types';
 import { loadUserPreferences, saveUserPreferences } from '@/lib/cookies';
@@ -79,8 +78,6 @@ export default function Home() {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
 
   // Filter states
-  const [sortBy, setSortBy] = useState<SortOption>('date');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [dateRange, setDateRange] = useState<DateRange>('all');
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
 
@@ -106,8 +103,6 @@ export default function Home() {
   const updateURL = useCallback((params: {
     query?: string;
     podcasts?: string[];
-    sort?: SortOption;
-    sortDirection?: SortDirection;
     dateRange?: DateRange;
     groupBy?: GroupByOption;
   }) => {
@@ -132,19 +127,6 @@ export default function Home() {
       } else {
         url.searchParams.delete('podcasts');
       }
-    }
-
-    // Update sort parameters
-    if (params.sort !== undefined && params.sort !== 'date') {
-      url.searchParams.set('sort', params.sort);
-    } else if (params.sort !== undefined) {
-      url.searchParams.delete('sort');
-    }
-
-    if (params.sortDirection !== undefined && params.sortDirection !== 'desc') {
-      url.searchParams.set('sortDirection', params.sortDirection);
-    } else if (params.sortDirection !== undefined) {
-      url.searchParams.delete('sortDirection');
     }
 
     // Update date range parameter
@@ -241,8 +223,6 @@ export default function Home() {
     // Restore state from URL parameters (URL takes precedence over cookies)
     const urlQuery = searchParams?.get('q');
     const urlPodcasts = searchParams?.get('podcasts');
-    const urlSort = searchParams?.get('sort') as SortOption;
-    const urlSortDirection = searchParams?.get('sortDirection') as SortDirection;
     const urlDateRange = searchParams?.get('dateRange') as DateRange;
     const urlGroupBy = searchParams?.get('groupBy') as GroupByOption;
 
@@ -257,14 +237,6 @@ export default function Home() {
       if (validPodcasts.length > 0) {
         setSelectedPodcasts(validPodcasts);
       }
-    }
-
-    if (urlSort && ['date', 'duration'].includes(urlSort)) {
-      setSortBy(urlSort);
-    }
-
-    if (urlSortDirection && ['asc', 'desc'].includes(urlSortDirection)) {
-      setSortDirection(urlSortDirection);
     }
 
     if (urlDateRange && ['all', 'last_week', 'last_month', 'last_3_months', 'last_year', 'custom'].includes(urlDateRange)) {
@@ -289,9 +261,9 @@ export default function Home() {
   // Sync all filter state to the URL in one effect to avoid multiple history entries
   useEffect(() => {
     if (preferencesLoaded) {
-      updateURL({ query: searchQuery, podcasts: selectedPodcasts, sort: sortBy, sortDirection, dateRange, groupBy });
+      updateURL({ query: searchQuery, podcasts: selectedPodcasts, dateRange, groupBy });
     }
-  }, [searchQuery, selectedPodcasts, sortBy, sortDirection, dateRange, groupBy, preferencesLoaded, updateURL]);
+  }, [searchQuery, selectedPodcasts, dateRange, groupBy, preferencesLoaded, updateURL]);
 
   // Reusable search function
   const performSearch = useCallback(async (query: string, pageNum: number = 1, append: boolean = false) => {
@@ -321,8 +293,6 @@ export default function Home() {
       const searchParams = new URLSearchParams({
         q: query,
         limit: '20',
-        sort: sortBy,
-        sortDirection,
         dateRange: dateRange,
         page: String(pageNum),
       });
@@ -357,7 +327,7 @@ export default function Home() {
       setIsSearching(false);
       setIsLoadingMore(false);
     }
-  }, [selectedPodcasts, podcasts, sortBy, sortDirection, dateRange, customStartDate, customEndDate]);
+  }, [selectedPodcasts, podcasts, dateRange, customStartDate, customEndDate]);
 
   // Search only on explicit submit (Enter key or form submit)
   const handleImmediateSearch = (query: string) => {
@@ -379,8 +349,6 @@ export default function Home() {
     setHasSearched(false);
 
     // Reset filters to defaults
-    setSortBy('date');
-    setSortDirection('desc');
     setDateRange('all');
     setGroupBy('none');
 
@@ -444,10 +412,6 @@ export default function Home() {
             podcasts={podcasts}
             selectedPodcasts={selectedPodcasts}
             onPodcastSelectionChange={setSelectedPodcasts}
-            sortBy={sortBy}
-            onSortChange={setSortBy}
-            sortDirection={sortDirection}
-            onSortDirectionChange={setSortDirection}
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
             onCustomDateChange={(startDate, endDate) => {

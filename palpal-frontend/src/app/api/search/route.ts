@@ -17,10 +17,6 @@ export async function GET(request: NextRequest) {
   const rawQuery = searchParams.get('q');
   const rawLimit = searchParams.get('limit');
   const rawPodcastId = searchParams.get('podcast_id');
-  const rawSort = searchParams.get('sort');
-  const rawDateRange = searchParams.get('dateRange');
-  const rawStartDate = searchParams.get('startDate');
-  const rawEndDate = searchParams.get('endDate');
   const rawPage = searchParams.get('page');
 
   try {
@@ -31,46 +27,12 @@ export async function GET(request: NextRequest) {
 
     const { q: query, limit } = validated;
 
-    // Map conductor sort values (date/duration)
-    const sortBy = rawSort || 'date';
-    const conductorSort = ['date', 'duration'].includes(sortBy) ? sortBy : 'date';
-
-    // Compute date_from / date_to from date range preset or custom dates
-    let date_from: string | undefined;
-    let date_to: string | undefined;
-
-    const dateRange = rawDateRange || 'all';
-    if (dateRange !== 'all') {
-      const now = new Date();
-      switch (dateRange) {
-        case 'last_week':
-          date_from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-          break;
-        case 'last_month':
-          date_from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-          break;
-        case 'last_3_months':
-          date_from = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-          break;
-        case 'last_year':
-          date_from = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-          break;
-        case 'custom':
-          if (rawStartDate) date_from = new Date(rawStartDate).toISOString().slice(0, 10);
-          if (rawEndDate) date_to = new Date(rawEndDate).toISOString().slice(0, 10);
-          break;
-      }
-    }
-
     const parsedPage = rawPage ? parseInt(rawPage, 10) : 1;
     const page = Number.isFinite(parsedPage) ? Math.min(Math.max(parsedPage, 1), 1000) : 1;
 
     const conductorResult = await searchChunks({
       q: query,
       podcast_id: rawPodcastId || undefined,
-      sort: conductorSort,
-      date_from,
-      date_to,
       page,
       page_size: limit,
     });

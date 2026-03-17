@@ -3,8 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { X, Check, RotateCcw } from 'lucide-react';
-import { SortOption, DateRange } from './SearchFilters';
-import { SortDirection } from './SortFilter';
+import { DateRange } from './SearchFilters';
 import { GroupByOption } from './GroupByFilter';
 import { PodcastConfig } from '@/types/podcast';
 
@@ -14,8 +13,6 @@ interface FilterModalProps {
   // Current filter values
   podcasts: PodcastConfig[];
   selectedPodcasts: string[];
-  sortBy: SortOption;
-  sortDirection: SortDirection;
   dateRange: DateRange;
   groupBy: GroupByOption;
   customStartDate?: string;
@@ -23,8 +20,6 @@ interface FilterModalProps {
   // Change handlers
   onApplyFilters: (filters: {
     selectedPodcasts: string[];
-    sortBy: SortOption;
-    sortDirection: SortDirection;
     dateRange: DateRange;
     groupBy: GroupByOption;
     customStartDate: string;
@@ -38,8 +33,6 @@ export default function FilterModal({
   onClose,
   podcasts,
   selectedPodcasts,
-  sortBy,
-  sortDirection,
   dateRange,
   groupBy,
   customStartDate = '',
@@ -49,8 +42,6 @@ export default function FilterModal({
 }: FilterModalProps) {
   // Local state for the modal (allows cancel functionality)
   const [localSelectedPodcasts, setLocalSelectedPodcasts] = useState<string[]>(selectedPodcasts);
-  const [localSortBy, setLocalSortBy] = useState<SortOption>(sortBy);
-  const [localSortDirection, setLocalSortDirection] = useState<SortDirection>(sortDirection);
   const [localDateRange, setLocalDateRange] = useState<DateRange>(dateRange);
   const [localGroupBy, setLocalGroupBy] = useState<GroupByOption>(groupBy);
 
@@ -60,8 +51,6 @@ export default function FilterModal({
   // Update local state when props change
   useEffect(() => {
     setLocalSelectedPodcasts(selectedPodcasts);
-    setLocalSortBy(sortBy);
-    setLocalSortDirection(sortDirection);
     setLocalDateRange(dateRange);
     setLocalGroupBy(groupBy);
 
@@ -71,13 +60,11 @@ export default function FilterModal({
     } else {
       setShowCustomDateInputs(false);
     }
-  }, [selectedPodcasts, sortBy, sortDirection, dateRange, groupBy, customStartDate, customEndDate]);
+  }, [selectedPodcasts, dateRange, groupBy, customStartDate, customEndDate]);
 
   const handleApply = () => {
     onApplyFilters({
       selectedPodcasts: localSelectedPodcasts,
-      sortBy: localSortBy,
-      sortDirection: localSortDirection,
       dateRange: localDateRange,
       groupBy: localGroupBy,
       customStartDate: customStartDate,
@@ -89,8 +76,6 @@ export default function FilterModal({
   const handleReset = () => {
     const enabledPodcastIds = podcasts.filter(p => p.enabled).map(p => p.id);
     setLocalSelectedPodcasts(enabledPodcastIds);
-    setLocalSortBy('date');
-    setLocalSortDirection('desc');
     setLocalDateRange('all');
     setLocalGroupBy('none');
     setShowCustomDateInputs(false);
@@ -183,54 +168,6 @@ export default function FilterModal({
                       className="w-4 h-4 text-orange-500 rounded border-gray-600 bg-gray-700 focus:ring-orange-500"
                     />
                     <span className="text-body text-sm">{podcast.displayName}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Sort Section */}
-            <div className="modal-item">
-              <h3 className="modal-item-title mb-3">Sort By</h3>
-              <div className="space-y-2">
-                {[
-                  { value: 'date' as SortOption, label: 'Date' },
-                  { value: 'duration' as SortOption, label: 'Duration' }
-                ].map(option => (
-                  <label
-                    key={option.value}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="radio"
-                      name="sort"
-                      checked={localSortBy === option.value}
-                      onChange={() => setLocalSortBy(option.value)}
-                      className="w-4 h-4 text-orange-500 focus:ring-orange-500"
-                    />
-                    <span className="text-body text-sm">{option.label}</span>
-                  </label>
-                ))}
-              </div>
-
-              {/* Sort Direction */}
-              <div className="mt-4 space-y-2">
-                <h4 className="text-sm font-medium" style={{ color: 'var(--text-tertiary)' }}>Direction</h4>
-                {[
-                  { value: 'desc' as SortDirection, label: 'Descending' },
-                  { value: 'asc' as SortDirection, label: 'Ascending' }
-                ].map(option => (
-                  <label
-                    key={option.value}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="radio"
-                      name="sortDirection"
-                      checked={localSortDirection === option.value}
-                      onChange={() => setLocalSortDirection(option.value)}
-                      className="w-4 h-4 text-orange-500 focus:ring-orange-500"
-                    />
-                    <span className="text-body text-sm">{option.label}</span>
                   </label>
                 ))}
               </div>

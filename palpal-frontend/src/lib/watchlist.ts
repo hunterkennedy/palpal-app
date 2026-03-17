@@ -50,11 +50,11 @@ export function clearWatched(): void {
 export interface WatchlistExport {
   version: 1;
   exported_at: string;
-  watched: Array<{ video_id: string; title?: string; date?: string | null }>;
+  watched: Array<{ video_id: string; title?: string }>;
 }
 
 export function exportWatched(
-  episodes: Array<{ video_id: string; title: string; publication_date: string | null }>,
+  episodes: Array<{ video_id: string; title: string }>,
 ): void {
   const watched = getWatchedSet();
   const payload: WatchlistExport = {
@@ -62,7 +62,7 @@ export function exportWatched(
     exported_at: new Date().toISOString(),
     watched: [...watched].map(video_id => {
       const ep = episodes.find(e => e.video_id === video_id);
-      return { video_id, title: ep?.title, date: ep?.publication_date ?? null };
+      return { video_id, title: ep?.title };
     }),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });

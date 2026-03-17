@@ -47,7 +47,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
-EXPOSE $APP_PORT
+# Port is set at runtime via PORT env var (passed by docker-compose)
+EXPOSE 3000
 
 # PORT and HOSTNAME will be set via env_file
 ENV HOSTNAME="0.0.0.0"

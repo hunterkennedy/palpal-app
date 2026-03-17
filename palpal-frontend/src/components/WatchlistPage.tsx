@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Image from 'next/image';
-import { CheckCircle2, Circle, Play, Tv2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Download, Upload, HardDrive } from 'lucide-react';
+import { CheckCircle2, Circle, Play, Tv2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Download, Upload } from 'lucide-react';
 import { getWatchedVideoIds, toggleWatched, clearWatched, exportWatched, importWatched } from '@/lib/watchlist';
 import { PodcastConfig } from '@/types/podcast';
 
@@ -75,7 +75,7 @@ export default function WatchlistPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
 
   useEffect(() => {
     setWatched(getWatchedVideoIds());
@@ -127,7 +127,6 @@ export default function WatchlistPage() {
     exportWatched(episodes.map(e => ({
       video_id: e.video_id,
       title: e.title,
-      publication_date: e.publication_date,
     })));
   };
 
@@ -199,15 +198,42 @@ export default function WatchlistPage() {
           <p className="text-xl text-body">
             {totalWatched} episode{totalWatched !== 1 ? 's' : ''} watched across all podcasts
           </p>
-          {totalWatched > 0 && (
+          <div className="flex items-center gap-2">
+            {importMsg && (
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{importMsg}</span>
+            )}
             <button
-              onClick={handleClearAll}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 text-gray-200 hover:bg-red-500/10 hover:text-red-300"
+              onClick={handleExport}
+              disabled={watched.size === 0}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Trash2 className="w-4 h-4" />
-              Clear History
+              <Download className="w-4 h-4" />
+              Export
             </button>
-          )}
+            <label
+              htmlFor="watchlist-import"
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced text-gray-200 cursor-pointer"
+            >
+              <Upload className="w-4 h-4" />
+              Import
+            </label>
+            <input
+              id="watchlist-import"
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={handleImport}
+            />
+            {totalWatched > 0 && (
+              <button
+                onClick={handleClearAll}
+                className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 text-gray-200 hover:bg-red-500/10 hover:text-red-300"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear History
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -452,47 +478,6 @@ export default function WatchlistPage() {
         )}
       </div>
 
-      {/* Local storage note + export/import */}
-      <div
-        className="mt-12 rounded-2xl px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4"
-        style={{ border: '1px solid var(--border-secondary)', backgroundColor: 'var(--surface-secondary)' }}
-      >
-        <div className="flex items-start gap-3 flex-1">
-          <HardDrive className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            Watch history is saved locally in your browser and won't sync across devices.
-            Export to back it up or move it to another browser.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {importMsg && (
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{importMsg}</span>
-          )}
-          <button
-            onClick={handleExport}
-            disabled={watched.size === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-medium transition-all duration-300 pill-enhanced text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Download className="w-4 h-4" />
-            Export
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-medium transition-all duration-300 pill-enhanced text-gray-200"
-          >
-            <Upload className="w-4 h-4" />
-            Import
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={handleImport}
-          />
-        </div>
-      </div>
     </div>
   );
 }

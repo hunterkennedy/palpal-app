@@ -8,8 +8,8 @@ import db
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 15   # seconds between status checks
-POLL_TIMEOUT  = 7200 # give up after 2 hours
+POLL_INTERVAL = int(os.environ.get("BLURB_POLL_INTERVAL", 15))   # seconds between status checks
+POLL_TIMEOUT  = int(os.environ.get("BLURB_POLL_TIMEOUT", 7200))  # give up after 2 hours
 
 
 async def transcribe_episode(episode_id: str) -> dict:

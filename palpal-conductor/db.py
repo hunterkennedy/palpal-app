@@ -27,8 +27,8 @@ async def init_pool() -> None:
     global _pool
     _pool = await asyncpg.create_pool(
         dsn=os.environ["DATABASE_URL"],
-        min_size=4,
-        max_size=20,
+        min_size=int(os.environ.get("DB_POOL_MIN", 4)),
+        max_size=int(os.environ.get("DB_POOL_MAX", 20)),
         init=_init_conn,
     )
 

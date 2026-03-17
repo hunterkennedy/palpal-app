@@ -4,8 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import React, { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { X, SlidersHorizontal, Search, ChevronDown, Check } from 'lucide-react';
-import { SortOption, DateRange } from './SearchFilters';
-import SortFilter, { SortDirection } from './SortFilter';
+import { DateRange } from './SearchFilters';
 import DateRangeFilter from './DateRangeFilter';
 import GroupByFilter, { GroupByOption } from './GroupByFilter';
 import FilterModal from './FilterModal';
@@ -22,10 +21,6 @@ interface SearchBarProps {
   podcasts: PodcastConfig[];
   selectedPodcasts: string[];
   onPodcastSelectionChange: (podcasts: string[]) => void;
-  sortBy: SortOption;
-  onSortChange: (sort: SortOption) => void;
-  sortDirection: SortDirection;
-  onSortDirectionChange: (direction: SortDirection) => void;
   dateRange: DateRange;
   onDateRangeChange: (range: DateRange) => void;
   onCustomDateChange?: (startDate: string, endDate: string) => void;
@@ -44,10 +39,6 @@ export default function SearchBar({
   podcasts,
   selectedPodcasts,
   onPodcastSelectionChange,
-  sortBy,
-  onSortChange,
-  sortDirection,
-  onSortDirectionChange,
   dateRange,
   onDateRangeChange,
   onCustomDateChange,
@@ -121,16 +112,12 @@ export default function SearchBar({
 
   const handleApplyFilters = (filters: {
     selectedPodcasts: string[];
-    sortBy: SortOption;
-    sortDirection: SortDirection;
     dateRange: DateRange;
     groupBy: GroupByOption;
     customStartDate: string;
     customEndDate: string;
   }) => {
     onPodcastSelectionChange(filters.selectedPodcasts);
-    onSortChange(filters.sortBy);
-    onSortDirectionChange(filters.sortDirection);
     onDateRangeChange(filters.dateRange);
     onGroupByChange(filters.groupBy);
     if (filters.dateRange === 'custom') {
@@ -152,7 +139,7 @@ export default function SearchBar({
 
   const enabledPodcastCount = podcasts.filter(p => p.enabled).length;
   const isPodcastFiltered = selectedPodcasts.length > 0 && selectedPodcasts.length < enabledPodcastCount;
-  const hasActiveFilters = isPodcastFiltered || sortBy !== 'date' || dateRange !== 'all' || groupBy !== 'none';
+  const hasActiveFilters = isPodcastFiltered || dateRange !== 'all' || groupBy !== 'none';
 
   return (
     <div className={`relative z-50 ${className}`}>
@@ -166,13 +153,6 @@ export default function SearchBar({
             border: '1px solid var(--border-secondary)',
           }}
         >
-          <SortFilter
-            sortBy={sortBy}
-            onSortChange={onSortChange}
-            sortDirection={sortDirection}
-            onSortDirectionChange={onSortDirectionChange}
-          />
-          <div className="w-px h-4 mx-1 flex-shrink-0" style={{ background: 'rgba(255,255,255,0.1)' }} />
           <DateRangeFilter
             dateRange={dateRange}
             onDateRangeChange={onDateRangeChange}
@@ -401,8 +381,6 @@ export default function SearchBar({
         onClose={() => setShowFilterModal(false)}
         podcasts={podcasts}
         selectedPodcasts={selectedPodcasts}
-        sortBy={sortBy}
-        sortDirection={sortDirection}
         dateRange={dateRange}
         groupBy={groupBy}
         customStartDate={customStartDate}

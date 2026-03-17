@@ -11,9 +11,6 @@ if (!CONDUCTOR_URL) {
 export interface ConductorSearchParams {
   q: string;
   podcast_id?: string;
-  sort?: string;
-  date_from?: string;
-  date_to?: string;
   page?: number;
   page_size?: number;
 }
@@ -51,9 +48,6 @@ export async function searchChunks(params: ConductorSearchParams): Promise<Condu
   const qs = new URLSearchParams();
   qs.set('q', params.q);
   if (params.podcast_id) qs.set('podcast_id', params.podcast_id);
-  if (params.sort) qs.set('sort', params.sort);
-  if (params.date_from) qs.set('date_from', params.date_from);
-  if (params.date_to) qs.set('date_to', params.date_to);
   if (params.page != null) qs.set('page', String(params.page));
   if (params.page_size != null) qs.set('page_size', String(params.page_size));
 

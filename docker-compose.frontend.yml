@@ -7,7 +7,12 @@ services:
       - PORT=${APP_PORT}
       - NODE_ENV=production
       - CONDUCTOR_URL=${CONDUCTOR_URL}
-      - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
     ports:
       - "127.0.0.1:${APP_PORT}:${APP_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${APP_PORT:-3001}/ > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped

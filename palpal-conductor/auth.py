@@ -5,11 +5,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 _bearer = HTTPBearer()
 
 
-async def verify_blurb_token(
+async def verify_admin_token(
     credentials: HTTPAuthorizationCredentials = Security(_bearer),
 ) -> str:
-    """FastAPI dependency: validates the Bearer token matches BLURB_API_KEY."""
-    expected = os.environ["BLURB_API_KEY"]
+    """FastAPI dependency: validates the Bearer token matches CONDUCTOR_ADMIN_KEY."""
+    expected = os.environ["CONDUCTOR_ADMIN_KEY"]
     if credentials.credentials != expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
