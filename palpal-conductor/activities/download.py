@@ -56,7 +56,7 @@ async def download_audio(episode_id: str) -> str:
 
     video_id: str = row["video_id"]
     site: str = row["site"]
-    audio_path_dir: str = os.environ.get("AUDIO_PATH", "/audio")
+    audio_path_dir: str = os.environ.get("AUDIO_PATH", "/tmp")
     output_template = os.path.join(audio_path_dir, f"{episode_id}.%(ext)s")
 
     if site == "patreon":

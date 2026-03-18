@@ -33,17 +33,25 @@ async def transcribe_episode(episode_id: str) -> dict:
 
     logger.info(f"Submitting episode {episode_id} to blurb ({audio_path})")
 
-    with open(audio_path, "rb") as f:
-        audio_bytes = f.read()
-
     filename = os.path.basename(audio_path)
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        res = await client.post(
-            f"{blurb_url}/jobs",
-            data={"job_id": str(episode_id)},
-            files={"file": (filename, audio_bytes)},
-            headers=headers,
+    try:
+        async with httpx.AsyncClient(timeout=600) as client:
+            with open(audio_path, "rb") as f:
+                res = await client.post(
+                    f"{blurb_url}/jobs",
+                    data={"job_id": str(episode_id)},
+                    files={"file": (filename, f)},
+                    headers=headers,
+                )
+    finally:
+        try:
+            os.unlink(audio_path)
+            logger.info(f"Deleted ephemeral audio file {audio_path}")
+        except OSError:
+            pass
+        await pool.execute(
+            "UPDATE episodes SET audio_path = NULL WHERE id = $1::uuid", episode_id
         )
 
     if res.status_code not in (200, 201, 202):

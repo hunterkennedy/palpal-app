@@ -54,14 +54,8 @@ async def run_episode(episode_id: str) -> None:
         async with _download_sem:
             await download_audio(episode_id)
 
-        # Safe checkpoint: audio is on disk
-        await pool.execute(
-            "UPDATE episodes SET status='downloaded' WHERE id=$1::uuid", episode_id
-        )
-        if await settings.get("auto_transcribe"):
-            await submit_downloaded_episode(episode_id)
-        else:
-            logger.info("Episode %s downloaded; auto_transcribe is off, stopping here", episode_id)
+        # Audio is on disk in /tmp — transcribe immediately (audio is ephemeral)
+        await submit_downloaded_episode(episode_id)
 
     except EpisodeUnavailableError as exc:
         logger.info(f"Episode {episode_id} is private/unavailable, will retry on next discovery: {exc}")
@@ -141,44 +135,31 @@ async def run_discovery(
 
 async def recover_interrupted_downloads() -> None:
     """
-    On startup, reset any episodes stuck in 'downloading' back to 'discovered'.
+    On startup, reset any episodes stuck mid-pipeline back to 'discovered'.
 
-    If the conductor was killed or restarted while a download was in progress,
-    the episode stays in 'downloading' indefinitely because there is no running
-    task to advance it. Resetting to 'discovered' lets the next manual trigger
-    or scheduled discovery pick it up cleanly.
+    Audio is ephemeral (/tmp) so there is nothing to resume from — any episode
+    that was downloading or transcribing when the conductor died must start over.
     """
     pool = db.get_pool()
-    # Episodes stuck in 'downloading' with audio already on disk → skip re-download
-    r_dl_done = await pool.execute(
-        """
-        UPDATE episodes
-        SET status = 'downloaded', error_message = 'Reset: download completed but status not updated before restart'
-        WHERE status = 'downloading' AND audio_path IS NOT NULL AND blacklisted = FALSE
-        """
-    )
-    # Episodes stuck in 'downloading' with no audio → full restart
     r1 = await pool.execute(
         """
         UPDATE episodes
         SET status = 'discovered', error_message = 'Reset: download interrupted by conductor restart'
-        WHERE status = 'downloading' AND audio_path IS NULL AND blacklisted = FALSE
+        WHERE status = 'downloading' AND blacklisted = FALSE
         """
     )
     r2 = await pool.execute(
         """
         UPDATE episodes
-        SET status = 'downloaded', error_message = 'Reset: transcription interrupted by conductor restart'
-        WHERE status = 'transcribing' AND audio_path IS NOT NULL AND blacklisted = FALSE
+        SET status = 'discovered', error_message = 'Reset: transcription interrupted by conductor restart'
+        WHERE status = 'transcribing' AND blacklisted = FALSE
         """
     )
-    n_dl_done = int(r_dl_done.split()[-1])
     n1, n2 = int(r1.split()[-1]), int(r2.split()[-1])
-    if n_dl_done or n1 or n2:
+    if n1 or n2:
         logger.warning(
-            "Startup recovery: %d downloading→downloaded (audio on disk), "
-            "%d downloading→discovered (no audio), %d transcribing→downloaded",
-            n_dl_done, n1, n2,
+            "Startup recovery: %d downloading→discovered, %d transcribing→discovered",
+            n1, n2,
         )
     else:
         logger.info("Startup recovery: no interrupted episodes found")
@@ -186,11 +167,10 @@ async def recover_interrupted_downloads() -> None:
 
 async def resubmit_stuck() -> None:
     """
-    Resubmit episodes stuck in transcribing.
+    Reset episodes stuck in transcribing back to discovered.
 
-    Runs daily at 10 AM. With polling-based blurb, a stuck 'transcribing'
-    episode means the conductor task died mid-poll. Reset to 'downloaded'
-    and resubmit so they get picked up by the transcription semaphore.
+    Runs daily at 10 AM. Audio is ephemeral so there is nothing to resume from;
+    the episode must re-download and re-submit to blurb.
     """
     pool = db.get_pool()
     rows = await pool.fetch(
@@ -199,13 +179,13 @@ async def resubmit_stuck() -> None:
     if not rows:
         logger.info("Recovery: no stuck transcribing episodes")
         return
-    logger.info(f"Recovery: resubmitting {len(rows)} stuck episode(s)")
+    logger.info(f"Recovery: resetting {len(rows)} stuck transcribing episode(s) to discovered")
     for row in rows:
-        logger.warning(f"Resubmitting stuck episode {row['id']}")
+        logger.warning(f"Resetting stuck episode {row['id']} to discovered")
         await pool.execute(
-            "UPDATE episodes SET status='downloaded' WHERE id=$1::uuid", row['id']
+            "UPDATE episodes SET status='discovered' WHERE id=$1::uuid", row['id']
         )
-        asyncio.create_task(submit_downloaded_episode(str(row["id"])))
+        asyncio.create_task(run_episode(str(row["id"])))
 
 
 async def scheduled_discovery() -> None:

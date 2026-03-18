@@ -26,7 +26,7 @@ from models import (
 from pipeline import (
     run_discovery, run_episode, start_scheduler, stop_scheduler,
     get_scheduler_status, pause_scheduler, resume_scheduler,
-    submit_downloaded_episode, recover_interrupted_downloads,
+    recover_interrupted_downloads,
 )
 from activities.process import process_transcript
 
@@ -117,22 +117,19 @@ async def scheduler_resume():
 
 @app.post("/admin/episodes/{episode_id}/process", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def process_episode(episode_id: str):
-    """Queue a discovered or downloaded episode through the pipeline."""
+    """Queue a discovered episode through the pipeline."""
     pool = db.get_pool()
     row = await pool.fetchrow(
         "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
-    if row["status"] not in ("discovered", "downloaded"):
+    if row["status"] != "discovered":
         raise HTTPException(
             status_code=409,
-            detail=f"Episode is '{row['status']}' — only discovered or downloaded episodes can be queued this way",
+            detail=f"Episode is '{row['status']}' — only discovered episodes can be queued this way",
         )
-    if row["status"] == "downloaded":
-        asyncio.create_task(submit_downloaded_episode(episode_id))
-    else:
-        asyncio.create_task(run_episode(episode_id))
+    asyncio.create_task(run_episode(episode_id))
     return {"status": "queued", "episode_id": episode_id}
 
 
@@ -189,59 +186,33 @@ async def admin_status():
 
 @app.post("/admin/episodes/{episode_id}/retry", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def retry_episode(episode_id: str):
-    """Retry a failed or stuck episode. Skips re-download if audio is already on disk."""
+    """Retry a failed or stuck episode from the beginning."""
     pool = db.get_pool()
     row = await pool.fetchrow(
-        "SELECT status, audio_path FROM episodes WHERE id = $1::uuid", episode_id
+        "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
-    if row["status"] not in ("failed", "transcribing", "downloaded", "downloading"):
+    if row["status"] not in ("failed", "transcribing", "downloading"):
         raise HTTPException(
             status_code=409,
-            detail=f"Episode is '{row['status']}' — only failed, stuck, or in-progress episodes can be retried",
+            detail=f"Episode is '{row['status']}' — only failed or stuck episodes can be retried",
         )
-
-    if row["status"] == "transcribing":
-        # Stuck in transcribing — reset to downloaded and resubmit
-        await pool.execute(
-            "UPDATE episodes SET status='downloaded', error_message=NULL WHERE id=$1::uuid",
-            episode_id,
-        )
-        asyncio.create_task(submit_downloaded_episode(episode_id))
-    elif row["audio_path"]:
-        # Audio already on disk — skip re-download
-        await pool.execute(
-            "UPDATE episodes SET status='downloaded', error_message=NULL WHERE id=$1::uuid",
-            episode_id,
-        )
-        asyncio.create_task(submit_downloaded_episode(episode_id))
-    else:
-        # No audio — full retry from the beginning
-        await pool.execute(
-            "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
-            episode_id,
-        )
-        asyncio.create_task(run_episode(episode_id))
-
+    await pool.execute(
+        "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
+        episode_id,
+    )
+    asyncio.create_task(run_episode(episode_id))
     return {"status": "queued", "episode_id": episode_id}
 
 
 @app.post("/admin/episodes/{episode_id}/delete", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def delete_episode(episode_id: str):
-    """Hard-delete an episode and all associated data (transcript, chunks). Removes audio file if present."""
+    """Hard-delete an episode and all associated data (transcript, chunks)."""
     pool = db.get_pool()
-    row = await pool.fetchrow(
-        "SELECT id, audio_path FROM episodes WHERE id = $1::uuid", episode_id
-    )
-    if not row:
+    result = await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
+    if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Episode not found")
-    await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
-    if row["audio_path"] and os.path.exists(row["audio_path"]):
-        try:
-            os.remove(row["audio_path"])
-        except OSError as e:
-            logger.warning(f"Could not delete audio file {row['audio_path']}: {e}")
     return {"status": "deleted", "episode_id": episode_id}
 
 
@@ -271,29 +242,20 @@ async def unblacklist_episode(episode_id: str):
 
 @app.post("/admin/episodes/{episode_id}/retranscribe", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def retranscribe_episode(episode_id: str):
-    """Delete existing transcript/chunks and re-run transcription. Uses cached audio if available."""
+    """Delete existing transcript/chunks and re-run the full pipeline from download."""
     pool = db.get_pool()
     row = await pool.fetchrow(
-        "SELECT status, audio_path FROM episodes WHERE id = $1::uuid", episode_id
+        "SELECT id FROM episodes WHERE id = $1::uuid", episode_id
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
 
-    # Clear existing transcript data
     await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
     await pool.execute("DELETE FROM transcripts WHERE episode_id = $1::uuid", episode_id)
-
-    if row["audio_path"] and os.path.exists(row["audio_path"]):
-        await pool.execute(
-            "UPDATE episodes SET status='downloaded', error_message=NULL WHERE id=$1::uuid", episode_id
-        )
-        asyncio.create_task(submit_downloaded_episode(episode_id))
-    else:
-        await pool.execute(
-            "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
-        )
-        asyncio.create_task(run_episode(episode_id))
-
+    await pool.execute(
+        "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
+    )
+    asyncio.create_task(run_episode(episode_id))
     return {"status": "retranscribing", "episode_id": episode_id}
 
 
@@ -346,7 +308,6 @@ async def admin_status_by_podcast():
         SELECT s.podcast_id, p.display_name,
                COUNT(*) FILTER (WHERE e.status = 'discovered')   AS discovered,
                COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
-               COUNT(*) FILTER (WHERE e.status = 'downloaded')   AS downloaded,
                COUNT(*) FILTER (WHERE e.status = 'transcribing') AS transcribing,
                COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
                COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed
@@ -382,22 +343,8 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
 
 @app.post("/admin/episodes/process-downloaded", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def process_all_downloaded(podcast_id: str | None = Query(None)):
-    """Queue downloaded episodes for transcription, optionally filtered by podcast."""
-    pool = db.get_pool()
-    if podcast_id:
-        rows = await pool.fetch(
-            """SELECT e.id::text FROM episodes e
-               JOIN sources s ON e.source_id = s.id
-               WHERE e.status = 'downloaded' AND e.blacklisted = FALSE AND s.podcast_id = $1""",
-            podcast_id,
-        )
-    else:
-        rows = await pool.fetch(
-            "SELECT id::text FROM episodes WHERE status = 'downloaded' AND blacklisted = FALSE"
-        )
-    for row in rows:
-        asyncio.create_task(submit_downloaded_episode(row["id"]))
-    return {"queued": len(rows)}
+    """Kept for backwards compatibility — audio is now ephemeral, so this always returns 0."""
+    return {"queued": 0}
 
 
 @app.post("/admin/episodes/bulk-action", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -412,48 +359,29 @@ async def bulk_episode_action(body: BulkActionRequest):
     for episode_id in body.episode_ids:
         try:
             row = await pool.fetchrow(
-                "SELECT status, audio_path FROM episodes WHERE id = $1::uuid", episode_id
+                "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
             )
             if not row:
                 results.append({"id": episode_id, "ok": False, "detail": "not found"})
                 continue
 
             if body.action == "retry":
-                if row["status"] not in ("failed", "transcribing", "downloaded", "downloading"):
+                if row["status"] not in ("failed", "transcribing", "downloading"):
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot retry '{row['status']}'"})
                     continue
-                if row["status"] == "transcribing":
-                    await pool.execute(
-                        "UPDATE episodes SET status='downloaded', error_message=NULL WHERE id=$1::uuid", episode_id
-                    )
-                    asyncio.create_task(submit_downloaded_episode(episode_id))
-                elif row["audio_path"]:
-                    await pool.execute(
-                        "UPDATE episodes SET status='downloaded', error_message=NULL WHERE id=$1::uuid", episode_id
-                    )
-                    asyncio.create_task(submit_downloaded_episode(episode_id))
-                else:
-                    await pool.execute(
-                        "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
-                    )
-                    asyncio.create_task(run_episode(episode_id))
+                await pool.execute(
+                    "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
+                )
+                asyncio.create_task(run_episode(episode_id))
 
             elif body.action == "process":
-                if row["status"] not in ("discovered", "downloaded"):
+                if row["status"] != "discovered":
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot process '{row['status']}'"})
                     continue
-                if row["status"] == "downloaded":
-                    asyncio.create_task(submit_downloaded_episode(episode_id))
-                else:
-                    asyncio.create_task(run_episode(episode_id))
+                asyncio.create_task(run_episode(episode_id))
 
             elif body.action == "delete":
                 await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
-                if row.get("audio_path") and os.path.exists(row["audio_path"]):
-                    try:
-                        os.remove(row["audio_path"])
-                    except OSError:
-                        pass
 
             elif body.action == "blacklist":
                 await pool.execute("UPDATE episodes SET blacklisted = TRUE WHERE id = $1::uuid", episode_id)
@@ -464,16 +392,10 @@ async def bulk_episode_action(body: BulkActionRequest):
             elif body.action == "retranscribe":
                 await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
                 await pool.execute("DELETE FROM transcripts WHERE episode_id = $1::uuid", episode_id)
-                if row.get("audio_path") and os.path.exists(row["audio_path"]):
-                    await pool.execute(
-                        "UPDATE episodes SET status='downloaded', error_message=NULL WHERE id=$1::uuid", episode_id
-                    )
-                    asyncio.create_task(submit_downloaded_episode(episode_id))
-                else:
-                    await pool.execute(
-                        "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
-                    )
-                    asyncio.create_task(run_episode(episode_id))
+                await pool.execute(
+                    "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
+                )
+                asyncio.create_task(run_episode(episode_id))
 
             results.append({"id": episode_id, "ok": True})
 

@@ -56,7 +56,6 @@
     .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.72rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap; }
     .badge-discovered   { color: #93c5fd; background: rgba(96,165,250,0.1);  border-color: rgba(96,165,250,0.2); }
     .badge-downloading  { color: #fde047; background: rgba(250,204,21,0.1);  border-color: rgba(250,204,21,0.2); }
-    .badge-downloaded   { color: #67e8f9; background: rgba(34,211,238,0.1);  border-color: rgba(34,211,238,0.2); }
     .badge-transcribing { color: #d8b4fe; background: rgba(192,132,252,0.1); border-color: rgba(192,132,252,0.2); }
     .badge-processed    { color: #86efac; background: rgba(74,222,128,0.1);  border-color: rgba(74,222,128,0.2); }
     .badge-failed       { color: #fca5a5; background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.2); }
@@ -249,7 +248,6 @@
               <th>podcast</th>
               <th style="text-align:center">discovered</th>
               <th style="text-align:center">downloading</th>
-              <th style="text-align:center">downloaded</th>
               <th style="text-align:center">transcribing</th>
               <th style="text-align:center">processed</th>
               <th style="text-align:center">failed</th>
@@ -404,7 +402,7 @@ const S = {
   podStats: [],
   episodes: [],
   podcasts: [],
-  pipelineSettings: { auto_discover: true, auto_download: true, auto_transcribe: true },
+  pipelineSettings: { auto_discover: true, auto_download: true },
   statusFilter: 'all',
   titleFilter: '',
   podcastFilter: 'all',
@@ -574,10 +572,10 @@ function fmtNextRun(iso) {
 // Podcast pipeline table
 // ---------------------------------------------------------------------------
 const SCOLOR = {
-  discovered: '#93c5fd', downloading: '#fde047', downloaded: '#67e8f9',
+  discovered: '#93c5fd', downloading: '#fde047',
   transcribing: '#d8b4fe', processed: '#86efac', failed: '#fca5a5',
 };
-const PIPELINE_PHASES = ['discovered', 'downloading', 'downloaded', 'transcribing', 'processed', 'failed'];
+const PIPELINE_PHASES = ['discovered', 'downloading', 'transcribing', 'processed', 'failed'];
 
 function renderPodcastPipeline(podStats) {
   const statsMap = {};
@@ -755,8 +753,7 @@ async function triggerTranscribe(podcastId) {
 // ---------------------------------------------------------------------------
 const SETTINGS_META = [
   { key: 'auto_discover',   label: 'Auto Discover',   desc: 'Scheduled discovery runs every 24h' },
-  { key: 'auto_download',   label: 'Auto Download',   desc: 'Newly discovered episodes are downloaded automatically' },
-  { key: 'auto_transcribe', label: 'Auto Transcribe', desc: 'Downloaded episodes are submitted to blurb automatically' },
+  { key: 'auto_download',   label: 'Auto Download',   desc: 'Newly discovered episodes are downloaded and transcribed automatically' },
 ];
 
 function renderPipelineSettings() {
@@ -886,9 +883,9 @@ async function savePatreonCookie() {
 // ---------------------------------------------------------------------------
 // Episodes table
 // ---------------------------------------------------------------------------
-const RETRYABLE   = new Set(['failed', 'transcribing', 'downloaded', 'downloading']);
-const PROCESSABLE = new Set(['discovered', 'downloaded']);
-const STATUS_TABS = ['all', 'discovered', 'downloading', 'downloaded', 'transcribing', 'failed', 'processed', 'blacklisted'];
+const RETRYABLE   = new Set(['failed', 'transcribing', 'downloading']);
+const PROCESSABLE = new Set(['discovered']);
+const STATUS_TABS = ['all', 'discovered', 'downloading', 'transcribing', 'failed', 'processed', 'blacklisted'];
 
 function getFiltered() {
   let r = S.episodes;
@@ -967,10 +964,9 @@ function renderEpRow(ep) {
 
   let acts = '';
   if (PROCESSABLE.has(ep.status)) {
-    const lbl = ep.status === 'downloaded' ? 'transcribe' : 'process';
-    acts += `<button class="btn btn-blue act" onclick="epAction('process','${ep.id}')">${lbl}</button>`;
+    acts += `<button class="btn btn-blue act" onclick="epAction('process','${ep.id}')">process</button>`;
   }
-  if (RETRYABLE.has(ep.status) && ep.status !== 'downloaded') {
+  if (RETRYABLE.has(ep.status)) {
     acts += `<button class="btn btn-yellow act" onclick="epAction('retry','${ep.id}')">retry</button>`;
   }
   if (ep.status === 'processed') {

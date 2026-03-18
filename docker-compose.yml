@@ -55,13 +55,10 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - BLURB_URL=${BLURB_URL}
       - BLURB_API_KEY=${BLURB_API_KEY}
-      - AUDIO_PATH=/audio
       - PORT=${CONDUCTOR_PORT}
       - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
     ports:
       - "127.0.0.1:${CONDUCTOR_PORT}:${CONDUCTOR_PORT}"
-    volumes:
-      - ${AUDIO_HOST_PATH}:/audio:z
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
