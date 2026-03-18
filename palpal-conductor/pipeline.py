@@ -6,7 +6,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import db
 import pipeline_settings as settings
-from activities.discovery import get_enabled_youtube_sources, discover_youtube_source
+from activities.discovery import (
+    get_enabled_youtube_sources, discover_youtube_source,
+    get_enabled_patreon_sources, discover_patreon_source,
+)
 from activities.download import download_audio, EpisodeTooShortError, EpisodeUnavailableError, EpisodeRateLimitedError
 from activities.blurb import transcribe_episode
 from activities.process import process_transcript
@@ -99,9 +102,13 @@ async def run_discovery(
     """
     label = podcast_id or "all"
     logger.info(f"Discovery run starting (podcast={label}, auto_queue={auto_queue})")
-    sources = await get_enabled_youtube_sources(podcast_id=podcast_id)
+
+    yt_sources = await get_enabled_youtube_sources(podcast_id=podcast_id)
+    patreon_sources = await get_enabled_patreon_sources(podcast_id=podcast_id)
+
     total_new: list[str] = []
-    for source in sources:
+
+    for source in yt_sources:
         try:
             new_episodes = await discover_youtube_source(
                 source["id"], source["url"], source["filters"],
@@ -112,9 +119,24 @@ async def run_discovery(
                 if auto_queue and await settings.get("auto_download"):
                     asyncio.create_task(run_episode(ep["episode_id"]))
         except Exception as exc:
-            logger.error(f"Discovery failed for source {source['id']}: {exc}")
+            logger.error(f"Discovery failed for YouTube source {source['id']}: {exc}")
+
+    for source in patreon_sources:
+        try:
+            new_episodes = await discover_patreon_source(
+                source["id"], source["url"], source["filters"],
+                podcast_id=source["podcast_id"],
+            )
+            for ep in new_episodes:
+                total_new.append(ep["episode_id"])
+                if auto_queue and await settings.get("auto_download"):
+                    asyncio.create_task(run_episode(ep["episode_id"]))
+        except Exception as exc:
+            logger.error(f"Discovery failed for Patreon source {source['id']}: {exc}")
+
+    total_sources = len(yt_sources) + len(patreon_sources)
     logger.info(f"Discovery run complete (podcast={label}): {len(total_new)} new, queued={auto_queue}")
-    return {"sources": len(sources), "new_episodes": len(total_new), "queued": auto_queue}
+    return {"sources": total_sources, "new_episodes": len(total_new), "queued": auto_queue}
 
 
 async def recover_interrupted_downloads() -> None:

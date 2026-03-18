@@ -2,6 +2,7 @@ import asyncio
 import glob
 import logging
 import os
+import tempfile
 from datetime import date as Date
 
 import db
@@ -23,6 +24,15 @@ class EpisodeRateLimitedError(Exception):
     """Raised when YouTube rate-limits the download request (transient — will be retried)."""
 
 
+def _write_patreon_cookie_file(session_cookie: str) -> str:
+    """Write a Netscape-format cookie file for yt-dlp. Returns the temp file path."""
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="patreon_cookies_")
+    f.write("# Netscape HTTP Cookie File\n")
+    f.write(f".patreon.com\tTRUE\t/\tTRUE\t0\tsession_id\t{session_cookie}\n")
+    f.close()
+    return f.name
+
+
 async def download_audio(episode_id: str) -> str:
     """
     Download audio for the episode using yt-dlp.
@@ -33,18 +43,28 @@ async def download_audio(episode_id: str) -> str:
     pool = db.get_pool()
 
     row = await pool.fetchrow(
-        "SELECT video_id FROM episodes WHERE id = $1::uuid",
+        """
+        SELECT e.video_id, s.site
+        FROM episodes e
+        JOIN sources s ON s.id = e.source_id
+        WHERE e.id = $1::uuid
+        """,
         episode_id,
     )
     if not row:
         raise RuntimeError(f"Episode {episode_id} not found in DB")
 
     video_id: str = row["video_id"]
+    site: str = row["site"]
     audio_path_dir: str = os.environ.get("AUDIO_PATH", "/audio")
     output_template = os.path.join(audio_path_dir, f"{episode_id}.%(ext)s")
-    video_url = f"https://youtube.com/watch?v={video_id}"
 
-    logger.info(f"Downloading audio for episode {episode_id} ({video_id})")
+    if site == "patreon":
+        video_url = f"https://www.patreon.com/posts/{video_id}"
+    else:
+        video_url = f"https://youtube.com/watch?v={video_id}"
+
+    logger.info(f"Downloading audio for episode {episode_id} ({site}/{video_id})")
 
     min_duration = await settings.get_int("min_episode_duration_seconds")
 
@@ -56,10 +76,21 @@ async def download_audio(episode_id: str) -> str:
         "--print", "upload_date",
         "--no-simulate",
         "-o", output_template,
-        video_url,
     ]
-    if min_duration > 0:
-        cmd += ["--match-filter", f"duration >= {min_duration}"]
+
+    if site == "patreon":
+        session_cookie = await settings.get_string("patreon_session_cookie")
+        if session_cookie:
+            cookie_file = _write_patreon_cookie_file(session_cookie)
+            cmd += ["--cookies", cookie_file]
+        else:
+            cookie_file = None
+    else:
+        cookie_file = None
+        if min_duration > 0:
+            cmd += ["--match-filter", f"duration >= {min_duration}"]
+
+    cmd.append(video_url)
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -68,12 +99,19 @@ async def download_audio(episode_id: str) -> str:
     )
 
     stdout_bytes, stderr_bytes = await proc.communicate()
+
+    if cookie_file:
+        try:
+            os.unlink(cookie_file)
+        except OSError:
+            pass
+
     if proc.returncode != 0:
         stderr = stderr_bytes.decode()
-        if any(phrase in stderr for phrase in ("Private video", "This video is private", "Video unavailable")):
-            raise EpisodeUnavailableError(f"Video {video_id} is private or unavailable")
+        if any(phrase in stderr for phrase in ("Private video", "This video is private", "Video unavailable", "This post is")):
+            raise EpisodeUnavailableError(f"Content {video_id} is private or unavailable")
         if any(phrase in stderr for phrase in ("HTTP Error 429", "Too Many Requests", "Sign in to confirm")):
-            raise EpisodeRateLimitedError(f"Rate limited by YouTube for {video_id} — will retry next run")
+            raise EpisodeRateLimitedError(f"Rate limited for {video_id} — will retry next run")
         raise RuntimeError(
             f"yt-dlp download failed for {video_id}: {stderr[:500]}"
         )

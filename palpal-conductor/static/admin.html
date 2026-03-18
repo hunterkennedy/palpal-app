@@ -278,6 +278,11 @@
           <select id="podcast-filter" onchange="applyFilters()">
             <option value="all">All podcasts</option>
           </select>
+          <select id="site-filter" onchange="applyFilters()">
+            <option value="all">All sources</option>
+            <option value="youtube">YouTube</option>
+            <option value="patreon">Patreon</option>
+          </select>
         </div>
         <div id="bulk-bar">
           <span id="bulk-label" style="color:#fdba74;font-size:0.875rem;font-weight:500;min-width:6rem"></span>
@@ -403,6 +408,7 @@ const S = {
   statusFilter: 'all',
   titleFilter: '',
   podcastFilter: 'all',
+  siteFilter: 'all',
   selected: new Set(),
   pending: new Set(),
   epExpanded: true,
@@ -795,7 +801,21 @@ function renderPipelineSettings() {
       </div>
     </div>`;
 
-  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows;
+  const cookieSet = !!(S.pipelineSettings.patreon_session_cookie);
+  const patreonRow = `
+    <div class="setting-row">
+      <div>
+        <div style="font-size:0.875rem;font-weight:500">Patreon Session Cookie</div>
+        <div class="muted small">session_id cookie value for patron-only content. ${cookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <input type="password" id="patreon-cookie-input" placeholder="${cookieSet ? '••••••••' : 'paste session_id value'}"
+          style="width:220px" autocomplete="off" />
+        <button class="btn btn-orange act" onclick="savePatreonCookie()">save</button>
+      </div>
+    </div>`;
+
+  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + patreonRow;
 }
 
 async function saveChunkWords() {
@@ -851,6 +871,18 @@ async function togglePipelineSetting(key, cb) {
 }
 
 
+async function savePatreonCookie() {
+  const val = document.getElementById('patreon-cookie-input').value.trim();
+  if (!val) return toast('Paste a session_id value first', false);
+  const res = await api('POST', '/admin/pipeline-settings', { patreon_session_cookie: val });
+  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
+  S.pipelineSettings = await res.json();
+  document.getElementById('patreon-cookie-input').value = '';
+  toast('Patreon cookie saved');
+  renderPipelineSettings();
+}
+
+
 // ---------------------------------------------------------------------------
 // Episodes table
 // ---------------------------------------------------------------------------
@@ -863,6 +895,7 @@ function getFiltered() {
   if (S.statusFilter === 'blacklisted') r = r.filter(e => e.blacklisted);
   else if (S.statusFilter !== 'all')    r = r.filter(e => e.status === S.statusFilter);
   if (S.podcastFilter !== 'all')        r = r.filter(e => e.podcast_id === S.podcastFilter);
+  if (S.siteFilter !== 'all')           r = r.filter(e => e.site === S.siteFilter);
   const q = S.titleFilter.trim().toLowerCase();
   if (q) r = r.filter(e => e.title.toLowerCase().includes(q));
   return r;
@@ -874,8 +907,9 @@ function setStatusFilter(s) {
 }
 
 function applyFilters() {
-  S.titleFilter  = document.getElementById('title-filter').value;
+  S.titleFilter   = document.getElementById('title-filter').value;
   S.podcastFilter = document.getElementById('podcast-filter').value;
+  S.siteFilter    = document.getElementById('site-filter').value;
   renderEpisodesTable();
 }
 
@@ -907,6 +941,9 @@ function toggleEpisodesSection() {
 
 function renderEpisodesTable() {
   renderStatusTabs();
+  const sites = new Set(S.episodes.map(e => e.site));
+  const siteEl = document.getElementById('site-filter');
+  if (siteEl) siteEl.disabled = sites.size <= 1;
   const filtered = getFiltered();
   document.getElementById('ep-count').textContent = filtered.length;
   document.getElementById('ep-filter-label').textContent = S.statusFilter !== 'all' ? `(${S.statusFilter})` : '';
@@ -952,14 +989,18 @@ function renderEpRow(ep) {
     acts += `<button class="btn btn-ghost icon-btn" onclick="startDelete('${ep.id}')" title="Delete" style="color:var(--muted)">🗑</button>`;
   }
 
+  const siteBadge = ep.site === 'patreon'
+    ? `<span class="badge" style="color:#f97316;background:rgba(249,115,22,0.1);border-color:rgba(249,115,22,0.25);margin-left:0.3rem">patreon</span>`
+    : `<span class="badge" style="color:#f87171;background:rgba(248,113,113,0.1);border-color:rgba(248,113,113,0.25);margin-left:0.3rem">yt</span>`;
+
   return `<tr class="${sel ? 'row-selected' : ''} ${ep.blacklisted ? 'row-blacklisted' : ''}">
     <td><input type="checkbox" ${sel ? 'checked' : ''} onchange="toggleSelect('${ep.id}', this)" /></td>
     <td>
-      <a href="${esc(ep.youtube_url)}" target="_blank" rel="noopener noreferrer"
+      <a href="${esc(ep.url)}" target="_blank" rel="noopener noreferrer"
         title="${esc(ep.title)}" style="display:block;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ep.title)}</a>
       ${ep.error_message ? `<div class="err-text" title="${esc(ep.error_message)}">${esc(ep.error_message)}</div>` : ''}
     </td>
-    <td class="muted small" style="white-space:nowrap">${esc(ep.podcast_name)}</td>
+    <td class="muted small" style="white-space:nowrap">${esc(ep.podcast_name)}${siteBadge}</td>
     <td style="white-space:nowrap">${statusBadge}</td>
     <td class="muted small" style="white-space:nowrap">${ep.publication_date ?? '—'}</td>
     <td class="muted small" style="white-space:nowrap">${fmtDur(ep.duration_seconds)}</td>

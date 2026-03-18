@@ -16,12 +16,14 @@ interface EpisodeInfo {
   podcast_id: string;
   podcast_name: string;
   source_name: string;
+  site: string;
   chunk_count: number;
   duration_seconds: number | null;
   youtube_url: string;
 }
 
 type FilterOption = 'all' | 'unwatched' | 'watched';
+type SiteFilter = 'all' | 'youtube' | 'patreon';
 type SortColumn = 'date' | 'title' | 'duration';
 type SortDir = 'asc' | 'desc';
 
@@ -47,14 +49,14 @@ function formatDuration(seconds: number | null): string {
 }
 
 function getEpisodeUrl(episode: EpisodeInfo): string {
-  if (episode.source_name?.toLowerCase().includes('patreon')) {
+  if (episode.site === 'patreon') {
     return `https://www.patreon.com/posts/${episode.video_id}`;
   }
   return episode.youtube_url;
 }
 
 function isPatreon(episode: EpisodeInfo): boolean {
-  return episode.source_name?.toLowerCase().includes('patreon') ?? false;
+  return episode.site === 'patreon';
 }
 
 function SortIcon({ column, sortCol, sortDir }: { column: SortColumn; sortCol: SortColumn; sortDir: SortDir }) {
@@ -69,6 +71,7 @@ export default function WatchlistPage() {
   const [podcasts, setPodcasts] = useState<PodcastConfig[]>([]);
   const [selectedPodcastId, setSelectedPodcastId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterOption>('all');
+  const [siteFilter, setSiteFilter] = useState<SiteFilter>('all');
   const [sortCol, setSortCol] = useState<SortColumn>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [watched, setWatched] = useState<Set<string>>(new Set());
@@ -161,10 +164,19 @@ export default function WatchlistPage() {
       ? Math.round((watchedCount / podcastEpisodes.length) * 100)
       : 0;
 
+  const podcastSites = useMemo(
+    () => new Set(podcastEpisodes.map(e => e.site)),
+    [podcastEpisodes],
+  );
+
   const filteredSortedEpisodes = useMemo(() => {
     let list = podcastEpisodes.filter(e => {
       if (filter === 'watched') return watched.has(e.video_id);
       if (filter === 'unwatched') return !watched.has(e.video_id);
+      return true;
+    }).filter(e => {
+      if (siteFilter === 'youtube') return e.site === 'youtube';
+      if (siteFilter === 'patreon') return e.site === 'patreon';
       return true;
     });
 
@@ -183,7 +195,7 @@ export default function WatchlistPage() {
     });
 
     return list;
-  }, [podcastEpisodes, filter, watched, sortCol, sortDir]);
+  }, [podcastEpisodes, filter, siteFilter, watched, sortCol, sortDir]);
 
   const thClass =
     'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider select-none cursor-pointer group';
@@ -266,6 +278,7 @@ export default function WatchlistPage() {
                       onClick={() => {
                         setSelectedPodcastId(pod.id);
                         setFilter('all');
+                        setSiteFilter('all');
                       }}
                       className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-medium transition-all duration-300 ${
                         isSelected ? 'pill-selected text-orange-100' : 'pill-enhanced text-gray-200'
@@ -308,7 +321,7 @@ export default function WatchlistPage() {
                 </section>
 
                 {/* Filter tabs */}
-                <section className="flex gap-2 mb-4">
+                <section className="flex gap-2 mb-4 flex-wrap">
                   {(['all', 'unwatched', 'watched'] as FilterOption[]).map(f => (
                     <button
                       key={f}
@@ -320,6 +333,22 @@ export default function WatchlistPage() {
                       {f === 'all' ? `All (${podcastEpisodes.length})` : f === 'unwatched' ? `Unwatched (${podcastEpisodes.length - watchedCount})` : `Watched (${watchedCount})`}
                     </button>
                   ))}
+                  {podcastSites.size > 1 && (
+                    <>
+                      <span className="self-center mx-1" style={{ color: 'var(--border-primary)' }}>|</span>
+                      {(['all', 'youtube', 'patreon'] as SiteFilter[]).map(s => (
+                        <button
+                          key={s}
+                          onClick={() => setSiteFilter(s)}
+                          className={`px-4 py-2 rounded-2xl text-sm font-medium transition-all duration-300 ${
+                            siteFilter === s ? 'pill-selected text-orange-100' : 'pill-enhanced text-gray-300'
+                          }`}
+                        >
+                          {s === 'all' ? 'All sources' : s === 'youtube' ? 'YouTube' : 'Patreon'}
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </section>
 
                 {/* Table */}

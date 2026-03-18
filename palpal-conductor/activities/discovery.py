@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import re
+from datetime import date as Date
 from typing import TypedDict
 
 import httpx
@@ -10,6 +12,10 @@ import pipeline_settings as settings
 from activities.utils import yt_dlp_path
 
 logger = logging.getLogger(__name__)
+
+_PATREON_AUDIO_POST_TYPES = {"podcast", "audio_file"}
+_PATREON_API_URL = "https://www.patreon.com/api/posts"
+_PATREON_COLLECTION_RE = re.compile(r"patreon\.com/collection/(\d+)")
 
 
 class SourceRow(TypedDict):
@@ -294,4 +300,184 @@ async def discover_youtube_source(
     if podcast_id:
         asyncio.create_task(fetch_channel_icon(podcast_id, url))
 
+    return new_episodes
+
+
+async def get_enabled_patreon_sources(podcast_id: str | None = None) -> list[SourceRow]:
+    """Return enabled Patreon sources, optionally filtered to one podcast."""
+    pool = db.get_pool()
+    if podcast_id:
+        rows = await pool.fetch(
+            "SELECT id::text, url, filters, podcast_id FROM sources "
+            "WHERE site = 'patreon' AND enabled = TRUE AND podcast_id = $1",
+            podcast_id,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id::text, url, filters, podcast_id FROM sources "
+            "WHERE site = 'patreon' AND enabled = TRUE"
+        )
+
+    def _coerce_filters(f) -> dict:
+        if isinstance(f, dict):
+            return f
+        if isinstance(f, str):
+            try:
+                parsed = json.loads(f)
+                return parsed if isinstance(parsed, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return {}
+
+    return [
+        SourceRow(
+            id=str(row["id"]),
+            url=row["url"],
+            filters=_coerce_filters(row["filters"]),
+            podcast_id=row["podcast_id"],
+        )
+        for row in rows
+    ]
+
+
+async def _fetch_patreon_campaign_id(url: str, session_cookie: str) -> str:
+    """Fetch the Patreon collection/campaign page and extract the campaign ID."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; palpal/1.0)"}
+    if session_cookie:
+        headers["Cookie"] = f"session_id={session_cookie}"
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        resp = await client.get(url, headers=headers)
+    resp.raise_for_status()
+    html = resp.text
+
+    logger.debug(f"Patreon page response ({len(html)} chars): {html[:300]!r}")
+
+    # "campaign":{"data":{"id":"3323418","type":"campaign"
+    m = re.search(r'"campaign"\s*:\s*\{\s*"data"\s*:\s*\{\s*"id"\s*:\s*"(\d+)"', html)
+    if m:
+        return m.group(1)
+
+    # /campaign/3323418/ (appears in image CDN URLs)
+    m = re.search(r'/campaign/(\d+)/', html)
+    if m:
+        return m.group(1)
+
+    # "NavigationBar_3323418"
+    m = re.search(r'"NavigationBar_(\d+)"', html)
+    if m:
+        return m.group(1)
+
+    logger.error(f"HTML snippet for failed campaign_id extraction: {html[:1000]!r}")
+    raise RuntimeError(f"Could not extract campaign_id from Patreon page: {url}")
+
+
+async def discover_patreon_source(
+    source_id: str,
+    url: str,
+    filters: dict,
+    podcast_id: str = "",
+) -> list[NewEpisode]:
+    """
+    Fetch posts from a Patreon collection or campaign via the Patreon JSON:API,
+    filter to audio post types, insert new episodes, and return newly inserted rows.
+    """
+    logger.info(f"Discovering Patreon source {source_id} ({url})")
+
+    session_cookie = await settings.get_string("patreon_session_cookie")
+
+    collection_match = _PATREON_COLLECTION_RE.search(url)
+    collection_id = collection_match.group(1) if collection_match else None
+
+    campaign_id = await _fetch_patreon_campaign_id(url, session_cookie)
+    logger.info(f"Patreon source {source_id}: campaign_id={campaign_id}, collection_id={collection_id}")
+
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; palpal/1.0)"}
+    if session_cookie:
+        headers["Cookie"] = f"session_id={session_cookie}"
+
+    title_exclude: list[str] = [s.lower() for s in filters.get("title_exclude", [])]
+
+    params: dict = {
+        "filter[campaign_id]": campaign_id,
+        "filter[contains_exclusive_posts]": "true",
+        "filter[is_draft]": "false",
+        "sort": "collection_order" if collection_id else "-published_at",
+        "fields[post]": "title,published_at,post_type",
+        "json-api-version": "1.0",
+        "page[count]": "50",
+    }
+    if collection_id:
+        params["filter[collection_id]"] = collection_id
+
+    all_entries: list[dict] = []
+    cursor: str | None = None
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            if cursor:
+                params["page[cursor]"] = cursor
+
+            resp = await client.get(_PATREON_API_URL, params=params, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+            for post in data.get("data", []):
+                post_id = post.get("id")
+                attrs = post.get("attributes", {})
+                title = attrs.get("title") or ""
+                post_type = attrs.get("post_type") or ""
+                published_at = attrs.get("published_at")  # ISO 8601 string
+
+                if not post_id or post_type not in _PATREON_AUDIO_POST_TYPES:
+                    continue
+
+                if any(excl in title.lower() for excl in title_exclude):
+                    logger.debug(f"Skipping '{title}' (title_exclude match)")
+                    continue
+
+                pub_date: Date | None = None
+                if published_at:
+                    try:
+                        y, mo, d = published_at[:10].split("-")
+                        pub_date = Date(int(y), int(mo), int(d))
+                    except (ValueError, AttributeError):
+                        pass
+
+                all_entries.append({"video_id": post_id, "title": title, "pub_date": pub_date})
+
+            cursor = (
+                data.get("meta", {})
+                .get("pagination", {})
+                .get("cursors", {})
+                .get("next")
+            )
+            if not cursor:
+                break
+
+    logger.info(f"Patreon source {source_id}: {len(all_entries)} audio entries found")
+
+    if not all_entries:
+        return []
+
+    pool = db.get_pool()
+    new_episodes: list[NewEpisode] = []
+
+    for entry in all_entries:
+        row = await pool.fetchrow(
+            """
+            INSERT INTO episodes (source_id, video_id, title, publication_date)
+            VALUES ($1::uuid, $2, $3, $4)
+            ON CONFLICT (source_id, video_id) DO NOTHING
+            RETURNING id::text
+            """,
+            source_id,
+            entry["video_id"],
+            entry["title"],
+            entry["pub_date"],
+        )
+        if row:
+            new_episodes.append(NewEpisode(episode_id=row["id"], video_id=entry["video_id"]))
+
+    logger.info(f"Patreon source {source_id}: {len(new_episodes)} new episodes inserted")
     return new_episodes

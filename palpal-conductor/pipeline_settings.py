@@ -14,9 +14,11 @@ logger = logging.getLogger(__name__)
 
 KNOWN_KEYS = {"auto_discover", "auto_download", "auto_transcribe"}
 KNOWN_INT_KEYS = {"min_episode_duration_seconds", "chunk_target_words"}
+KNOWN_STRING_KEYS = {"patreon_session_cookie"}
 
 _cache: dict[str, bool] | None = None
 _int_cache: dict[str, int] | None = None
+_string_cache: dict[str, str] | None = None
 
 
 async def get_all() -> dict[str, Any]:
@@ -34,6 +36,9 @@ async def get_all() -> dict[str, Any]:
 
     for key in KNOWN_INT_KEYS:
         result[key] = await get_int(key, default=0)
+
+    for key in KNOWN_STRING_KEYS:
+        result[key] = await get_string(key)
 
     return result
 
@@ -87,3 +92,31 @@ async def set_int(key: str, value: int) -> None:
     )
     _int_cache = None
     logger.info("Pipeline setting %s = %s", key, value)
+
+
+async def get_string(key: str, default: str = "") -> str:
+    global _string_cache
+    if key not in KNOWN_STRING_KEYS:
+        raise ValueError(f"Unknown string setting: {key}")
+    if _string_cache is not None and key in _string_cache:
+        return _string_cache[key]
+    pool = db.get_pool()
+    rows = await pool.fetch("SELECT key, value FROM settings WHERE key = ANY($1)", list(KNOWN_STRING_KEYS))
+    _string_cache = {}
+    for row in rows:
+        _string_cache[row["key"]] = row["value"] or ""
+    return _string_cache.get(key, default)
+
+
+async def set_string(key: str, value: str) -> None:
+    global _string_cache
+    if key not in KNOWN_STRING_KEYS:
+        raise ValueError(f"Unknown string setting: {key}")
+    pool = db.get_pool()
+    await pool.execute(
+        """INSERT INTO settings (key, value) VALUES ($2, $1)
+           ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()""",
+        value, key,
+    )
+    _string_cache = None
+    logger.info("Pipeline setting %s updated", key)

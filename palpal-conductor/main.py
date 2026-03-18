@@ -78,6 +78,8 @@ async def update_pipeline_settings(body: dict):
     for key, value in body.items():
         if key in pipeline_settings.KNOWN_INT_KEYS:
             await pipeline_settings.set_int(key, int(value))
+        elif key in pipeline_settings.KNOWN_STRING_KEYS:
+            await pipeline_settings.set_string(key, str(value))
         else:
             await pipeline_settings.set(key, bool(value))
     return await pipeline_settings.get_all()
@@ -512,6 +514,7 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
             s.podcast_id,
             p.display_name  AS podcast_name,
             s.name          AS source_name,
+            s.site,
             COUNT(tc.id)       AS chunk_count,
             COALESCE(e.duration_seconds, MAX(tc.end_time)) AS duration_seconds
         FROM episodes e
@@ -519,7 +522,7 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
         JOIN podcasts p  ON p.id  = s.podcast_id
         LEFT JOIN transcript_chunks tc ON tc.episode_id = e.id
         GROUP BY e.id, e.video_id, e.title, e.publication_date, e.status,
-                 e.error_message, e.blacklisted, s.podcast_id, p.display_name, s.name
+                 e.error_message, e.blacklisted, s.podcast_id, p.display_name, s.name, s.site
         ORDER BY e.publication_date DESC NULLS LAST, e.created_at DESC
         """
     )
