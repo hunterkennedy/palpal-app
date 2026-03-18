@@ -260,10 +260,14 @@ async def retranscribe_episode(episode_id: str):
 
 
 @app.post("/admin/episodes/rechunk", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def rechunk_all_episodes(podcast_id: str | None = Query(None)):
+async def rechunk_all_episodes(
+    podcast_id: str | None = Query(None),
+    dry_run: bool = Query(False),
+):
     """
     Re-chunk all processed episodes from stored raw segments using the current
     chunk_target_words setting. Runs in the background; returns episode count queued.
+    Pass dry_run=true to count affected episodes without executing.
     """
     pool = db.get_pool()
     target_words = await pipeline_settings.get_int("chunk_target_words") or 50
@@ -279,6 +283,9 @@ async def rechunk_all_episodes(podcast_id: str | None = Query(None)):
         rows = await pool.fetch(
             "SELECT id::text FROM episodes WHERE status = 'processed'"
         )
+
+    if dry_run:
+        return {"queued": len(rows), "target_words": target_words, "dry_run": True}
 
     sem = asyncio.Semaphore(4)
 
