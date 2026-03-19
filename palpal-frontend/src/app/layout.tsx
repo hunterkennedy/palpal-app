@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ClientWrapper from "@/components/ClientWrapper";
+import WhatsNewBubble from "@/components/WhatsNewBubble";
 import { Suspense } from "react";
 
 const inter = Inter({
@@ -36,6 +37,7 @@ export default function RootLayout({
             <Suspense fallback={<div>Loading...</div>}>
               {children}
             </Suspense>
+            <WhatsNewBubble />
           </ClientWrapper>
         </ErrorBoundary>
       </body>

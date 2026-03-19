@@ -12,7 +12,11 @@ export async function GET() {
     });
     if (!res.ok) throw new Error(`Conductor /episodes: ${res.status}`);
     const data = await res.json();
-    return NextResponse.json(data);
+    return NextResponse.json(data, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=3600',
+      },
+    });
   } catch (err) {
     console.error('Episodes fetch error:', err);
     return NextResponse.json({ error: 'Failed to fetch episodes' }, { status: 502 });

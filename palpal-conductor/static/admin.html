@@ -847,7 +847,37 @@ function renderPipelineSettings() {
       </div>
     </div>`;
 
-  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + patreonRow;
+  // Preserve in-progress edits and focus across re-renders
+  const existingContent = document.getElementById('whats-new-content');
+  const wnContent = existingContent ? existingContent.value : (S.pipelineSettings.whats_new_content || '');
+  const wnDate = S.pipelineSettings.whats_new_date || '';
+  const focusedId = document.activeElement && document.activeElement.id;
+  const selStart = existingContent && focusedId === 'whats-new-content' ? existingContent.selectionStart : null;
+  const selEnd   = existingContent && focusedId === 'whats-new-content' ? existingContent.selectionEnd   : null;
+  const whatsNewRow = `
+    <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:0.75rem">
+      <div>
+        <div style="font-size:0.875rem;font-weight:500">What's New</div>
+        <div class="muted small">Shown as a dismissible bubble to users. Updating the date resets dismissals — users see it again. Supports HTML. Leave both blank to hide.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;width:100%">
+        <textarea id="whats-new-content" rows="4" placeholder="What's new message (HTML allowed)…"
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:0.4rem 0.65rem;border-radius:6px;font-family:inherit;font-size:0.875rem;resize:vertical"
+        ></textarea>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <button class="btn btn-orange act" onclick="saveWhatsNew()">save</button>
+          ${wnDate ? `<span class="muted small">last posted ${new Date(wnDate).toLocaleString()}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + patreonRow + whatsNewRow;
+  const ta = document.getElementById('whats-new-content');
+  ta.value = wnContent;
+  if (focusedId === 'whats-new-content') {
+    ta.focus();
+    ta.setSelectionRange(selStart, selEnd);
+  }
   renderDangerZone();
 }
 
@@ -993,6 +1023,18 @@ async function savePatreonCookie() {
   S.pipelineSettings = await res.json();
   document.getElementById('patreon-cookie-input').value = '';
   toast('Patreon cookie saved');
+  renderPipelineSettings();
+}
+
+async function saveWhatsNew() {
+  const content = document.getElementById('whats-new-content').value;
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const date = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`; // local time
+  const res = await api('POST', '/admin/pipeline-settings', { whats_new_content: content, whats_new_date: date });
+  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
+  S.pipelineSettings = await res.json();
+  toast("What's New saved");
   renderPipelineSettings();
 }
 

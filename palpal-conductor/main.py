@@ -792,6 +792,14 @@ async def episodes_check(
 # Health                                                                       #
 # --------------------------------------------------------------------------- #
 
+@app.get("/whats-new", tags=["meta"])
+async def whats_new():
+    """Current what's new announcement. Empty strings mean nothing to show."""
+    content = await pipeline_settings.get_string("whats_new_content")
+    date = await pipeline_settings.get_string("whats_new_date")
+    return {"content": content, "date": date}
+
+
 @app.get("/health", tags=["meta"])
 async def health():
     return {"status": "ok"}

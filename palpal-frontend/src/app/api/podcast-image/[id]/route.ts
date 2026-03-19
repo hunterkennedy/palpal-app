@@ -9,7 +9,7 @@ export async function GET(
 
   try {
     const response = await fetch(`${conductorUrl}/podcasts/${id}/image`, {
-      cache: 'no-store',
+      next: { revalidate: 86400 },
     });
 
     if (!response.ok) {

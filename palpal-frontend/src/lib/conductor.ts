@@ -51,7 +51,7 @@ export async function searchChunks(params: ConductorSearchParams): Promise<Condu
   if (params.page != null) qs.set('page', String(params.page));
   if (params.page_size != null) qs.set('page_size', String(params.page_size));
 
-  const res = await fetch(`${CONDUCTOR_URL}/search?${qs.toString()}`);
+  const res = await fetch(`${CONDUCTOR_URL}/search?${qs.toString()}`, { next: { revalidate: 300 } });
   if (!res.ok) {
     throw new Error(`Conductor /search error: ${res.status}`);
   }
@@ -60,7 +60,7 @@ export async function searchChunks(params: ConductorSearchParams): Promise<Condu
 
 export async function getChunks(chunkId: string, radius: number): Promise<ConductorChunk[]> {
   const qs = new URLSearchParams({ chunk_id: chunkId, radius: String(radius) });
-  const res = await fetch(`${CONDUCTOR_URL}/chunks?${qs.toString()}`);
+  const res = await fetch(`${CONDUCTOR_URL}/chunks?${qs.toString()}`, { next: { revalidate: 3600 } });
   if (!res.ok) {
     throw new Error(`Conductor /chunks error: ${res.status}`);
   }
@@ -90,7 +90,7 @@ export interface ConductorPodcast {
 }
 
 export async function getPodcasts(): Promise<ConductorPodcast[]> {
-  const res = await fetch(`${CONDUCTOR_URL}/podcasts`);
+  const res = await fetch(`${CONDUCTOR_URL}/podcasts`, { next: { revalidate: 300 } });
   if (!res.ok) throw new Error(`Conductor /podcasts error: ${res.status}`);
   return res.json();
 }

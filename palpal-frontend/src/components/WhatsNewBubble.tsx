@@ -7,8 +7,7 @@ import { dismissWhatsNew, isWhatsNewDismissed } from '@/lib/cookies';
 
 interface WhatsNewData {
   content: string;
-  version: string;
-  timestamp: string;
+  date: string;
 }
 
 export default function WhatsNewBubble() {
@@ -25,11 +24,12 @@ export default function WhatsNewBubble() {
       const response = await fetch('/api/whats-new');
       if (response.ok) {
         const data: WhatsNewData = await response.json();
+        if (!data.content || !data.date) {
+          setIsLoading(false);
+          return;
+        }
         setWhatsNewData(data);
-
-        // Check if this version has been dismissed
-        const isDismissed = isWhatsNewDismissed(data.version);
-        setIsVisible(!isDismissed);
+        setIsVisible(!isWhatsNewDismissed(data.date));
       }
     } catch (error) {
       console.error('Failed to fetch what\'s new:', error);
@@ -40,7 +40,7 @@ export default function WhatsNewBubble() {
 
   const handleDismiss = () => {
     if (whatsNewData) {
-      dismissWhatsNew(whatsNewData.version);
+      dismissWhatsNew(whatsNewData.date);
       setIsVisible(false);
     }
   };

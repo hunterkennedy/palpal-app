@@ -1,32 +1,22 @@
 import { NextResponse } from 'next/server';
-import { readFile, stat } from 'fs/promises';
-import { join } from 'path';
-import { createHash } from 'crypto';
+
+const CONDUCTOR_URL = process.env.CONDUCTOR_URL;
 
 export async function GET() {
+  if (!CONDUCTOR_URL) {
+    return NextResponse.json({ error: 'CONDUCTOR_URL not set' }, { status: 500 });
+  }
   try {
-    // Read the what's new content from a file
-    const contentPath = join(process.cwd(), 'content', 'whats-new.html');
-    const content = await readFile(contentPath, 'utf-8');
-
-    // Create version hash from content + file modification time
-    const stats = await stat(contentPath);
-    const versionInput = content + stats.mtime.getTime().toString();
-    const version = createHash('md5').update(versionInput).digest('hex').substring(0, 8);
-
-    return NextResponse.json({
-      content,
-      version,
-      timestamp: new Date().toISOString()
+    const res = await fetch(`${CONDUCTOR_URL}/whats-new`, { next: { revalidate: 3600 } });
+    if (!res.ok) throw new Error(`Conductor /whats-new: ${res.status}`);
+    const data = await res.json();
+    return NextResponse.json(data, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400',
+      },
     });
-
-  } catch (error) {
-    console.error('Error reading what\'s new content:', error);
-
-    return NextResponse.json({
-      content: '<p>No updates available at this time.</p>',
-      version: '0',
-      timestamp: new Date().toISOString()
-    });
+  } catch (err) {
+    console.error('Whats-new fetch error:', err);
+    return NextResponse.json({ content: '', date: '' });
   }
 }
