@@ -182,14 +182,14 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
             <button
               onClick={handleExport}
               disabled={watched.size === 0}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4" />
               Export
             </button>
             <label
               htmlFor="watchlist-import"
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced text-gray-200 cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced cursor-pointer"
             >
               <Upload className="w-4 h-4" />
               Import
@@ -232,7 +232,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                         setSiteFilter('all');
                       }}
                       className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-medium transition-all duration-300 ${
-                        isSelected ? 'pill-selected text-orange-100' : 'pill-enhanced text-gray-200'
+                        isSelected ? 'pill-selected' : 'pill-enhanced'
                       }`}
                     >
                       {pod.image && (
@@ -278,7 +278,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                       key={f}
                       onClick={() => setFilter(f)}
                       className={`px-4 py-2 rounded-2xl text-sm font-medium transition-all duration-300 ${
-                        filter === f ? 'pill-selected text-orange-100' : 'pill-enhanced text-gray-300'
+                        filter === f ? 'pill-selected' : 'pill-enhanced'
                       }`}
                     >
                       {f === 'all' ? `All (${podcastEpisodes.length})` : f === 'unwatched' ? `Unwatched (${podcastEpisodes.length - watchedCount})` : `Watched (${watchedCount})`}
@@ -292,7 +292,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                           key={s}
                           onClick={() => setSiteFilter(s)}
                           className={`px-4 py-2 rounded-2xl text-sm font-medium transition-all duration-300 ${
-                            siteFilter === s ? 'pill-selected text-orange-100' : 'pill-enhanced text-gray-300'
+                            siteFilter === s ? 'pill-selected' : 'pill-enhanced'
                           }`}
                         >
                           {s === 'all' ? 'All sources' : s === 'youtube' ? 'YouTube' : 'Patreon'}

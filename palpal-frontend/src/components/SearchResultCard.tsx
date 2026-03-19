@@ -263,8 +263,8 @@ export default function SearchResultCard({
               onClick={e => onSaveToggle(hit, e)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-medium transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 group/save ${
                 isSaved
-                  ? 'pill-selected text-orange-100 focus:ring-orange-500'
-                  : 'pill-enhanced text-gray-200 hover:border-orange-400/30 focus:ring-gray-500'
+                  ? 'pill-selected focus:ring-orange-500'
+                  : 'pill-enhanced focus:ring-gray-500'
               }`}
               aria-label={isSaved ? 'Remove from saved' : 'Save this chunk'}
             >

@@ -186,10 +186,7 @@ code {
 
 .modal-title {
   @apply text-2xl font-bold;
-  background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--text-primary);
 }
 
 .modal-close-btn {
@@ -294,11 +291,7 @@ code {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background:
-    linear-gradient(to bottom, #242220 0%, #151413 100%),
-    radial-gradient(circle at 20% 20%, rgba(254, 133, 0, 0.08) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(255, 179, 102, 0.05) 0%, transparent 50%),
-    radial-gradient(circle at 50% 50%, rgba(255, 183, 107, 0.02) 0%, transparent 70%);
+  background: linear-gradient(to bottom, #242220 0%, #151413 100%);
   pointer-events: none;
   z-index: -1;
 }
@@ -379,13 +372,11 @@ a.card-secondary:hover, button.card-secondary:hover {
   @apply inline-block px-6 py-3 rounded-2xl font-medium transition-all duration-300 shadow-lg;
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
   color: var(--bg-tertiary);
-  box-shadow: 0 4px 15px rgba(254, 133, 0, 0.3);
 }
 
 .btn-primary:hover {
   background: linear-gradient(135deg, var(--accent-secondary), var(--accent-tertiary));
   color: var(--bg-tertiary);
-  box-shadow: 0 6px 20px rgba(254, 133, 0, 0.45);
 }
 
 .btn-secondary {
@@ -535,49 +526,41 @@ a.card-secondary:hover, button.card-secondary:hover {
   color: white;
 }
 
-/* Enhanced Pill Components - Neon & Wires Motif */
+/* Enhanced Pill Components */
 .pill-enhanced {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 1px 3px rgba(0, 0, 0, 0.2);
+  background: var(--surface-primary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
 }
 
 .pill-enhanced:hover {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
-  border-color: rgba(254, 133, 0, 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.15),
-    0 2px 8px rgba(0, 0, 0, 0.25),
-    0 0 12px rgba(254, 133, 0, 0.15);
+  background: var(--surface-elevated);
+  border-color: rgba(254, 133, 0, 0.35);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .pill-selected {
-  background: linear-gradient(135deg, rgba(254, 133, 0, 0.25) 0%, rgba(224, 118, 0, 0.15) 100%);
-  border: 1px solid rgba(254, 133, 0, 0.5);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 2px 8px rgba(254, 133, 0, 0.3),
-    0 0 12px rgba(254, 133, 0, 0.2);
+  background: var(--surface-primary);
+  border: 1px solid rgba(254, 133, 0, 0.6);
+  color: var(--accent-primary);
+}
+
+.pill-selected:hover {
+  background: var(--surface-elevated);
+  border-color: rgba(254, 133, 0, 0.8);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
 .pill-all-mode {
-  background: linear-gradient(135deg, rgba(254, 133, 0, 0.12) 0%, rgba(254, 133, 0, 0.06) 100%);
+  background: rgba(254, 133, 0, 0.08);
   border: 1px solid rgba(254, 133, 0, 0.25);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 2px 8px rgba(254, 133, 0, 0.1);
 }
 
 .pill-all-mode:hover {
-  background: linear-gradient(135deg, rgba(254, 133, 0, 0.18) 0%, rgba(254, 133, 0, 0.08) 100%);
-  border: 1px solid rgba(254, 133, 0, 0.4);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.15),
-    0 2px 8px rgba(254, 133, 0, 0.15),
-    0 0 12px rgba(254, 133, 0, 0.1);
+  background: rgba(254, 133, 0, 0.12);
+  border-color: rgba(254, 133, 0, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
 /* Enhanced Search Bar */
@@ -594,9 +577,7 @@ a.card-secondary:hover, button.card-secondary:hover {
   border-color: rgba(254, 133, 0, 0.6);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 4px 32px rgba(0, 0, 0, 0.4),
-    0 0 0 3px rgba(254, 133, 0, 0.08),
-    0 0 24px rgba(254, 133, 0, 0.25);
+    0 4px 32px rgba(0, 0, 0, 0.4);
 }
 
 /* Search input placeholder — use muted token for accessible contrast */
