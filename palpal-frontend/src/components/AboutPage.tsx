@@ -2,6 +2,8 @@
 
 import { Github } from 'lucide-react';
 
+const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? 'contact@palpal.app';
+
 export default function AboutPage() {
   return (
     <div>
@@ -169,7 +171,7 @@ export default function AboutPage() {
                 Suggestions? Gripes or grievances? Want something similar? Contact me!
               </p>
               <a
-                href="mailto:contact@hunterkennedy.net"
+                href={`mailto:${CONTACT_EMAIL}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-primary"

@@ -5,6 +5,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import ClientWrapper from "@/components/ClientWrapper";
 import WhatsNewBubble from "@/components/WhatsNewBubble";
 import { Suspense } from "react";
+import { getWhatsNew } from "@/lib/conductor";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -21,11 +22,12 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const whatsNewData = await getWhatsNew();
   return (
     <html lang="en" suppressHydrationWarning>
       <body
@@ -37,7 +39,7 @@ export default function RootLayout({
             <Suspense fallback={<div>Loading...</div>}>
               {children}
             </Suspense>
-            <WhatsNewBubble />
+            <WhatsNewBubble initialData={whatsNewData} />
           </ClientWrapper>
         </ErrorBoundary>
       </body>

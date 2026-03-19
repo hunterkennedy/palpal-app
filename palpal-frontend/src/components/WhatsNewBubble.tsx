@@ -4,48 +4,30 @@ import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { dismissWhatsNew, isWhatsNewDismissed } from '@/lib/cookies';
+import type { ConductorWhatsNew } from '@/lib/conductor';
 
-interface WhatsNewData {
-  content: string;
-  date: string;
+interface WhatsNewBubbleProps {
+  initialData: ConductorWhatsNew | null;
 }
 
-export default function WhatsNewBubble() {
-  const [whatsNewData, setWhatsNewData] = useState<WhatsNewData | null>(null);
-  const [isVisible, setIsVisible] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+export default function WhatsNewBubble({ initialData }: WhatsNewBubbleProps) {
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    fetchWhatsNewData();
+    if (!initialData?.content || !initialData?.date) return;
+    if (!isWhatsNewDismissed(initialData.date)) {
+      setVisible(true);
+    }
   }, []);
 
-  const fetchWhatsNewData = async () => {
-    try {
-      const response = await fetch('/api/whats-new');
-      if (response.ok) {
-        const data: WhatsNewData = await response.json();
-        if (!data.content || !data.date) {
-          setIsLoading(false);
-          return;
-        }
-        setWhatsNewData(data);
-        setIsVisible(!isWhatsNewDismissed(data.date));
-      }
-    } catch (error) {
-      console.error('Failed to fetch what\'s new:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleDismiss = () => {
-    if (whatsNewData) {
-      dismissWhatsNew(whatsNewData.date);
-      setIsVisible(false);
+    if (initialData?.date) {
+      dismissWhatsNew(initialData.date);
     }
+    setVisible(false);
   };
 
-  if (isLoading || !isVisible || !whatsNewData) {
+  if (!visible || !initialData?.content) {
     return null;
   }
 
@@ -78,7 +60,7 @@ export default function WhatsNewBubble() {
           <div
             className="text-sm leading-relaxed"
             style={{ color: 'var(--text-secondary)' }}
-            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(whatsNewData.content) }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(initialData.content) }}
           />
         </div>
       </div>
