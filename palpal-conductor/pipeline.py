@@ -1,4 +1,5 @@
 import asyncio
+import glob as glob_module
 import logging
 import os
 
@@ -21,7 +22,7 @@ _transcribe_sem = asyncio.Semaphore(int(os.environ.get("TRANSCRIBE_CONCURRENCY",
 _scheduler = AsyncIOScheduler()
 
 
-async def submit_downloaded_episode(episode_id: str) -> None:
+async def submit_downloaded_episode(episode_id: str, audio_path: str) -> None:
     """Transcribe a downloaded episode via blurb (polling) and process the result."""
     pool = db.get_pool()
     async with _transcribe_sem:
@@ -30,7 +31,7 @@ async def submit_downloaded_episode(episode_id: str) -> None:
         )
         try:
             target_words = await settings.get_int("chunk_target_words") or 50
-            result = await transcribe_episode(episode_id)
+            result = await transcribe_episode(episode_id, audio_path)
             await process_transcript(episode_id, result, target_words=target_words)
             await pool.execute(
                 "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
@@ -52,10 +53,10 @@ async def run_episode(episode_id: str) -> None:
             "UPDATE episodes SET status='downloading' WHERE id=$1::uuid", episode_id
         )
         async with _download_sem:
-            await download_audio(episode_id)
+            audio_path = await download_audio(episode_id)
 
-        # Audio is on disk in /tmp — transcribe immediately (audio is ephemeral)
-        await submit_downloaded_episode(episode_id)
+        # Audio is on disk — transcribe immediately (audio is ephemeral)
+        await submit_downloaded_episode(episode_id, audio_path)
 
     except EpisodeUnavailableError as exc:
         logger.info(f"Episode {episode_id} is private/unavailable, will retry on next discovery: {exc}")
@@ -135,11 +136,23 @@ async def run_discovery(
 
 async def recover_interrupted_downloads() -> None:
     """
-    On startup, reset any episodes stuck mid-pipeline back to 'discovered'.
+    On startup, reset any episodes stuck mid-pipeline back to 'discovered'
+    and sweep leftover audio files from a previous crash.
 
-    Audio is ephemeral (/tmp) so there is nothing to resume from — any episode
+    Audio is ephemeral so there is nothing to resume from — any episode
     that was downloading or transcribing when the conductor died must start over.
     """
+    audio_dir = os.environ.get("AUDIO_PATH", "/tmp")
+    leftovers = glob_module.glob(os.path.join(audio_dir, "*"))
+    for f in leftovers:
+        try:
+            os.unlink(f)
+            logger.info(f"Startup cleanup: deleted leftover audio file {f}")
+        except OSError:
+            pass
+    if leftovers:
+        logger.warning(f"Startup cleanup: removed {len(leftovers)} leftover audio file(s)")
+
     pool = db.get_pool()
     r1 = await pool.execute(
         """

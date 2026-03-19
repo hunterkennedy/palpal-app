@@ -4,29 +4,19 @@ import os
 
 import httpx
 
-import db
-
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = int(os.environ.get("BLURB_POLL_INTERVAL", 15))   # seconds between status checks
 POLL_TIMEOUT  = int(os.environ.get("BLURB_POLL_TIMEOUT", 7200))  # give up after 2 hours
 
 
-async def transcribe_episode(episode_id: str) -> dict:
+async def transcribe_episode(episode_id: str, audio_path: str) -> dict:
     """
     Submit the episode's audio to blurb, poll until complete, and return the result.
 
     Returns the result dict: {text, language, segments}.
     Raises RuntimeError on any failure.
     """
-    pool = db.get_pool()
-    row = await pool.fetchrow(
-        "SELECT audio_path FROM episodes WHERE id = $1::uuid", episode_id
-    )
-    if not row or not row["audio_path"]:
-        raise RuntimeError(f"Episode {episode_id} has no audio_path")
-
-    audio_path: str = row["audio_path"]
     blurb_url = os.environ["BLURB_URL"]
     api_key   = os.environ["BLURB_API_KEY"]
     headers   = {"X-API-Key": api_key}
@@ -50,9 +40,6 @@ async def transcribe_episode(episode_id: str) -> dict:
             logger.info(f"Deleted ephemeral audio file {audio_path}")
         except OSError:
             pass
-        await pool.execute(
-            "UPDATE episodes SET audio_path = NULL WHERE id = $1::uuid", episode_id
-        )
 
     if res.status_code not in (200, 201, 202):
         raise RuntimeError(

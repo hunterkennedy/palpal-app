@@ -36,7 +36,6 @@ def _write_patreon_cookie_file(session_cookie: str) -> str:
 async def download_audio(episode_id: str) -> str:
     """
     Download audio for the episode using yt-dlp.
-    Updates episodes.audio_path with the resulting file path.
     Returns the absolute file path.
     Raises EpisodeTooShortError if the video is filtered by min duration.
     """
@@ -137,12 +136,10 @@ async def download_audio(episode_id: str) -> str:
     await pool.execute(
         """
         UPDATE episodes
-        SET audio_path = $1,
-            publication_date = COALESCE(publication_date, $2::date),
+        SET publication_date = COALESCE(publication_date, $1::date),
             updated_at = NOW()
-        WHERE id = $3::uuid
+        WHERE id = $2::uuid
         """,
-        file_path,
         pub_date,
         episode_id,
     )
