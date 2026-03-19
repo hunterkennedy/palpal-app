@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import sharp from 'sharp';
 
 export async function GET(
   _request: NextRequest,
@@ -8,20 +9,21 @@ export async function GET(
   const conductorUrl = process.env.CONDUCTOR_URL;
 
   try {
-    const response = await fetch(`${conductorUrl}/podcasts/${id}/image`, {
-      next: { revalidate: 86400 },
-    });
+    const response = await fetch(`${conductorUrl}/podcasts/${id}/image`);
 
     if (!response.ok) {
       return new NextResponse(null, { status: 404 });
     }
 
     const imageData = await response.arrayBuffer();
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const compressed = await sharp(Buffer.from(imageData))
+      .resize(128, 128, { fit: 'cover', position: 'centre' })
+      .webp({ quality: 85 })
+      .toBuffer();
 
-    return new NextResponse(imageData, {
+    return new NextResponse(compressed, {
       headers: {
-        'Content-Type': contentType,
+        'Content-Type': 'image/webp',
         'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
       },
     });

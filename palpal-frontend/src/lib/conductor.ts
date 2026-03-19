@@ -67,6 +67,28 @@ export async function getChunks(chunkId: string, radius: number): Promise<Conduc
   return res.json();
 }
 
+export interface EpisodeInfo {
+  id: string;
+  video_id: string;
+  title: string;
+  publication_date: string | null;
+  status: string;
+  blacklisted: boolean;
+  podcast_id: string;
+  podcast_name: string;
+  source_name: string;
+  site: string;
+  chunk_count: number;
+  duration_seconds: number | null;
+  youtube_url: string;
+}
+
+export async function getEpisodes(): Promise<EpisodeInfo[]> {
+  const res = await fetch(`${CONDUCTOR_URL}/episodes`, { next: { revalidate: 300 } });
+  if (!res.ok) throw new Error(`Conductor /episodes error: ${res.status}`);
+  return res.json();
+}
+
 export async function checkHealth(): Promise<{ status: string }> {
   const res = await fetch(`${CONDUCTOR_URL}/health`);
   if (!res.ok) {
@@ -93,5 +115,20 @@ export async function getPodcasts(): Promise<ConductorPodcast[]> {
   const res = await fetch(`${CONDUCTOR_URL}/podcasts`, { next: { revalidate: 300 } });
   if (!res.ok) throw new Error(`Conductor /podcasts error: ${res.status}`);
   return res.json();
+}
+
+export interface ConductorWhatsNew {
+  content: string;
+  date: string;
+}
+
+export async function getWhatsNew(): Promise<ConductorWhatsNew | null> {
+  try {
+    const res = await fetch(`${CONDUCTOR_URL}/whats-new`, { next: { revalidate: 300 } });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 

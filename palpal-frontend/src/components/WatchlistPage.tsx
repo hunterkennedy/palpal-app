@@ -5,22 +5,7 @@ import Image from 'next/image';
 import { CheckCircle2, Circle, Play, Tv2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Download, Upload } from 'lucide-react';
 import { getWatchedVideoIds, toggleWatched, clearWatched, exportWatched, importWatched } from '@/lib/watchlist';
 import { PodcastConfig } from '@/types/podcast';
-
-interface EpisodeInfo {
-  id: string;
-  video_id: string;
-  title: string;
-  publication_date: string | null;
-  status: string;
-  blacklisted: boolean;
-  podcast_id: string;
-  podcast_name: string;
-  source_name: string;
-  site: string;
-  chunk_count: number;
-  duration_seconds: number | null;
-  youtube_url: string;
-}
+import { EpisodeInfo } from '@/lib/conductor';
 
 type FilterOption = 'all' | 'unwatched' | 'watched';
 type SiteFilter = 'all' | 'youtube' | 'patreon';
@@ -66,47 +51,27 @@ function SortIcon({ column, sortCol, sortDir }: { column: SortColumn; sortCol: S
     : <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--accent-primary)' }} />;
 }
 
-export default function WatchlistPage() {
-  const [episodes, setEpisodes] = useState<EpisodeInfo[]>([]);
-  const [podcasts, setPodcasts] = useState<PodcastConfig[]>([]);
-  const [selectedPodcastId, setSelectedPodcastId] = useState<string | null>(null);
+interface WatchlistPageProps {
+  initialEpisodes: EpisodeInfo[];
+  initialPodcasts: PodcastConfig[];
+}
+
+export default function WatchlistPage({ initialEpisodes, initialPodcasts }: WatchlistPageProps) {
+  const enabledPods = initialPodcasts.filter(p => p.enabled);
+  const [episodes] = useState<EpisodeInfo[]>(() => initialEpisodes.filter(e => !e.blacklisted));
+  const [podcasts] = useState<PodcastConfig[]>(enabledPods);
+  const [selectedPodcastId, setSelectedPodcastId] = useState<string | null>(
+    enabledPods.length > 0 ? enabledPods[0].id : null,
+  );
   const [filter, setFilter] = useState<FilterOption>('all');
   const [siteFilter, setSiteFilter] = useState<SiteFilter>('all');
   const [sortCol, setSortCol] = useState<SortColumn>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [watched, setWatched] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
-
 
   useEffect(() => {
     setWatched(getWatchedVideoIds());
-  }, []);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const [epsRes, podsRes] = await Promise.all([
-          fetch('/api/episodes'),
-          fetch('/api/podcasts'),
-        ]);
-        if (!epsRes.ok || !podsRes.ok) throw new Error('Failed to load');
-        const [eps, pods]: [EpisodeInfo[], PodcastConfig[]] = await Promise.all([
-          epsRes.json(),
-          podsRes.json(),
-        ]);
-        const enabledPods = pods.filter(p => p.enabled);
-        setEpisodes(eps.filter(e => !e.blacklisted));
-        setPodcasts(enabledPods);
-        if (enabledPods.length > 0) setSelectedPodcastId(enabledPods[0].id);
-      } catch {
-        setError('Failed to load episodes');
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
   }, []);
 
   const handleToggle = useCallback((videoId: string) => {
@@ -250,22 +215,8 @@ export default function WatchlistPage() {
       </div>
 
       <div className="section-container">
-        {loading ? (
-          <section>
-            <div className="card-primary text-center">
-              <div className="spinner"></div>
-              <p className="text-body">Loading episodes...</p>
-            </div>
-          </section>
-        ) : error ? (
-          <section>
-            <div className="card-primary text-center">
-              <p className="text-body text-red-400">{error}</p>
-            </div>
-          </section>
-        ) : (
-          <>
-            {/* Podcast tabs */}
+        <>
+          {/* Podcast tabs */}
             <section className="mb-6">
               <div className="flex gap-2 flex-wrap">
                 {podcasts.map(pod => {
@@ -504,7 +455,6 @@ export default function WatchlistPage() {
               </section>
             )}
           </>
-        )}
       </div>
 
     </div>
