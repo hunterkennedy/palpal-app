@@ -7,7 +7,6 @@ import Image from 'next/image';
 import SearchResults from '@/components/SearchResults';
 import SearchBar from '@/components/SearchBar';
 import Navbar from '@/components/Navbar';
-import WhatsNewBubble from '@/components/WhatsNewBubble';
 import { DateRange } from '@/components/SearchFilters';
 import { GroupByOption } from '@/components/GroupByFilter';
 import { SearchHit, ErrorState } from '@/types';
@@ -370,9 +369,6 @@ export default function Home() {
 
   return (
     <div className="page-container">
-      {/* What's New Bubble */}
-      <WhatsNewBubble />
-
       {/* Navigation Header */}
       <Navbar currentPage="search" />
 

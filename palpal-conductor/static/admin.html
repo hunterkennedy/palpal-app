@@ -858,22 +858,36 @@ function renderPipelineSettings() {
     <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:0.75rem">
       <div>
         <div style="font-size:0.875rem;font-weight:500">What's New</div>
-        <div class="muted small">Shown as a dismissible bubble to users. Updating the date resets dismissals — users see it again. Supports HTML. Leave both blank to hide.</div>
+        <div class="muted small">Shown as a dismissible bubble to users. Updating the date resets dismissals — users see it again. Supports HTML. Leave blank to hide.</div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:0.5rem;width:100%">
-        <textarea id="whats-new-content" rows="4" placeholder="What's new message (HTML allowed)…"
-          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:0.4rem 0.65rem;border-radius:6px;font-family:inherit;font-size:0.875rem;resize:vertical"
-        ></textarea>
-        <div style="display:flex;align-items:center;gap:0.5rem">
-          <button class="btn btn-orange act" onclick="saveWhatsNew()">save</button>
-          ${wnDate ? `<span class="muted small">last posted ${new Date(wnDate).toLocaleString()}</span>` : ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;width:100%">
+        <div style="display:flex;flex-direction:column;gap:0.4rem">
+          <div class="muted small" style="font-weight:500">Editor</div>
+          <textarea id="whats-new-content" rows="7" placeholder="What's new message (HTML allowed)…"
+            oninput="updateWhatsNewPreview()"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:0.4rem 0.65rem;border-radius:6px;font-family:monospace;font-size:0.8rem;resize:vertical"
+          ></textarea>
         </div>
+        <div style="display:flex;flex-direction:column;gap:0.4rem">
+          <div class="muted small" style="font-weight:500">Preview</div>
+          <div style="flex:1">
+            <div id="whats-new-preview-empty" class="muted small" style="font-style:italic;padding:0.25rem 0">Nothing to preview</div>
+            <iframe id="whats-new-preview-frame" style="display:none;border:none;width:100%;max-width:300px;border-radius:12px;overflow:hidden" scrolling="no"></iframe>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <button class="btn btn-orange act" onclick="saveWhatsNew()">save</button>
+        ${wnDate ? `<span class="muted small">last posted ${new Date(wnDate).toLocaleString()}</span>` : ''}
       </div>
     </div>`;
 
   document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + patreonRow + whatsNewRow;
+  _wnFrameReady = false;
+  _wnPendingContent = null;
   const ta = document.getElementById('whats-new-content');
   ta.value = wnContent;
+  updateWhatsNewPreview();
   if (focusedId === 'whats-new-content') {
     ta.focus();
     ta.setSelectionRange(selStart, selEnd);
@@ -1036,6 +1050,65 @@ async function saveWhatsNew() {
   S.pipelineSettings = await res.json();
   toast("What's New saved");
   renderPipelineSettings();
+}
+
+const _wnPreviewDoc = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<script src="https://cdn.tailwindcss.com"><\/script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: transparent; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+  :root { --text-secondary: #9ca3af; }
+</style>
+</head><body>
+<div style="position:relative;overflow:hidden;border-radius:12px;border:1px solid rgba(255,140,66,0.3);background:linear-gradient(135deg,rgba(51,51,51,0.95) 0%,rgba(42,42,42,0.9) 100%);box-shadow:0 8px 32px rgba(0,0,0,0.4),0 0 20px rgba(255,140,66,0.15)">
+  <div style="position:absolute;inset:0;border-radius:12px;opacity:0.5;pointer-events:none;background:radial-gradient(circle at top right,rgba(255,140,66,0.1) 0%,transparent 70%)"></div>
+  <div style="position:absolute;top:8px;right:8px;z-index:10;padding:6px;border-radius:8px;color:#9ca3af;line-height:1;font-size:0.75rem">✕</div>
+  <div id="wn-content" class="text-sm leading-relaxed" style="position:relative;z-index:10;padding:1rem;padding-right:2.5rem;color:var(--text-secondary)"></div>
+</div>
+<script>
+  function resize() {
+    window.parent.document.getElementById('whats-new-preview-frame').style.height = document.body.scrollHeight + 'px';
+  }
+  window.setContent = function(html) {
+    document.getElementById('wn-content').innerHTML = html;
+    resize();
+  };
+  setTimeout(resize, 300);
+<\/script>
+</body></html>`;
+
+let _wnFrameReady = false;
+let _wnPendingContent = null;
+
+function updateWhatsNewPreview() {
+  const content = (document.getElementById('whats-new-content')?.value || '').trim();
+  const frame = document.getElementById('whats-new-preview-frame');
+  const empty = document.getElementById('whats-new-preview-empty');
+  if (!frame) return;
+  if (!content) {
+    frame.style.display = 'none';
+    empty.style.display = '';
+    return;
+  }
+  frame.style.display = '';
+  empty.style.display = 'none';
+  if (!_wnFrameReady) {
+    _wnPendingContent = content;
+    if (!frame.srcdoc) {
+      frame.srcdoc = _wnPreviewDoc;
+      frame.onload = () => {
+        _wnFrameReady = true;
+        if (_wnPendingContent !== null) {
+          frame.contentWindow.setContent(_wnPendingContent);
+          _wnPendingContent = null;
+        }
+      };
+    }
+  } else {
+    frame.contentWindow.setContent(content);
+  }
 }
 
 
