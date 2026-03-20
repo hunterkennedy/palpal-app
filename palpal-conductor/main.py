@@ -24,7 +24,8 @@ from models import (
     SearchResponse,
 )
 from pipeline import (
-    run_discovery, run_episode, start_scheduler, stop_scheduler,
+    run_discovery, wakeup_worker,
+    start_scheduler, stop_scheduler, start_download_worker, stop_download_worker,
     get_scheduler_status, pause_scheduler, resume_scheduler,
     recover_interrupted_downloads,
 )
@@ -44,7 +45,9 @@ async def lifespan(app: FastAPI):
     await run_migrations()
     await recover_interrupted_downloads()
     start_scheduler()
+    start_download_worker()
     yield
+    stop_download_worker()
     stop_scheduler()
     await db.close_pool()
     logger.info("Shutdown complete")
@@ -248,7 +251,7 @@ async def process_episode(episode_id: str):
             status_code=409,
             detail=f"Episode is '{row['status']}' — only discovered episodes can be queued this way",
         )
-    asyncio.create_task(run_episode(episode_id))
+    wakeup_worker()
     return {"status": "queued", "episode_id": episode_id}
 
 
@@ -277,6 +280,7 @@ async def admin_status():
         SELECT id::text, title, updated_at
         FROM episodes
         WHERE status = 'transcribing'
+          AND updated_at < now() - interval '2 hours'
         ORDER BY updated_at ASC
         """
     )
@@ -317,11 +321,17 @@ async def retry_episode(episode_id: str):
             status_code=409,
             detail=f"Episode is '{row['status']}' — only failed or stuck episodes can be retried",
         )
+    if row["status"] == "transcribing":
+        await pool.execute(
+            "UPDATE transcription_jobs SET status='failed', error='Cancelled by admin retry' "
+            "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
+            episode_id,
+        )
     await pool.execute(
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
         episode_id,
     )
-    asyncio.create_task(run_episode(episode_id))
+    wakeup_worker()
     return {"status": "queued", "episode_id": episode_id}
 
 
@@ -364,17 +374,28 @@ async def retranscribe_episode(episode_id: str):
     """Delete existing transcript/chunks and re-run the full pipeline from download."""
     pool = db.get_pool()
     row = await pool.fetchrow(
-        "SELECT id FROM episodes WHERE id = $1::uuid", episode_id
+        "SELECT id, status FROM episodes WHERE id = $1::uuid", episode_id
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
+    if row["status"] == "downloading":
+        raise HTTPException(
+            status_code=409,
+            detail="Episode is currently downloading — wait for it to complete before retranscribing",
+        )
+    if row["status"] == "transcribing":
+        await pool.execute(
+            "UPDATE transcription_jobs SET status='failed', error='Cancelled by retranscribe' "
+            "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
+            episode_id,
+        )
 
     await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
     await pool.execute("DELETE FROM transcripts WHERE episode_id = $1::uuid", episode_id)
     await pool.execute(
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
     )
-    asyncio.create_task(run_episode(episode_id))
+    wakeup_worker()
     return {"status": "retranscribing", "episode_id": episode_id}
 
 
@@ -462,8 +483,8 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
         rows = await pool.fetch(
             "SELECT id::text FROM episodes WHERE status = 'discovered' AND blacklisted = FALSE"
         )
-    for row in rows:
-        asyncio.create_task(run_episode(row["id"]))
+    if rows:
+        wakeup_worker()
     return {"queued": len(rows)}
 
 
@@ -495,16 +516,22 @@ async def bulk_episode_action(body: BulkActionRequest):
                 if row["status"] not in ("failed", "transcribing", "downloading"):
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot retry '{row['status']}'"})
                     continue
+                if row["status"] == "transcribing":
+                    await pool.execute(
+                        "UPDATE transcription_jobs SET status='failed', error='Cancelled by admin retry' "
+                        "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
+                        episode_id,
+                    )
                 await pool.execute(
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
                 )
-                asyncio.create_task(run_episode(episode_id))
+                wakeup_worker()
 
             elif body.action == "process":
                 if row["status"] != "discovered":
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot process '{row['status']}'"})
                     continue
-                asyncio.create_task(run_episode(episode_id))
+                wakeup_worker()
 
             elif body.action == "delete":
                 await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
@@ -516,12 +543,21 @@ async def bulk_episode_action(body: BulkActionRequest):
                 await pool.execute("UPDATE episodes SET blacklisted = FALSE WHERE id = $1::uuid", episode_id)
 
             elif body.action == "retranscribe":
+                if row["status"] == "downloading":
+                    results.append({"id": episode_id, "ok": False, "detail": f"cannot retranscribe '{row['status']}'"})
+                    continue
+                if row["status"] == "transcribing":
+                    await pool.execute(
+                        "UPDATE transcription_jobs SET status='failed', error='Cancelled by retranscribe' "
+                        "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
+                        episode_id,
+                    )
                 await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
                 await pool.execute("DELETE FROM transcripts WHERE episode_id = $1::uuid", episode_id)
                 await pool.execute(
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
                 )
-                asyncio.create_task(run_episode(episode_id))
+                wakeup_worker()
 
             results.append({"id": episode_id, "ok": True})
 

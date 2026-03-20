@@ -551,11 +551,18 @@ function renderScheduler() {
     </div>`).join('');
   const btnCls = s.paused ? 'btn-green' : 'btn-orange';
   const btnLbl = s.paused ? '▶ resume scheduler' : '⏸ pause scheduler';
+  const w = s.worker || {};
+  const workerBadge = (w.active > 0)
+    ? `<span class="badge badge-running">${w.active}/${w.capacity} active</span>`
+    : `<span class="badge badge-paused">idle</span>`;
   document.getElementById('scheduler-body').innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
-      <span class="muted small">status</span>${badge}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+      <span class="muted small">scheduler</span>${badge}
     </div>
     ${jobs}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:0.6rem 0 0.75rem">
+      <span class="muted small">download worker</span>${workerBadge}
+    </div>
     <button id="sched-btn" class="btn ${btnCls}" style="width:100%;margin-top:0.75rem" onclick="toggleScheduler()">${btnLbl}</button>
   `;
 }

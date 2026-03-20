@@ -16,8 +16,9 @@ from activities.blurb import enqueue_transcription
 
 logger = logging.getLogger(__name__)
 
-_download_sem = asyncio.Semaphore(int(os.environ.get("DOWNLOAD_CONCURRENCY", 1)))
 _scheduler = AsyncIOScheduler()
+_wakeup = asyncio.Event()
+_download_worker_tasks: list[asyncio.Task] = []
 
 
 async def submit_downloaded_episode(episode_id: str, audio_path: str) -> None:
@@ -37,42 +38,116 @@ async def submit_downloaded_episode(episode_id: str, audio_path: str) -> None:
         )
 
 
-async def run_episode(episode_id: str) -> None:
+async def download_worker() -> None:
+    """
+    Pull-based download worker. Runs continuously, claiming one episode at a time
+    from the 'discovered' queue ordered by created_at DESC (newest first, so
+    retried/old episodes naturally sit behind fresh discoveries).
+
+    Multiple instances run in parallel for DOWNLOAD_CONCURRENCY > 1; each uses
+    FOR UPDATE SKIP LOCKED to atomically claim a distinct episode.
+
+    Sleeps when the queue is empty or auto_download is off, waking immediately
+    when wakeup_worker() is called (e.g. after discovery or a manual trigger).
+    """
     pool = db.get_pool()
-    try:
-        # Mark downloading immediately so it's visible in admin while waiting for the semaphore
-        await pool.execute(
-            "UPDATE episodes SET status='downloading' WHERE id=$1::uuid", episode_id
-        )
-        async with _download_sem:
-            audio_path = await download_audio(episode_id)
+    while True:
+        try:
+            _wakeup.clear()
 
-        await submit_downloaded_episode(episode_id, audio_path)
+            if not await settings.get("auto_download"):
+                try:
+                    await asyncio.wait_for(_wakeup.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
 
-    except EpisodeUnavailableError as exc:
-        logger.info(f"Episode {episode_id} is private/unavailable, will retry on next discovery: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
-            episode_id,
-        )
-    except EpisodeRateLimitedError as exc:
-        logger.warning(f"Episode {episode_id} rate limited by YouTube, resetting to discovered: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
-            episode_id,
-        )
-    except EpisodeTooShortError as exc:
-        logger.info(f"Episode {episode_id} blacklisted at download: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='discovered', blacklisted=TRUE, error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
-    except Exception as exc:
-        logger.error(f"Episode {episode_id} failed: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
+            row = await pool.fetchrow(
+                """
+                UPDATE episodes SET status = 'downloading'
+                WHERE id = (
+                    SELECT id FROM episodes
+                    WHERE status = 'discovered' AND blacklisted = FALSE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id::text
+                """
+            )
+
+            if not row:
+                try:
+                    await asyncio.wait_for(_wakeup.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+
+            episode_id = row["id"]
+            try:
+                audio_path = await download_audio(episode_id)
+                await submit_downloaded_episode(episode_id, audio_path)
+
+            except EpisodeUnavailableError as exc:
+                logger.info(f"Episode {episode_id} is private/unavailable: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
+                    episode_id,
+                )
+
+            except EpisodeRateLimitedError as exc:
+                logger.warning(f"Episode {episode_id} rate limited, backing off 60s: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
+                    episode_id,
+                )
+                await asyncio.sleep(60)
+
+            except EpisodeTooShortError as exc:
+                logger.info(f"Episode {episode_id} blacklisted at download: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='discovered', blacklisted=TRUE, error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+
+            except Exception as exc:
+                logger.error(f"Episode {episode_id} download failed: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"Download worker unhandled error: {exc}")
+            await asyncio.sleep(5)
+
+
+def wakeup_worker() -> None:
+    """Signal download worker(s) to check the queue immediately."""
+    _wakeup.set()
+
+
+def start_download_worker() -> None:
+    n = int(os.environ.get("DOWNLOAD_CONCURRENCY", 1))
+    for i in range(n):
+        task = asyncio.create_task(download_worker(), name=f"download-worker-{i}")
+        _download_worker_tasks.append(task)
+    logger.info(f"Download worker started ({n} concurrent)")
+
+
+def stop_download_worker() -> None:
+    for task in _download_worker_tasks:
+        task.cancel()
+    _download_worker_tasks.clear()
+    logger.info("Download worker stopped")
+
+
+def get_worker_status() -> dict:
+    n = int(os.environ.get("DOWNLOAD_CONCURRENCY", 1))
+    active = sum(1 for t in _download_worker_tasks if not t.done())
+    return {"active": active, "capacity": n}
 
 
 async def run_discovery(
@@ -83,7 +158,7 @@ async def run_discovery(
     Run discovery for all sources (or one podcast).
 
     Returns a summary dict: {sources, new_episodes, queued}.
-    auto_queue=False discovers without starting the pipeline — useful for
+    auto_queue=False discovers without waking the download worker — useful for
     manual testing where you want to pick specific episodes to process.
     """
     label = podcast_id or "all"
@@ -102,8 +177,6 @@ async def run_discovery(
             )
             for ep in new_episodes:
                 total_new.append(ep["episode_id"])
-                if auto_queue and await settings.get("auto_download"):
-                    asyncio.create_task(run_episode(ep["episode_id"]))
         except Exception as exc:
             logger.error(f"Discovery failed for YouTube source {source['id']}: {exc}")
 
@@ -115,10 +188,11 @@ async def run_discovery(
             )
             for ep in new_episodes:
                 total_new.append(ep["episode_id"])
-                if auto_queue and await settings.get("auto_download"):
-                    asyncio.create_task(run_episode(ep["episode_id"]))
         except Exception as exc:
             logger.error(f"Discovery failed for Patreon source {source['id']}: {exc}")
+
+    if auto_queue and total_new:
+        wakeup_worker()
 
     total_sources = len(yt_sources) + len(patreon_sources)
     logger.info(f"Discovery run complete (podcast={label}): {len(total_new)} new, queued={auto_queue}")
@@ -127,24 +201,39 @@ async def run_discovery(
 
 async def recover_interrupted_downloads() -> None:
     """
-    On startup, reset any episodes stuck mid-pipeline back to 'discovered'
+    On startup, reset any episodes stuck in 'downloading' back to 'discovered'
     and sweep leftover audio files from a previous crash.
 
-    Audio is ephemeral so there is nothing to resume from — any episode
-    that was downloading or transcribing when the conductor died must start over.
+    Episodes in 'downloading' lost their worker context and must restart;
+    the download worker will pick them up automatically.
+    Episodes in 'transcribing' are NOT reset — their transcription_jobs rows are
+    still valid and are reset to 'pending' so a pull worker can reclaim them.
+    Audio files referenced by active jobs are preserved; all others are deleted.
     """
+    pool = db.get_pool()
+
+    # Preserve audio files that pending/claimed jobs still need
+    active_rows = await pool.fetch(
+        "SELECT audio_path FROM transcription_jobs WHERE status IN ('pending', 'claimed')"
+    )
+    active_paths = {row["audio_path"] for row in active_rows}
+
     audio_dir = os.environ.get("AUDIO_PATH", "/tmp")
     leftovers = glob_module.glob(os.path.join(audio_dir, "*"))
+    deleted = 0
     for f in leftovers:
-        try:
-            os.unlink(f)
-            logger.info(f"Startup cleanup: deleted leftover audio file {f}")
-        except OSError:
-            pass
-    if leftovers:
-        logger.warning(f"Startup cleanup: removed {len(leftovers)} leftover audio file(s)")
+        if f not in active_paths:
+            try:
+                os.unlink(f)
+                deleted += 1
+                logger.info(f"Startup cleanup: deleted leftover audio file {f}")
+            except OSError:
+                pass
+    if deleted:
+        logger.warning(f"Startup cleanup: removed {deleted} leftover audio file(s)")
+    if active_paths:
+        logger.info(f"Startup cleanup: preserved {len(active_paths)} audio file(s) for pending jobs")
 
-    pool = db.get_pool()
     r1 = await pool.execute(
         """
         UPDATE episodes
@@ -152,34 +241,26 @@ async def recover_interrupted_downloads() -> None:
         WHERE status = 'downloading' AND blacklisted = FALSE
         """
     )
-    r2 = await pool.execute(
-        """
-        UPDATE episodes
-        SET status = 'discovered', error_message = 'Reset: transcription interrupted by conductor restart'
-        WHERE status = 'transcribing' AND blacklisted = FALSE
-        """
-    )
-    # Release any claimed jobs from a previous run so workers can pick them up again
+    # Release any claimed transcription jobs from a previous run.
+    # transcribing episodes stay as-is — their jobs are now pending again.
     await pool.execute(
         "UPDATE transcription_jobs SET status='pending', claimed_at=NULL WHERE status='claimed'"
     )
-    n1, n2 = int(r1.split()[-1]), int(r2.split()[-1])
-    if n1 or n2:
-        logger.warning(
-            "Startup recovery: %d downloading→discovered, %d transcribing→discovered",
-            n1, n2,
-        )
+    n1 = int(r1.split()[-1])
+    if n1:
+        logger.warning("Startup recovery: %d downloading→discovered", n1)
     else:
         logger.info("Startup recovery: no interrupted episodes found")
 
 
 async def reclaim_stuck_jobs() -> None:
     """
-    Reset transcription_jobs stuck in 'claimed' for more than 30 minutes back
+    Reset transcription_jobs stuck in 'claimed' for more than 2 hours back
     to 'pending'. Runs every 30 minutes.
 
-    A job gets stuck if blurb claimed it but crashed before posting a result.
-    Resetting to pending makes it available for the next poll.
+    A job gets stuck if the worker crashed before posting a result. 2 hours
+    gives long episodes enough time to finish transcribing before being reclaimed.
+    Resetting to pending makes the job available for the next worker poll.
     """
     pool = db.get_pool()
     result = await pool.execute(
@@ -187,7 +268,7 @@ async def reclaim_stuck_jobs() -> None:
         UPDATE transcription_jobs
         SET status = 'pending', claimed_at = NULL
         WHERE status = 'claimed'
-          AND claimed_at < now() - interval '30 minutes'
+          AND claimed_at < now() - interval '2 hours'
         """
     )
     n = int(result.split()[-1])
@@ -217,7 +298,7 @@ def stop_scheduler() -> None:
 
 
 def get_scheduler_status() -> dict:
-    """Return scheduler running/paused state and job next-run times."""
+    """Return scheduler running/paused state, job next-run times, and worker status."""
     from apscheduler.schedulers.base import STATE_PAUSED
     paused = _scheduler.state == STATE_PAUSED
     jobs = []
@@ -226,7 +307,12 @@ def get_scheduler_status() -> dict:
             "id": job.id,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
         })
-    return {"running": _scheduler.running, "paused": paused, "jobs": jobs}
+    return {
+        "running": _scheduler.running,
+        "paused": paused,
+        "jobs": jobs,
+        "worker": get_worker_status(),
+    }
 
 
 def pause_scheduler() -> None:

@@ -10,7 +10,7 @@
 
 palpal is a self-hosted podcast search engine. Every episode gets downloaded, transcribed, chunked, and indexed. You type a phrase, you get back the clip — with a link to the timestamp.
 
-The whole stack lives here: database, pipeline, transcription coordination, and frontend. The only thing outside Docker is [palpal-blurb](https://github.com/hunterkennedy/blurb), a Whisper transcription service designed to run on GPU hardware you already have — a gaming PC, a home server, anything with a decent card. Point `BLURB_URL` at it and the pipeline handles the rest.
+The whole stack lives here: database, pipeline, transcription coordination, and frontend. The only thing outside Docker is [palpal-blurb](https://github.com/hunterkennedy/blurb), a Whisper transcription service designed to run on GPU hardware you already have — a gaming PC, a home server, anything with a decent card. Blurb connects outbound to conductor to pick up work; it doesn't need to be reachable from the outside.
 
 ---
 
@@ -20,13 +20,14 @@ The whole stack lives here: database, pipeline, transcription coordination, and 
 YouTube playlist/channel
         │
         ▼
-  palpal-conductor          discovers new episodes, downloads audio, sends to blurb
+  palpal-conductor          discovers new episodes, downloads audio, queues for transcription
         │
-        ▼
+        │  (pull — blurb connects outbound, claims jobs, posts results back)
+        │
   palpal-blurb              transcribes audio on your GPU hardware
         │
         ▼
-  palpal-conductor          chunks transcript, writes to postgres
+  palpal-conductor          receives transcript, chunks it, writes to postgres
         │
         ▼
     postgres                stores everything, full-text search via tsvector
@@ -35,14 +36,14 @@ YouTube playlist/channel
   palpal-frontend           search UI, served on your chosen port
 ```
 
-Everything in the pipeline — discovery, download, transcription, chunking — is automatic once configured. The scheduler runs discovery every 24 hours; new episodes work their way through without intervention.
+Everything in the pipeline is automatic once configured. A persistent download worker runs inside conductor, draining the queue one episode at a time (newest-first, so fresh discoveries are processed before old backlog). The scheduler runs discovery every 24 hours; new episodes work their way through without intervention.
 
 ---
 
 ## Prerequisites
 
 - **Docker + Docker Compose**
-- **[palpal-blurb](https://github.com/hunterkennedy/blurb)** running somewhere with a GPU — Whisper transcription service. The idea is to offload the heavy work to whatever GPU hardware you already have (a gaming PC, a local server, etc.) rather than requiring a cloud GPU. Point `BLURB_URL` in `.env` at wherever it's running.
+- **[palpal-blurb](https://github.com/hunterkennedy/blurb)** running somewhere with a GPU. Blurb connects *outbound* to conductor to claim transcription jobs — no inbound ports or firewall rules needed on the blurb side. Configure blurb with `CONDUCTOR_URL` pointing at your conductor and the same `BLURB_API_KEY` set on both sides.
 
 ---
 
@@ -59,9 +60,11 @@ Edit `.env`:
 | `POSTGRES_PASSWORD` | Password for the Postgres user |
 | `DATABASE_URL` | Full connection string — update to match if you changed `POSTGRES_PASSWORD` |
 | `BLURB_API_KEY` | Shared secret between conductor and blurb — set the same value in your blurb config |
-| `CONDUCTOR_ADMIN_KEY` | Secret for the conductor admin panel — make it strong |
-| `AUDIO_HOST_PATH` | Host directory where downloaded audio gets stored (e.g. `/home/you/palpal-audio`) |
+| `CONDUCTOR_ADMIN_KEY` | Secret for the conductor admin API — make it strong |
+| `AUDIO_HOST_PATH` | Host directory where downloaded audio is staged before transcription (e.g. `/home/you/palpal-audio`) |
 | `APP_PORT` | Port the frontend listens on (default `3001`) |
+| `ADMIN_PASSWORD` | Password for the admin panel login page |
+| `ADMIN_SESSION_TOKEN` | Long random string used as the session cookie value — generate with `openssl rand -hex 32` |
 
 Create the audio directory before starting:
 
@@ -84,8 +87,8 @@ Three services come up:
 | Service | What it does | Default port |
 |---|---|---|
 | `postgres` | Database — schema and seed data applied automatically on first start | `5432` (localhost only) |
-| `palpal-conductor` | Pipeline + admin API | `$CONDUCTOR_PORT` (default `8000`, localhost only) |
-| `palpal-frontend` | Search UI | `$APP_PORT` (default `3001`, localhost only) |
+| `palpal-conductor` | Pipeline + worker API | `$CONDUCTOR_PORT` (default `8000`, localhost only) |
+| `palpal-frontend` | Search UI + admin panel | `$APP_PORT` (default `3001`, localhost only) |
 
 Check everything started cleanly:
 
@@ -98,17 +101,17 @@ docker logs palpal-conductor
 
 ## Admin panel
 
-Open `http://localhost:8000/admin` (adjust for your `CONDUCTOR_PORT`).
+Open `http://localhost:$APP_PORT/admin` and log in with `ADMIN_PASSWORD`.
 
 This is the control room for the pipeline. From here you can:
 
 - **Trigger discovery** — scan YouTube playlists/channels for new episodes (runs automatically every 24h, or kick it off manually here)
-- **Process episodes** — download + transcribe a specific episode on demand
-- **Monitor status** — counts per pipeline stage, recent failures, stuck episodes
-- **Retry failures** — re-queue a failed or stuck episode; skips re-download if audio is already on disk
-- **Pause/resume the scheduler** — handy when you're doing maintenance or don't want things running automatically
+- **Start the download queue** — the download worker runs automatically on startup; the `▶ dl` button wakes it immediately if you want to kick off processing now
+- **Monitor status** — counts per pipeline stage, download worker state (active/idle), recent failures, episodes stuck in transcription
+- **Retry failures** — re-queue a failed episode; it goes back to `discovered` and the worker picks it up
+- **Pause/resume the scheduler** — stops automatic discovery and reclaim jobs; the download worker continues running
 
-> **First run:** discovery may find a large backlog. The `max_new` filter on each source in the DB caps how many new episodes are queued per run — bump it in the `sources` table when you're ready to chew through the history.
+> **First run:** discovery may find a large backlog. The `max_new` filter on each source in the DB caps how many new episodes are discovered per run — bump it in the `sources` table when you're ready to process history.
 
 ---
 
@@ -133,7 +136,7 @@ curl -s http://localhost:8000/admin/status \
   -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
 ```
 
-Returns counts by status, recent failures with error messages, and any episodes stuck in `transcribing`.
+Returns counts by status, recent failures with error messages, and any episodes stuck in `transcribing` for more than 2 hours.
 
 ### Diagnose a failure
 
@@ -153,6 +156,8 @@ curl -s -X POST http://localhost:8000/admin/episodes/<episode_id>/retry \
   -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
 ```
 
+The episode resets to `discovered` and the download worker picks it up on the next cycle.
+
 ### Trigger discovery manually
 
 ```bash
@@ -169,10 +174,11 @@ curl -s -X POST "http://localhost:8000/admin/discover?podcast_id=pal" \
 
 | `error_message` contains | Likely cause | Fix |
 |---|---|---|
-| `yt-dlp download failed` | Rate-limited or video unavailable | Wait and retry, or check the video URL |
-| `Blurb returned 4xx/5xx` | Blurb is down or rejected the file | Check blurb logs, retry when healthy |
-| `Blurb reported failure` | Whisper failed on this audio | Check blurb logs for the job ID |
-| `process_transcript:` | Bad transcript shape from blurb | Check blurb output; may need a blurb fix |
+| `yt-dlp download failed` | Generic yt-dlp error | Check the video URL; run yt-dlp manually against it |
+| `private or unavailable` | Video was deleted or made private | Episode resets to `discovered` automatically and won't block the queue |
+| `Rate limited` | YouTube 429 | Worker backs off 60s automatically; retry will happen next cycle |
+| `Worker: <message>` | Blurb worker reported a transcription failure | Check blurb logs; retry the episode once blurb is healthy |
+| `process_transcript:` | Bad transcript shape from blurb | Check blurb output format; may need a blurb fix |
 | `no file found matching` | yt-dlp ran but produced no output | Run yt-dlp manually against the video URL |
 
 ### Other useful commands
@@ -184,6 +190,10 @@ docker logs -f palpal-conductor
 # Episode counts by status
 docker compose exec postgres psql -U palpal -d palpal \
   -c "SELECT status, COUNT(*) FROM episodes GROUP BY status ORDER BY status;"
+
+# Pending transcription jobs (waiting for blurb worker)
+docker compose exec postgres psql -U palpal -d palpal \
+  -c "SELECT status, COUNT(*) FROM transcription_jobs GROUP BY status;"
 ```
 
 ---
