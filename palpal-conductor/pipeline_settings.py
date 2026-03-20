@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 KNOWN_KEYS = {"auto_discover", "auto_download"}
 KNOWN_INT_KEYS = {"min_episode_duration_seconds", "chunk_target_words"}
-KNOWN_STRING_KEYS = {"patreon_session_cookie"}
+KNOWN_STRING_KEYS = {"youtube_cookies"}
 
 _cache: dict[str, bool] | None = None
 _int_cache: dict[str, int] | None = None

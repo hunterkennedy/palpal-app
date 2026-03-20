@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     logger.info("DB pool initialised")
     await run_migrations()
     await recover_interrupted_downloads()
-    start_scheduler()
+    await start_scheduler()
     start_download_worker()
     yield
     stop_download_worker()
@@ -186,14 +186,14 @@ async def scheduler_status():
 @app.post("/admin/scheduler/pause", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_pause():
     """Pause the APScheduler (stops automatic discovery and recovery jobs)."""
-    pause_scheduler()
+    await pause_scheduler()
     return {"status": "paused"}
 
 
 @app.post("/admin/scheduler/resume", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_resume():
     """Resume the APScheduler."""
-    resume_scheduler()
+    await resume_scheduler()
     return {"status": "running"}
 
 
@@ -213,6 +213,56 @@ async def process_episode(episode_id: str):
         )
     wakeup_worker()
     return {"status": "queued", "episode_id": episode_id}
+
+
+@app.get("/admin/live", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_live():
+    """Lightweight real-time status for the admin tape: scheduler, active episode, queue, recent completions."""
+    pool = db.get_pool()
+
+    active_row, queue_rows, recent_rows, counts_rows = await asyncio.gather(
+        pool.fetchrow(
+            """
+            SELECT e.id::text, e.title, p.display_name AS podcast_name, e.status
+            FROM episodes e
+            JOIN sources s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            WHERE e.status IN ('downloading', 'transcribing')
+            LIMIT 1
+            """
+        ),
+        pool.fetch(
+            """
+            SELECT e.id::text, e.title, p.display_name AS podcast_name, e.status
+            FROM episodes e
+            JOIN sources s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            WHERE e.status = 'discovered' AND e.blacklisted = FALSE
+            ORDER BY e.created_at DESC
+            LIMIT 2
+            """
+        ),
+        pool.fetch(
+            """
+            SELECT e.id::text, e.title, p.display_name AS podcast_name, e.status
+            FROM episodes e
+            JOIN sources s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            WHERE e.status IN ('processed', 'failed')
+            ORDER BY e.updated_at DESC
+            LIMIT 2
+            """
+        ),
+        pool.fetch("SELECT status, COUNT(*) AS n FROM episodes GROUP BY status"),
+    )
+
+    return {
+        "scheduler": get_scheduler_status(),
+        "active": dict(active_row) if active_row else None,
+        "queue": [dict(r) for r in queue_rows],
+        "recent": [dict(r) for r in recent_rows],
+        "counts": {row["status"]: row["n"] for row in counts_rows},
+    }
 
 
 @app.get("/admin/status", tags=["admin"], dependencies=[Depends(verify_admin_token)])

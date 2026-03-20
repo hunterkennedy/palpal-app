@@ -3,6 +3,7 @@ import glob as glob_module
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -215,6 +216,7 @@ async def download_worker() -> None:
                 _consecutive_failures += 1
                 if _consecutive_failures >= 2:
                     logger.warning("Auto-pausing scheduler after %d consecutive failures", _consecutive_failures)
+                    await _persist_scheduler_paused(True)
                     _scheduler.pause()
                     _consecutive_failures = 0
             else:
@@ -369,6 +371,25 @@ async def reclaim_stuck_jobs() -> None:
         logger.warning(f"Reclaimed {n} stuck transcription job(s) back to pending")
     else:
         logger.info("No stuck transcription jobs found")
+    await _record_job_run("last_reclaim_run")
+
+
+async def _persist_scheduler_paused(paused: bool) -> None:
+    pool = db.get_pool()
+    await pool.execute(
+        """INSERT INTO settings (key, value) VALUES ('scheduler_paused', $1)
+           ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()""",
+        "true" if paused else "false",
+    )
+
+
+async def _record_job_run(key: str) -> None:
+    pool = db.get_pool()
+    await pool.execute(
+        """INSERT INTO settings (key, value) VALUES ($1, $2)
+           ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()""",
+        key, datetime.now(timezone.utc).isoformat(),
+    )
 
 
 async def scheduled_discovery() -> None:
@@ -377,13 +398,46 @@ async def scheduled_discovery() -> None:
         logger.info("Scheduled discovery skipped (auto_discover=false)")
         return
     await run_discovery(auto_queue=True)
+    await _record_job_run("last_discovery_run")
 
 
-def start_scheduler() -> None:
-    _scheduler.add_job(scheduled_discovery, "interval", hours=24, id="discovery")
-    _scheduler.add_job(reclaim_stuck_jobs, "interval", minutes=30, id="reclaim")
+async def start_scheduler() -> None:
+    pool = db.get_pool()
+    rows = await pool.fetch(
+        "SELECT key, value FROM settings WHERE key IN ('scheduler_paused', 'last_discovery_run', 'last_reclaim_run')"
+    )
+    state = {row["key"]: row["value"] for row in rows}
+
+    was_paused = state.get("scheduler_paused", "false").lower() == "true"
+    now = datetime.now(timezone.utc)
+
+    def _next_run(last_key: str, **delta_kwargs) -> datetime:
+        last_str = state.get(last_key)
+        if last_str:
+            try:
+                last = datetime.fromisoformat(last_str)
+                candidate = last + timedelta(**delta_kwargs)
+                if candidate > now:
+                    return candidate
+            except ValueError:
+                pass
+        return now + timedelta(**delta_kwargs)
+
+    _scheduler.add_job(
+        scheduled_discovery, "interval", hours=24, id="discovery",
+        next_run_time=_next_run("last_discovery_run", hours=24),
+    )
+    _scheduler.add_job(
+        reclaim_stuck_jobs, "interval", minutes=30, id="reclaim",
+        next_run_time=_next_run("last_reclaim_run", minutes=30),
+    )
     _scheduler.start()
-    logger.info("Scheduler started (discovery every 24h, reclaim every 30min)")
+
+    if was_paused:
+        _scheduler.pause()
+        logger.info("Scheduler started in paused state (restored from DB)")
+    else:
+        logger.info("Scheduler started (discovery every 24h, reclaim every 30min)")
 
 
 def stop_scheduler() -> None:
@@ -408,13 +462,15 @@ def get_scheduler_status() -> dict:
     }
 
 
-def pause_scheduler() -> None:
+async def pause_scheduler() -> None:
+    await _persist_scheduler_paused(True)
     _scheduler.pause()
     logger.info("Scheduler paused via admin")
 
 
-def resume_scheduler() -> None:
+async def resume_scheduler() -> None:
     global _consecutive_failures
     _consecutive_failures = 0
+    await _persist_scheduler_paused(False)
     _scheduler.resume()
     logger.info("Scheduler resumed via admin")

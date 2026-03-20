@@ -23,6 +23,7 @@ async function proxy(request: NextRequest, path: string[]) {
       'Content-Type': 'application/json',
     },
     body,
+    cache: 'no-store',
   });
 
   const text = await res.text();

@@ -220,13 +220,13 @@
     .tape-cell {
       width: 200px; min-height: 82px; background: var(--bg3);
       border: 1px solid var(--border); padding: 0.75rem 0.9rem;
-      position: relative; flex-shrink: 0;
+      position: relative; flex-shrink: 0; margin-left: -1px;
     }
-    .tape-cell + .tape-cell { border-left: none; }
+    .tape-cell:first-child { margin-left: 0; }
     .tape-cell.tape-past { opacity: 0.4; }
     .tape-cell.tape-future { opacity: 0.55; }
     .tape-cell.tape-head {
-      border-color: var(--orange); border-left-width: 1px;
+      border: 1px solid var(--orange);
       background: rgba(249,115,22,0.07); z-index: 1;
     }
     .tape-cell.tape-head::before, .tape-cell.tape-idle::before {
@@ -235,7 +235,7 @@
       font-size: 0.62rem; letter-spacing: 0.1em; white-space: nowrap;
     }
     .tape-cell.tape-head::before { color: var(--orange); }
-    .tape-cell.tape-idle { border-style: dashed; opacity: 0.28; }
+    .tape-cell.tape-idle { border: 1px dashed var(--border); opacity: 0.28; z-index: 1; }
     .tape-cell.tape-idle::before { color: var(--muted); }
     .tape-title { font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); margin: 0.3rem 0 0.22rem; }
     .tape-pod { font-size: 0.68rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -487,8 +487,7 @@ const S = {
   epExpanded: true,
   confirmDeleteId: null,
   confirmBulkDelete: false,
-  tapeHistory: [],       // in-memory log of recently completed episodes
-  _lastActiveId: null,   // tracks transitions for tapeHistory
+  live: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -522,8 +521,27 @@ function toast(msg, ok = true) {
 // Init & refresh
 // ---------------------------------------------------------------------------
 async function init() {
-  await doRefresh(false);
-  autoRefreshTimer = setInterval(() => doRefresh(true), 1000);
+  await Promise.all([doRefresh(false), doLiveRefresh()]);
+  setInterval(() => doLiveRefresh(), 1000);
+  setInterval(() => doRefresh(true), 30000);
+}
+
+let _liveRefreshing = false;
+async function doLiveRefresh() {
+  if (_liveRefreshing) return;
+  _liveRefreshing = true;
+  try {
+    const res = await api('GET', '/admin/live');
+    if (res.ok) {
+      S.live = await res.json();
+      renderScheduler();
+      renderTape();
+    }
+  } catch(e) {
+    // silent
+  } finally {
+    _liveRefreshing = false;
+  }
 }
 
 let _refreshing = false;
@@ -533,8 +551,7 @@ async function doRefresh(silent) {
   const status = document.getElementById('refresh-status');
   status.textContent = silent ? '↻' : 'loading…';
   try {
-    const [schedRes, podStatsRes, epsRes, settingsRes, podsRes, wnRes] = await Promise.all([
-      api('GET', '/admin/scheduler/status'),
+    const [podStatsRes, epsRes, settingsRes, podsRes, wnRes] = await Promise.all([
       api('GET', '/admin/status/by-podcast'),
       api('GET', '/admin/episodes'),
       api('GET', '/admin/pipeline-settings'),
@@ -542,7 +559,6 @@ async function doRefresh(silent) {
       fetch('/api/whats-new'),
     ]);
     const failures = [];
-    if (schedRes.ok)     S.scheduler        = await schedRes.json();    else failures.push(`scheduler/status ${schedRes.status}`);
     if (podStatsRes.ok)  S.podStats         = await podStatsRes.json(); else failures.push(`status/by-podcast ${podStatsRes.status}`);
     if (epsRes.ok)       S.episodes         = await epsRes.json();      else failures.push(`episodes ${epsRes.status}`);
     if (settingsRes.ok)  S.pipelineSettings = await settingsRes.json(); else failures.push(`pipeline-settings ${settingsRes.status}`);
@@ -552,8 +568,6 @@ async function doRefresh(silent) {
       renderPodcastFilter();
     } else { failures.push(`podcasts ${podsRes.status}`); }
     if (failures.length) toast(`API error: ${failures.join(', ')}`, false);
-    renderScheduler();
-    renderTape();
     renderPipelineSettings();
     renderPodcastPipeline(S.podStats);
     initPodDragDrop();
@@ -568,14 +582,15 @@ async function doRefresh(silent) {
 }
 
 async function bustAndRefresh() {
-  await doRefresh(true);
+  _refreshing = false;
+  await Promise.all([doRefresh(true), doLiveRefresh()]);
 }
 
 // ---------------------------------------------------------------------------
 // Scheduler
 // ---------------------------------------------------------------------------
 function renderScheduler() {
-  const s = S.scheduler;
+  const s = S.live?.scheduler;
   if (!s) return;
   const badge = s.paused
     ? '<span class="badge badge-paused">PAUSED</span>'
@@ -607,25 +622,10 @@ function renderScheduler() {
 // FSM Tape
 // ---------------------------------------------------------------------------
 function renderTape() {
-  const eps = S.episodes;
-  const active = eps.find(e => e.status === 'downloading' || e.status === 'transcribing') || null;
-
-  // Track transitions: when the active episode changes to a terminal state, record it
-  if (S._lastActiveId && S._lastActiveId !== active?.id) {
-    const prev = eps.find(e => e.id === S._lastActiveId);
-    if (prev && (prev.status === 'processed' || prev.status === 'failed')) {
-      S.tapeHistory.unshift(prev);
-      if (S.tapeHistory.length > 2) S.tapeHistory.pop();
-    }
-  }
-  S._lastActiveId = active?.id || null;
-
-  const past = [S.tapeHistory[1] || null, S.tapeHistory[0] || null]; // older → newer
-  // Queue: sort discovered by created_at DESC (same order the worker picks them)
-  const queue = eps
-    .filter(e => e.status === 'discovered')
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    .slice(0, 2);
+  if (!S.live) return;
+  const { active, queue: queueRaw, recent } = S.live;
+  const past  = [recent[1] || null, recent[0] || null]; // index 0 = most recent → closest to head
+  const queue = [...queueRaw];
   while (queue.length < 2) queue.push(null);
 
   function badge(ep) {
@@ -658,14 +658,14 @@ async function toggleScheduler() {
   const btn = document.getElementById('sched-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
   try {
-    const action = S.scheduler?.paused ? 'resume' : 'pause';
+    const action = S.live?.scheduler?.paused ? 'resume' : 'pause';
     const res = await api('POST', `/admin/scheduler/${action}`);
     if (!res.ok) throw new Error(await res.text());
     toast(`Scheduler ${action}d`);
-    await doRefresh(true);
+    await bustAndRefresh();
   } catch (e) {
     toast(`Failed: ${e}`, false);
-    await doRefresh(true);
+    await bustAndRefresh();
   } finally {
     S.pending.delete('scheduler');
   }
@@ -810,12 +810,12 @@ async function triggerDiscover(podcastId) {
     const res = await api('POST', `/admin/discover?${qs}`);
     if (!res.ok) throw new Error(await res.text());
     toast('Discovery started');
-    setTimeout(() => doRefresh(true), 5000);
+    setTimeout(() => bustAndRefresh(), 5000);
   } catch (e) {
     toast(`Failed: ${e}`, false);
   } finally {
     S.pending.delete(key);
-    await doRefresh(true);
+    await bustAndRefresh();
   }
 }
 
@@ -835,7 +835,7 @@ async function triggerDownload(podcastId) {
     toast(`Failed: ${e}`, false);
   } finally {
     S.pending.delete(key);
-    await doRefresh(true);
+    await bustAndRefresh();
   }
 }
 
@@ -855,7 +855,7 @@ async function triggerTranscribe(podcastId) {
     toast(`Failed: ${e}`, false);
   } finally {
     S.pending.delete(key);
-    await doRefresh(true);
+    await bustAndRefresh();
   }
 }
 
@@ -896,21 +896,21 @@ function renderPipelineSettings() {
       </div>
     </div>`;
 
-  const cookieSet = !!(S.pipelineSettings.patreon_session_cookie);
-  const patreonRow = `
-    <div class="setting-row">
+  const ytCookieSet = !!(S.pipelineSettings.youtube_cookies);
+  const ytCookieRow = `
+    <div class="setting-row" style="align-items:flex-start">
       <div>
-        <div style="font-size:0.875rem;font-weight:500">Patreon Session Cookie</div>
-        <div class="muted small">session_id cookie value for patron-only content. ${cookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
+        <div style="font-size:0.875rem;font-weight:500">YouTube Cookies</div>
+        <div class="muted small">Netscape-format cookies.txt (exported from browser) for age-restricted videos. ${ytCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:0.5rem">
-        <input type="password" id="patreon-cookie-input" placeholder="${cookieSet ? '••••••••' : 'paste session_id value'}"
-          style="width:220px" autocomplete="off" />
-        <button class="btn btn-orange act" onclick="savePatreonCookie()">save</button>
+      <div style="display:flex;align-items:flex-start;gap:0.5rem">
+        <textarea id="youtube-cookies-input" rows="4" placeholder="${ytCookieSet ? '(cookies already saved — paste to replace)' : '# Netscape HTTP Cookie File\n...'}"
+          style="width:220px;font-family:monospace;font-size:0.75rem;resize:vertical" autocomplete="off"></textarea>
+        <button class="btn btn-orange act" onclick="saveYoutubeCookies()">save</button>
       </div>
     </div>`;
 
-  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + patreonRow;
+  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + ytCookieRow;
   renderDangerZone();
 }
 
@@ -1098,14 +1098,14 @@ async function togglePipelineSetting(key, cb) {
 }
 
 
-async function savePatreonCookie() {
-  const val = document.getElementById('patreon-cookie-input').value.trim();
-  if (!val) return toast('Paste a session_id value first', false);
-  const res = await api('POST', '/admin/pipeline-settings', { patreon_session_cookie: val });
+async function saveYoutubeCookies() {
+  const val = document.getElementById('youtube-cookies-input').value.trim();
+  if (!val) return toast('Paste a cookies.txt file first', false);
+  const res = await api('POST', '/admin/pipeline-settings', { youtube_cookies: val });
   if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
   S.pipelineSettings = await res.json();
-  document.getElementById('patreon-cookie-input').value = '';
-  toast('Patreon cookie saved');
+  document.getElementById('youtube-cookies-input').value = '';
+  toast('YouTube cookies saved');
   renderPipelineSettings();
 }
 
@@ -1366,7 +1366,7 @@ async function processDiscovered() {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     toast(`${data.queued} episode(s) queued`);
-    setTimeout(() => doRefresh(true), 1500);
+    setTimeout(() => bustAndRefresh(), 1500);
   } catch (e) {
     toast(`Failed: ${e}`, false);
   } finally {

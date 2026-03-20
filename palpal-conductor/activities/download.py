@@ -24,11 +24,10 @@ class EpisodeRateLimitedError(Exception):
     """Raised when YouTube rate-limits the download request (transient — will be retried)."""
 
 
-def _write_patreon_cookie_file(session_cookie: str) -> str:
-    """Write a Netscape-format cookie file for yt-dlp. Returns the temp file path."""
-    f = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="patreon_cookies_")
-    f.write("# Netscape HTTP Cookie File\n")
-    f.write(f".patreon.com\tTRUE\t/\tTRUE\t0\tsession_id\t{session_cookie}\n")
+def _write_cookie_file(cookies_txt: str) -> str:
+    """Write a browser-exported Netscape cookie file for yt-dlp. Returns the temp file path."""
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="cookies_")
+    f.write(cookies_txt)
     f.close()
     return f.name
 
@@ -77,17 +76,15 @@ async def download_audio(episode_id: str) -> str:
         "-o", output_template,
     ]
 
-    if site == "patreon":
-        session_cookie = await settings.get_string("patreon_session_cookie")
-        if session_cookie:
-            cookie_file = _write_patreon_cookie_file(session_cookie)
-            cmd += ["--cookies", cookie_file]
-        else:
-            cookie_file = None
+    cookies_txt = await settings.get_string("youtube_cookies")
+    if cookies_txt:
+        cookie_file = _write_cookie_file(cookies_txt)
+        cmd += ["--cookies", cookie_file]
     else:
         cookie_file = None
-        if min_duration > 0:
-            cmd += ["--match-filter", f"duration >= {min_duration}"]
+
+    if site != "patreon" and min_duration > 0:
+        cmd += ["--match-filter", f"duration >= {min_duration}"]
 
     cmd.append(video_url)
 

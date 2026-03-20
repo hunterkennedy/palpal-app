@@ -18,6 +18,20 @@ _PATREON_API_URL = "https://www.patreon.com/api/posts"
 _PATREON_COLLECTION_RE = re.compile(r"patreon\.com/collection/(\d+)")
 
 
+def _parse_cookie_value(cookies_txt: str, domain: str, name: str) -> str:
+    """Extract a cookie value from a Netscape-format cookies.txt string."""
+    for line in cookies_txt.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 7:
+            continue
+        if domain in parts[0] and parts[5] == name:
+            return parts[6]
+    return ""
+
+
 class SourceRow(TypedDict):
     id: str
     url: str
@@ -384,7 +398,7 @@ async def discover_patreon_source(
     """
     logger.info(f"Discovering Patreon source {source_id} ({url})")
 
-    session_cookie = await settings.get_string("patreon_session_cookie")
+    session_cookie = _parse_cookie_value(await settings.get_string("youtube_cookies"), "patreon.com", "session_id")
 
     collection_match = _PATREON_COLLECTION_RE.search(url)
     collection_id = collection_match.group(1) if collection_match else None
