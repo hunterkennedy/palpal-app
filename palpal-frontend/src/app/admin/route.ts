@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const session = (await cookies()).get('palpal_admin_session');
-  if (session?.value !== process.env.ADMIN_SESSION_TOKEN) {
+  if (session?.value !== process.env.ADMIN_PASSWORD) {
     redirect('/admin/login');
   }
   const html = readFileSync(join(process.cwd(), 'src/app/admin/panel.html'), 'utf-8');

@@ -213,6 +213,32 @@
     #rechunk-modal h2 { color: #fca5a5; }
     #rechunk-confirm-input { width: 100%; margin-top: 0.5rem; letter-spacing: 0.05em; }
     #rechunk-confirm-input.match { border-color: rgba(248,113,113,0.6); }
+
+    /* FSM Tape */
+    .tape-wrap { overflow-x: auto; padding: 1.8rem 0 0.5rem; }
+    .tape { display: flex; align-items: stretch; width: fit-content; margin: 0 auto; }
+    .tape-cell {
+      width: 200px; min-height: 82px; background: var(--bg3);
+      border: 1px solid var(--border); padding: 0.75rem 0.9rem;
+      position: relative; flex-shrink: 0;
+    }
+    .tape-cell + .tape-cell { border-left: none; }
+    .tape-cell.tape-past { opacity: 0.4; }
+    .tape-cell.tape-future { opacity: 0.55; }
+    .tape-cell.tape-head {
+      border-color: var(--orange); border-left-width: 1px;
+      background: rgba(249,115,22,0.07); z-index: 1;
+    }
+    .tape-cell.tape-head::before, .tape-cell.tape-idle::before {
+      content: '▼ HEAD';
+      position: absolute; top: -1.3rem; left: 50%; transform: translateX(-50%);
+      font-size: 0.62rem; letter-spacing: 0.1em; white-space: nowrap;
+    }
+    .tape-cell.tape-head::before { color: var(--orange); }
+    .tape-cell.tape-idle { border-style: dashed; opacity: 0.28; }
+    .tape-cell.tape-idle::before { color: var(--muted); }
+    .tape-title { font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); margin: 0.3rem 0 0.22rem; }
+    .tape-pod { font-size: 0.68rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   </style>
 </head>
 <body>
@@ -236,6 +262,8 @@
     <div class="card" id="scheduler-card">
       <h2>⚡ scheduler &amp; pipeline</h2>
       <div id="scheduler-body"><span class="muted">loading…</span></div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
+      <div id="tape-body"></div>
       <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
       <div id="pipeline-body"></div>
     </div>
@@ -459,6 +487,8 @@ const S = {
   epExpanded: true,
   confirmDeleteId: null,
   confirmBulkDelete: false,
+  tapeHistory: [],       // in-memory log of recently completed episodes
+  _lastActiveId: null,   // tracks transitions for tapeHistory
 };
 
 // ---------------------------------------------------------------------------
@@ -493,10 +523,13 @@ function toast(msg, ok = true) {
 // ---------------------------------------------------------------------------
 async function init() {
   await doRefresh(false);
-  autoRefreshTimer = setInterval(() => doRefresh(true), 8000);
+  autoRefreshTimer = setInterval(() => doRefresh(true), 1000);
 }
 
+let _refreshing = false;
 async function doRefresh(silent) {
+  if (_refreshing) return;
+  _refreshing = true;
   const status = document.getElementById('refresh-status');
   status.textContent = silent ? '↻' : 'loading…';
   try {
@@ -520,6 +553,7 @@ async function doRefresh(silent) {
     } else { failures.push(`podcasts ${podsRes.status}`); }
     if (failures.length) toast(`API error: ${failures.join(', ')}`, false);
     renderScheduler();
+    renderTape();
     renderPipelineSettings();
     renderPodcastPipeline(S.podStats);
     initPodDragDrop();
@@ -528,6 +562,8 @@ async function doRefresh(silent) {
   } catch (e) {
     status.textContent = 'error';
     if (!silent) console.error(e);
+  } finally {
+    _refreshing = false;
   }
 }
 
@@ -565,6 +601,55 @@ function renderScheduler() {
     </div>
     <button id="sched-btn" class="btn ${btnCls}" style="width:100%;margin-top:0.75rem" onclick="toggleScheduler()">${btnLbl}</button>
   `;
+}
+
+// ---------------------------------------------------------------------------
+// FSM Tape
+// ---------------------------------------------------------------------------
+function renderTape() {
+  const eps = S.episodes;
+  const active = eps.find(e => e.status === 'downloading' || e.status === 'transcribing') || null;
+
+  // Track transitions: when the active episode changes to a terminal state, record it
+  if (S._lastActiveId && S._lastActiveId !== active?.id) {
+    const prev = eps.find(e => e.id === S._lastActiveId);
+    if (prev && (prev.status === 'processed' || prev.status === 'failed')) {
+      S.tapeHistory.unshift(prev);
+      if (S.tapeHistory.length > 2) S.tapeHistory.pop();
+    }
+  }
+  S._lastActiveId = active?.id || null;
+
+  const past = [S.tapeHistory[1] || null, S.tapeHistory[0] || null]; // older → newer
+  // Queue: sort discovered by created_at DESC (same order the worker picks them)
+  const queue = eps
+    .filter(e => e.status === 'discovered')
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 2);
+  while (queue.length < 2) queue.push(null);
+
+  function badge(ep) {
+    if (!ep) return '';
+    const cls = { downloading:'badge-downloading', transcribing:'badge-transcribing', processed:'badge-processed', failed:'badge-failed', discovered:'badge-discovered' }[ep.status] || '';
+    const lbl = ep.status === 'discovered' ? 'queued' : ep.status;
+    return `<span class="badge ${cls}">${lbl}</span>`;
+  }
+  function cell(ep, cls) {
+    if (!ep) return `<div class="tape-cell ${cls}" style="opacity:0.13"><div class="tape-title muted" style="margin-top:0.6rem;text-align:center">—</div></div>`;
+    return `<div class="tape-cell ${cls}">${badge(ep)}<div class="tape-title" title="${esc(ep.title)}">${esc(ep.title)}</div><div class="tape-pod">${esc(ep.podcast_name)}</div></div>`;
+  }
+  function headCell(ep) {
+    if (!ep) return `<div class="tape-cell tape-idle"><div class="tape-title muted" style="margin-top:0.55rem;text-align:center">idle</div></div>`;
+    return `<div class="tape-cell tape-head">${badge(ep)}<div class="tape-title" title="${esc(ep.title)}">${esc(ep.title)}</div><div class="tape-pod">${esc(ep.podcast_name)}</div></div>`;
+  }
+  document.getElementById('tape-body').innerHTML = `
+    <div class="tape-wrap"><div class="tape">
+      ${cell(past[0], 'tape-past')}
+      ${cell(past[1], 'tape-past')}
+      ${headCell(active)}
+      ${cell(queue[0], 'tape-future')}
+      ${cell(queue[1], 'tape-future')}
+    </div></div>`;
 }
 
 async function toggleScheduler() {
@@ -622,7 +707,6 @@ function renderPodcastPipeline(podStats) {
         <button class="btn btn-blue act" id="pp-disc-${esc(p.id)}" onclick="triggerDiscover('${esc(p.id)}')">▶ disc</button>
         <button class="btn btn-yellow act" id="pp-dl-${esc(p.id)}" onclick="triggerDownload('${esc(p.id)}')">▶ dl</button>
         <button class="btn btn-purple act" id="pp-tx-${esc(p.id)}" onclick="triggerTranscribe('${esc(p.id)}')">▶ tx</button>
-        <button class="btn btn-red act" onclick="openRechunkModal('${esc(p.id)}')" title="Re-chunk this podcast's episodes">re-chunk</button>
         <button class="btn btn-ghost icon-btn" onclick="openEditPodModal('${esc(p.id)}')" title="Edit">⚙</button>
       </div></td>
     </tr>`;

@@ -3,11 +3,9 @@ import { cookies } from 'next/headers';
 
 const CONDUCTOR_URL = process.env.CONDUCTOR_URL!;
 const ADMIN_KEY     = process.env.CONDUCTOR_ADMIN_KEY!;
-const SESSION_TOKEN = process.env.ADMIN_SESSION_TOKEN!;
-
 async function proxy(request: NextRequest, path: string[]) {
   const session = (await cookies()).get('palpal_admin_session');
-  if (!session || session.value !== SESSION_TOKEN) {
+  if (!session || session.value !== process.env.ADMIN_PASSWORD) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

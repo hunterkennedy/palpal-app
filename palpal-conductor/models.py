@@ -1,4 +1,4 @@
-from datetime import date as Date
+from datetime import date as Date, datetime as DateTime
 from typing import Optional
 
 from pydantic import BaseModel
@@ -57,6 +57,7 @@ class EpisodeInfo(BaseModel):
     chunk_count: int
     duration_seconds: Optional[float]
     youtube_url: str
+    created_at: Optional[DateTime] = None
 
 
 class BulkActionRequest(BaseModel):

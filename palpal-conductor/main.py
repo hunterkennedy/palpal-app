@@ -4,7 +4,6 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import uvicorn
@@ -24,7 +23,7 @@ from models import (
     SearchResponse,
 )
 from pipeline import (
-    run_discovery, wakeup_worker,
+    run_discovery, wakeup_worker, signal_job_complete,
     start_scheduler, stop_scheduler, start_download_worker, stop_download_worker,
     get_scheduler_status, pause_scheduler, resume_scheduler,
     recover_interrupted_downloads,
@@ -102,8 +101,9 @@ async def worker_audio(episode_id: str, _key: str = Depends(verify_worker_key)):
 @app.post("/worker/jobs/{job_id}/complete", tags=["worker"])
 async def worker_complete(job_id: str, body: dict, _key: str = Depends(verify_worker_key)):
     """
-    Receive a transcript from a worker, run process_transcript, and mark the
-    episode processed. Body: {language, segments} — same shape blurb returns.
+    Receive a transcript from a worker and wake the waiting pipeline coroutine.
+    Body: {language, segments} — same shape blurb returns.
+    Processing (chunking, DB writes) happens inside episode_pipeline, not here.
     """
     pool = db.get_pool()
     row = await pool.fetchrow(
@@ -111,43 +111,20 @@ async def worker_complete(job_id: str, body: dict, _key: str = Depends(verify_wo
         UPDATE transcription_jobs
         SET status = 'completed', result = $1::jsonb
         WHERE id = $2::uuid AND status = 'claimed'
-        RETURNING episode_id::text, audio_path
+        RETURNING episode_id::text
         """,
         json.dumps(body), job_id,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Job not found or not in claimed state")
-
-    episode_id = row["episode_id"]
-    audio_path = row["audio_path"]
-
-    try:
-        os.unlink(audio_path)
-        logger.info(f"Deleted audio file {audio_path}")
-    except OSError:
-        pass
-
-    target_words = await pipeline_settings.get_int("chunk_target_words") or 50
-    try:
-        await process_transcript(episode_id, body, target_words=target_words)
-        await pool.execute(
-            "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
-        )
-        logger.info(f"Episode {episode_id} processed via pull worker")
-    except Exception as exc:
-        logger.error(f"process_transcript failed for {episode_id}: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
-        raise HTTPException(status_code=500, detail=f"process_transcript failed: {exc}")
-
-    return {"status": "processed", "episode_id": episode_id}
+    signal_job_complete(job_id)
+    logger.info(f"Transcription result received for job {job_id}, episode {row['episode_id']}")
+    return {"status": "accepted", "episode_id": row["episode_id"]}
 
 
 @app.post("/worker/jobs/{job_id}/fail", tags=["worker"])
 async def worker_fail(job_id: str, body: dict, _key: str = Depends(verify_worker_key)):
-    """Record a worker failure, delete the audio, and mark the episode failed."""
+    """Record a worker failure and wake the waiting pipeline coroutine to handle it."""
     pool = db.get_pool()
     error = body.get("error", "unknown error")
     row = await pool.fetchrow(
@@ -155,22 +132,13 @@ async def worker_fail(job_id: str, body: dict, _key: str = Depends(verify_worker
         UPDATE transcription_jobs
         SET status = 'failed', error = $1
         WHERE id = $2::uuid AND status = 'claimed'
-        RETURNING episode_id::text, audio_path
+        RETURNING episode_id::text
         """,
         error, job_id,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Job not found or not in claimed state")
-
-    try:
-        os.unlink(row["audio_path"])
-    except OSError:
-        pass
-
-    await pool.execute(
-        "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-        f"Worker: {error}", row["episode_id"],
-    )
+    signal_job_complete(job_id)
     logger.warning(f"Worker reported failure for job {job_id} (episode {row['episode_id']}): {error}")
     return {"status": "failed", "episode_id": row["episode_id"]}
 
@@ -178,14 +146,6 @@ async def worker_fail(job_id: str, body: dict, _key: str = Depends(verify_worker
 # --------------------------------------------------------------------------- #
 # Admin endpoints                                                              #
 # --------------------------------------------------------------------------- #
-
-_ADMIN_HTML = Path(__file__).parent / "static" / "admin.html"
-
-
-@app.get("/admin", tags=["admin"], include_in_schema=False)
-async def admin_ui():
-    """Serve the admin panel UI."""
-    return FileResponse(_ADMIN_HTML, media_type="text/html")
 
 
 @app.get("/admin/pipeline-settings", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -600,13 +560,14 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
             s.name          AS source_name,
             s.site,
             COUNT(tc.id)       AS chunk_count,
-            COALESCE(e.duration_seconds, MAX(tc.end_time)) AS duration_seconds
+            COALESCE(e.duration_seconds, MAX(tc.end_time)) AS duration_seconds,
+            e.created_at
         FROM episodes e
         JOIN sources  s  ON s.id  = e.source_id
         JOIN podcasts p  ON p.id  = s.podcast_id
         LEFT JOIN transcript_chunks tc ON tc.episode_id = e.id
         GROUP BY e.id, e.video_id, e.title, e.publication_date, e.status,
-                 e.error_message, e.blacklisted, s.podcast_id, p.display_name, s.name, s.site
+                 e.error_message, e.blacklisted, s.podcast_id, p.display_name, s.name, s.site, e.created_at
         ORDER BY e.publication_date DESC NULLS LAST, e.created_at DESC
         """
     )
