@@ -794,10 +794,39 @@ async def episodes_check(
 
 @app.get("/whats-new", tags=["meta"])
 async def whats_new():
-    """Current what's new announcement. Empty strings mean nothing to show."""
-    content = await pipeline_settings.get_string("whats_new_content")
-    date = await pipeline_settings.get_string("whats_new_date")
-    return {"content": content, "date": date}
+    """All what's new entries, newest first."""
+    pool = db.get_pool()
+    rows = await pool.fetch(
+        "SELECT id, content, posted_at FROM whats_new ORDER BY posted_at DESC"
+    )
+    return [{"id": r["id"], "content": r["content"], "posted_at": r["posted_at"].isoformat()} for r in rows]
+
+
+@app.post("/admin/whats-new", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def create_whats_new(body: dict):
+    """Create a new what's new entry. Body: {content: str}"""
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+    pool = db.get_pool()
+    await pool.execute("INSERT INTO whats_new (content) VALUES ($1)", content)
+    rows = await pool.fetch(
+        "SELECT id, content, posted_at FROM whats_new ORDER BY posted_at DESC"
+    )
+    return [{"id": r["id"], "content": r["content"], "posted_at": r["posted_at"].isoformat()} for r in rows]
+
+
+@app.delete("/admin/whats-new/{entry_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def delete_whats_new(entry_id: int):
+    """Delete a what's new entry by ID."""
+    pool = db.get_pool()
+    result = await pool.execute("DELETE FROM whats_new WHERE id = $1", entry_id)
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Entry not found")
+    rows = await pool.fetch(
+        "SELECT id, content, posted_at FROM whats_new ORDER BY posted_at DESC"
+    )
+    return [{"id": r["id"], "content": r["content"], "posted_at": r["posted_at"].isoformat()} for r in rows]
 
 
 @app.get("/health", tags=["meta"])

@@ -22,7 +22,6 @@ interface SavedChunk {
 const PREFERENCES_COOKIE = 'palpal_preferences';
 const SAVED_CHUNKS_KEY = 'palpal_saved_chunks'; // localStorage key
 const SAVED_CHUNKS_COOKIE = 'palpal_saved_chunks'; // legacy cookie name (for migration)
-const WHATS_NEW_COOKIE = 'palpal_whats_new_dismissed';
 const COOKIE_EXPIRY_DAYS = 365; // 1 year
 
 /**
@@ -249,37 +248,5 @@ export function clearSavedChunks(): void {
   }
 }
 
-/**
- * Mark the what's new bubble as dismissed for an announcement date.
- * Stores the date string so future announcements with a newer date show again.
- */
-export function dismissWhatsNew(announcementDate: string): void {
-  try {
-    setCookie(WHATS_NEW_COOKIE, announcementDate);
-  } catch (error) {
-    console.warn('Failed to dismiss what\'s new:', error);
-  }
-}
-
-/**
- * Check if the what's new bubble has been dismissed for a given announcement date.
- * Returns true if the user dismissed on or after the announcement date.
- */
-export function isWhatsNewDismissed(announcementDate: string): boolean {
-  try {
-    const dismissedDate = getCookie(WHATS_NEW_COOKIE);
-    if (!dismissedDate) return false;
-    // Guard against stale cookies from the old version-hash system
-    const isValidDate = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?/.test(dismissedDate);
-    if (!isValidDate) {
-      setCookie(WHATS_NEW_COOKIE, '', -1); // clear the stale cookie
-      return false;
-    }
-    return dismissedDate >= announcementDate;
-  } catch (error) {
-    console.warn('Failed to check what\'s new status:', error);
-    return false;
-  }
-}
 
 export type { SavedChunk };

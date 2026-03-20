@@ -3,9 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ClientWrapper from "@/components/ClientWrapper";
-import WhatsNewBubble from "@/components/WhatsNewBubble";
 import { Suspense } from "react";
-import { getWhatsNew } from "@/lib/conductor";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -27,7 +25,6 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const whatsNewData = await getWhatsNew();
   return (
     <html lang="en" suppressHydrationWarning>
       <body
@@ -39,7 +36,6 @@ export default async function RootLayout({
             <Suspense fallback={<div>Loading...</div>}>
               {children}
             </Suspense>
-            <WhatsNewBubble initialData={whatsNewData} />
           </ClientWrapper>
         </ErrorBoundary>
       </body>

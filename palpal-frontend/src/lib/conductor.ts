@@ -117,18 +117,19 @@ export async function getPodcasts(): Promise<ConductorPodcast[]> {
   return res.json();
 }
 
-export interface ConductorWhatsNew {
+export interface WhatsNewEntry {
+  id: number;
   content: string;
-  date: string;
+  posted_at: string;
 }
 
-export async function getWhatsNew(): Promise<ConductorWhatsNew | null> {
+export async function getWhatsNew(): Promise<WhatsNewEntry[]> {
   try {
-    const res = await fetch(`${CONDUCTOR_URL}/whats-new`, { next: { revalidate: 300 } });
-    if (!res.ok) return null;
+    const res = await fetch(`${CONDUCTOR_URL}/whats-new`, { next: { revalidate: 3600 } });
+    if (!res.ok) return [];
     return res.json();
   } catch {
-    return null;
+    return [];
   }
 }
 
