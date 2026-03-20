@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, Response
 import db
 import pipeline_settings
 from db_migrations import run_migrations
-from auth import verify_admin_token
+from auth import verify_admin_token, verify_worker_key
 from models import (
     BulkActionRequest,
     ChunkResult,
@@ -51,6 +51,125 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="palpal-conductor", lifespan=lifespan)
+
+
+# --------------------------------------------------------------------------- #
+# Worker endpoints (pull-based transcription)                                 #
+# --------------------------------------------------------------------------- #
+
+@app.get("/worker/jobs/next", tags=["worker"])
+async def worker_next_job(_key: str = Depends(verify_worker_key)):
+    """Atomically claim the next pending transcription job. Returns 204 if none."""
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE transcription_jobs
+        SET status = 'claimed', claimed_at = now()
+        WHERE id = (
+            SELECT id FROM transcription_jobs
+            WHERE status = 'pending'
+            ORDER BY created_at
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id::text, episode_id::text, audio_path
+        """
+    )
+    if not row:
+        return Response(status_code=204)
+    return dict(row)
+
+
+@app.get("/worker/audio/{episode_id}", tags=["worker"])
+async def worker_audio(episode_id: str, _key: str = Depends(verify_worker_key)):
+    """Serve the audio file for a claimed transcription job."""
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        "SELECT audio_path FROM transcription_jobs WHERE episode_id=$1::uuid AND status='claimed'",
+        episode_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="No claimed job for this episode")
+    path = row["audio_path"]
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+    return FileResponse(path, media_type="audio/mpeg")
+
+
+@app.post("/worker/jobs/{job_id}/complete", tags=["worker"])
+async def worker_complete(job_id: str, body: dict, _key: str = Depends(verify_worker_key)):
+    """
+    Receive a transcript from a worker, run process_transcript, and mark the
+    episode processed. Body: {language, segments} — same shape blurb returns.
+    """
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE transcription_jobs
+        SET status = 'completed', result = $1::jsonb
+        WHERE id = $2::uuid AND status = 'claimed'
+        RETURNING episode_id::text, audio_path
+        """,
+        json.dumps(body), job_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found or not in claimed state")
+
+    episode_id = row["episode_id"]
+    audio_path = row["audio_path"]
+
+    try:
+        os.unlink(audio_path)
+        logger.info(f"Deleted audio file {audio_path}")
+    except OSError:
+        pass
+
+    target_words = await pipeline_settings.get_int("chunk_target_words") or 50
+    try:
+        await process_transcript(episode_id, body, target_words=target_words)
+        await pool.execute(
+            "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
+        )
+        logger.info(f"Episode {episode_id} processed via pull worker")
+    except Exception as exc:
+        logger.error(f"process_transcript failed for {episode_id}: {exc}")
+        await pool.execute(
+            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+            str(exc), episode_id,
+        )
+        raise HTTPException(status_code=500, detail=f"process_transcript failed: {exc}")
+
+    return {"status": "processed", "episode_id": episode_id}
+
+
+@app.post("/worker/jobs/{job_id}/fail", tags=["worker"])
+async def worker_fail(job_id: str, body: dict, _key: str = Depends(verify_worker_key)):
+    """Record a worker failure, delete the audio, and mark the episode failed."""
+    pool = db.get_pool()
+    error = body.get("error", "unknown error")
+    row = await pool.fetchrow(
+        """
+        UPDATE transcription_jobs
+        SET status = 'failed', error = $1
+        WHERE id = $2::uuid AND status = 'claimed'
+        RETURNING episode_id::text, audio_path
+        """,
+        error, job_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found or not in claimed state")
+
+    try:
+        os.unlink(row["audio_path"])
+    except OSError:
+        pass
+
+    await pool.execute(
+        "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+        f"Worker: {error}", row["episode_id"],
+    )
+    logger.warning(f"Worker reported failure for job {job_id} (episode {row['episode_id']}): {error}")
+    return {"status": "failed", "episode_id": row["episode_id"]}
 
 
 # --------------------------------------------------------------------------- #

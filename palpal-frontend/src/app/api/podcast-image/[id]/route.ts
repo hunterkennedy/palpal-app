@@ -21,7 +21,7 @@ export async function GET(
       .webp({ quality: 85 })
       .toBuffer();
 
-    return new NextResponse(compressed, {
+    return new NextResponse(compressed as unknown as BodyInit, {
       headers: {
         'Content-Type': 'image/webp',
         'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',

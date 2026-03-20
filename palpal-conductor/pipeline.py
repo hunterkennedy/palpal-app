@@ -12,37 +12,29 @@ from activities.discovery import (
     get_enabled_patreon_sources, discover_patreon_source,
 )
 from activities.download import download_audio, EpisodeTooShortError, EpisodeUnavailableError, EpisodeRateLimitedError
-from activities.blurb import transcribe_episode
-from activities.process import process_transcript
+from activities.blurb import enqueue_transcription
 
 logger = logging.getLogger(__name__)
 
 _download_sem = asyncio.Semaphore(int(os.environ.get("DOWNLOAD_CONCURRENCY", 1)))
-_transcribe_sem = asyncio.Semaphore(int(os.environ.get("TRANSCRIBE_CONCURRENCY", 1)))
 _scheduler = AsyncIOScheduler()
 
 
 async def submit_downloaded_episode(episode_id: str, audio_path: str) -> None:
-    """Transcribe a downloaded episode via blurb (polling) and process the result."""
+    """Enqueue a downloaded episode for transcription by a pull worker."""
     pool = db.get_pool()
-    async with _transcribe_sem:
+    await pool.execute(
+        "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
+    )
+    try:
+        await enqueue_transcription(episode_id, audio_path)
+        logger.info(f"Episode {episode_id} queued for transcription")
+    except Exception as exc:
+        logger.error(f"Failed to enqueue {episode_id}: {exc}")
         await pool.execute(
-            "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
+            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+            str(exc), episode_id,
         )
-        try:
-            target_words = await settings.get_int("chunk_target_words") or 50
-            result = await transcribe_episode(episode_id, audio_path)
-            await process_transcript(episode_id, result, target_words=target_words)
-            await pool.execute(
-                "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
-            )
-            logger.info(f"Episode {episode_id} transcribed and processed successfully")
-        except Exception as exc:
-            logger.error(f"Transcription failed for {episode_id}: {exc}")
-            await pool.execute(
-                "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-                str(exc), episode_id,
-            )
 
 
 async def run_episode(episode_id: str) -> None:
@@ -55,7 +47,6 @@ async def run_episode(episode_id: str) -> None:
         async with _download_sem:
             audio_path = await download_audio(episode_id)
 
-        # Audio is on disk — transcribe immediately (audio is ephemeral)
         await submit_downloaded_episode(episode_id, audio_path)
 
     except EpisodeUnavailableError as exc:
@@ -168,6 +159,10 @@ async def recover_interrupted_downloads() -> None:
         WHERE status = 'transcribing' AND blacklisted = FALSE
         """
     )
+    # Release any claimed jobs from a previous run so workers can pick them up again
+    await pool.execute(
+        "UPDATE transcription_jobs SET status='pending', claimed_at=NULL WHERE status='claimed'"
+    )
     n1, n2 = int(r1.split()[-1]), int(r2.split()[-1])
     if n1 or n2:
         logger.warning(
@@ -178,27 +173,28 @@ async def recover_interrupted_downloads() -> None:
         logger.info("Startup recovery: no interrupted episodes found")
 
 
-async def resubmit_stuck() -> None:
+async def reclaim_stuck_jobs() -> None:
     """
-    Reset episodes stuck in transcribing back to discovered.
+    Reset transcription_jobs stuck in 'claimed' for more than 30 minutes back
+    to 'pending'. Runs every 30 minutes.
 
-    Runs daily at 10 AM. Audio is ephemeral so there is nothing to resume from;
-    the episode must re-download and re-submit to blurb.
+    A job gets stuck if blurb claimed it but crashed before posting a result.
+    Resetting to pending makes it available for the next poll.
     """
     pool = db.get_pool()
-    rows = await pool.fetch(
-        "SELECT id FROM episodes WHERE status='transcribing' AND blacklisted = FALSE"
+    result = await pool.execute(
+        """
+        UPDATE transcription_jobs
+        SET status = 'pending', claimed_at = NULL
+        WHERE status = 'claimed'
+          AND claimed_at < now() - interval '30 minutes'
+        """
     )
-    if not rows:
-        logger.info("Recovery: no stuck transcribing episodes")
-        return
-    logger.info(f"Recovery: resetting {len(rows)} stuck transcribing episode(s) to discovered")
-    for row in rows:
-        logger.warning(f"Resetting stuck episode {row['id']} to discovered")
-        await pool.execute(
-            "UPDATE episodes SET status='discovered' WHERE id=$1::uuid", row['id']
-        )
-        asyncio.create_task(run_episode(str(row["id"])))
+    n = int(result.split()[-1])
+    if n:
+        logger.warning(f"Reclaimed {n} stuck transcription job(s) back to pending")
+    else:
+        logger.info("No stuck transcription jobs found")
 
 
 async def scheduled_discovery() -> None:
@@ -211,11 +207,9 @@ async def scheduled_discovery() -> None:
 
 def start_scheduler() -> None:
     _scheduler.add_job(scheduled_discovery, "interval", hours=24, id="discovery")
-    # Recovery runs at 10 AM daily — blurb lives on a PC that goes offline
-    # overnight and is not expected back until the next morning.
-    _scheduler.add_job(resubmit_stuck, "cron", hour=10, minute=0, id="recovery")
+    _scheduler.add_job(reclaim_stuck_jobs, "interval", minutes=30, id="reclaim")
     _scheduler.start()
-    logger.info("Scheduler started (discovery every 24h, recovery daily at 10:00)")
+    logger.info("Scheduler started (discovery every 24h, reclaim every 30min)")
 
 
 def stop_scheduler() -> None:

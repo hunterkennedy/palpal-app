@@ -3,9 +3,10 @@
  * Uses CONDUCTOR_URL (runtime env, no NEXT_PUBLIC_ prefix).
  */
 
-const CONDUCTOR_URL = process.env.CONDUCTOR_URL;
-if (!CONDUCTOR_URL) {
-  throw new Error('CONDUCTOR_URL environment variable is not set');
+function getConductorUrl(): string {
+  const url = process.env.CONDUCTOR_URL;
+  if (!url) throw new Error('CONDUCTOR_URL environment variable is not set');
+  return url;
 }
 
 export interface ConductorSearchParams {
@@ -51,7 +52,7 @@ export async function searchChunks(params: ConductorSearchParams): Promise<Condu
   if (params.page != null) qs.set('page', String(params.page));
   if (params.page_size != null) qs.set('page_size', String(params.page_size));
 
-  const res = await fetch(`${CONDUCTOR_URL}/search?${qs.toString()}`, { next: { revalidate: 300 } });
+  const res = await fetch(`${getConductorUrl()}/search?${qs.toString()}`, { next: { revalidate: 300 } });
   if (!res.ok) {
     throw new Error(`Conductor /search error: ${res.status}`);
   }
@@ -60,7 +61,7 @@ export async function searchChunks(params: ConductorSearchParams): Promise<Condu
 
 export async function getChunks(chunkId: string, radius: number): Promise<ConductorChunk[]> {
   const qs = new URLSearchParams({ chunk_id: chunkId, radius: String(radius) });
-  const res = await fetch(`${CONDUCTOR_URL}/chunks?${qs.toString()}`, { next: { revalidate: 3600 } });
+  const res = await fetch(`${getConductorUrl()}/chunks?${qs.toString()}`, { next: { revalidate: 3600 } });
   if (!res.ok) {
     throw new Error(`Conductor /chunks error: ${res.status}`);
   }
@@ -84,13 +85,13 @@ export interface EpisodeInfo {
 }
 
 export async function getEpisodes(): Promise<EpisodeInfo[]> {
-  const res = await fetch(`${CONDUCTOR_URL}/episodes`, { next: { revalidate: 300 } });
+  const res = await fetch(`${getConductorUrl()}/episodes`, { next: { revalidate: 300 } });
   if (!res.ok) throw new Error(`Conductor /episodes error: ${res.status}`);
   return res.json();
 }
 
 export async function checkHealth(): Promise<{ status: string }> {
-  const res = await fetch(`${CONDUCTOR_URL}/health`);
+  const res = await fetch(`${getConductorUrl()}/health`);
   if (!res.ok) {
     throw new Error(`Conductor /health error: ${res.status}`);
   }
@@ -112,7 +113,7 @@ export interface ConductorPodcast {
 }
 
 export async function getPodcasts(): Promise<ConductorPodcast[]> {
-  const res = await fetch(`${CONDUCTOR_URL}/podcasts`, { next: { revalidate: 300 } });
+  const res = await fetch(`${getConductorUrl()}/podcasts`, { next: { revalidate: 300 } });
   if (!res.ok) throw new Error(`Conductor /podcasts error: ${res.status}`);
   return res.json();
 }
@@ -125,7 +126,7 @@ export interface WhatsNewEntry {
 
 export async function getWhatsNew(): Promise<WhatsNewEntry[]> {
   try {
-    const res = await fetch(`${CONDUCTOR_URL}/whats-new`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${getConductorUrl()}/whats-new`, { next: { revalidate: 3600 } });
     if (!res.ok) return [];
     return res.json();
   } catch {
