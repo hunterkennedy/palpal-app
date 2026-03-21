@@ -536,6 +536,10 @@ async function doLiveRefresh() {
       S.live = await res.json();
       renderScheduler();
       renderTape();
+      if (S.live.by_podcast) {
+        S.podStats = S.live.by_podcast;
+        renderPodcastPipeline(S.podStats);
+      }
     }
   } catch(e) {
     // silent

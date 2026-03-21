@@ -220,7 +220,7 @@ async def admin_live():
     """Lightweight real-time status for the admin tape: scheduler, active episode, queue, recent completions."""
     pool = db.get_pool()
 
-    active_row, queue_rows, recent_rows, counts_rows = await asyncio.gather(
+    active_row, queue_rows, recent_rows, counts_rows, by_podcast_rows = await asyncio.gather(
         pool.fetchrow(
             """
             SELECT e.id::text, e.title, p.display_name AS podcast_name, e.status
@@ -254,6 +254,21 @@ async def admin_live():
             """
         ),
         pool.fetch("SELECT status, COUNT(*) AS n FROM episodes GROUP BY status"),
+        pool.fetch(
+            """
+            SELECT s.podcast_id, p.display_name,
+                   COUNT(*) FILTER (WHERE e.status = 'discovered')   AS discovered,
+                   COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
+                   COUNT(*) FILTER (WHERE e.status = 'transcribing') AS transcribing,
+                   COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
+                   COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed
+            FROM episodes e
+            JOIN sources s ON e.source_id = s.id
+            JOIN podcasts p ON s.podcast_id = p.id
+            GROUP BY s.podcast_id, p.display_name, p.display_order
+            ORDER BY p.display_order
+            """
+        ),
     )
 
     return {
@@ -262,6 +277,7 @@ async def admin_live():
         "queue": [dict(r) for r in queue_rows],
         "recent": [dict(r) for r in recent_rows],
         "counts": {row["status"]: row["n"] for row in counts_rows},
+        "by_podcast": [dict(r) for r in by_podcast_rows],
     }
 
 
