@@ -237,8 +237,11 @@ async def admin_live():
             FROM episodes e
             JOIN sources s ON s.id = e.source_id
             JOIN podcasts p ON p.id = s.podcast_id
-            WHERE e.status = 'discovered' AND e.blacklisted = FALSE
-            ORDER BY e.created_at DESC
+            WHERE e.status IN ('downloaded', 'discovered') AND e.blacklisted = FALSE
+            ORDER BY
+                CASE e.status WHEN 'downloaded' THEN 0 ELSE 1 END,
+                p.display_order ASC,
+                e.created_at DESC
             LIMIT 2
             """
         ),

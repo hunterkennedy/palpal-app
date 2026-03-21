@@ -20,12 +20,16 @@ from activities.process import process_transcript
 logger = logging.getLogger(__name__)
 
 _scheduler = AsyncIOScheduler()
-_wakeup = asyncio.Event()
-_download_worker_tasks: list[asyncio.Task] = []
+_download_wakeup = asyncio.Event()
+_transcribe_wakeup = asyncio.Event()
+_worker_tasks: list[asyncio.Task] = []
 _consecutive_failures = 0
 
 # Maps transcription job_id → Event; set when the worker posts a result or failure.
 _job_events: dict[str, asyncio.Event] = {}
+
+# Number of pre-downloaded episodes to keep ready while transcription runs.
+_DOWNLOAD_BUFFER = 1
 
 
 def signal_job_complete(job_id: str) -> None:
@@ -35,152 +39,51 @@ def signal_job_complete(job_id: str) -> None:
         event.set()
 
 
-async def episode_pipeline(episode_id: str) -> None:
-    """
-    Drive one episode all the way through download → transcription → processing.
-    Returns only when the episode reaches a terminal state (processed / failed /
-    blacklisted).  The download_worker loop awaits this, so the queue is truly
-    serial: no next episode is claimed until this one is done.
-    """
+async def _check_consecutive_failure(episode_id: str) -> None:
+    """Increment the failure counter and auto-pause the scheduler if threshold is hit."""
+    global _consecutive_failures
     pool = db.get_pool()
-    audio_path: str | None = None
-    job_id: str | None = None
-
-    # ── Step 1: Download ──────────────────────────────────────────────────────
-    try:
-        audio_path = await download_audio(episode_id)
-
-    except EpisodeUnavailableError as exc:
-        logger.info(f"Episode {episode_id} unavailable: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
-        return
-
-    except EpisodeRateLimitedError as exc:
-        logger.warning(f"Episode {episode_id} rate limited, backing off 60s: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
-            episode_id,
-        )
-        await asyncio.sleep(60)
-        return  # worker loop will re-claim it
-
-    except EpisodeTooShortError as exc:
-        logger.info(f"Episode {episode_id} too short, blacklisting: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='discovered', blacklisted=TRUE, error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
-        return
-
-    except Exception as exc:
-        logger.error(f"Episode {episode_id} download failed: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
-        return
-
-    # ── Step 2: Enqueue transcription ─────────────────────────────────────────
-    event = asyncio.Event()
-    try:
-        job_id = await enqueue_transcription(episode_id, audio_path)
-        _job_events[job_id] = event
-        await pool.execute(
-            "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
-        )
-    except Exception as exc:
-        logger.error(f"Failed to enqueue transcription for {episode_id}: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
-        try:
-            os.unlink(audio_path)
-        except OSError:
-            pass
-        return
-
-    # ── Step 3: Wait for transcription result ─────────────────────────────────
-    # signal_job_complete() wakes us immediately when blurb posts the result;
-    # the 30s timeout is a safety-net DB poll in case the signal was missed.
-    try:
-        while True:
-            try:
-                await asyncio.wait_for(asyncio.shield(event.wait()), timeout=30.0)
-                break
-            except asyncio.TimeoutError:
-                row = await pool.fetchrow(
-                    "SELECT status FROM transcription_jobs WHERE id=$1::uuid", job_id
-                )
-                if row and row["status"] in ("completed", "failed"):
-                    break
-                # still pending/claimed — keep waiting
-
-        row = await pool.fetchrow(
-            "SELECT status, result, error FROM transcription_jobs WHERE id=$1::uuid", job_id
-        )
-        if not row or row["status"] != "completed":
-            error = (row["error"] if row else None) or "transcription job missing or failed"
-            raise Exception(error)
-
-        transcript = row["result"]
-        if isinstance(transcript, str):
-            transcript = json.loads(transcript)
-
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logger.error(f"Transcription failed for episode {episode_id}: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
-        return
-    finally:
-        _job_events.pop(job_id, None)
-        try:
-            os.unlink(audio_path)
-        except OSError:
-            pass
-
-    # ── Step 4: Process transcript ────────────────────────────────────────────
-    try:
-        target_words = await settings.get_int("chunk_target_words") or 50
-        await process_transcript(episode_id, transcript, target_words=target_words)
-        await pool.execute(
-            "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
-        )
-        logger.info(f"Episode {episode_id} fully processed")
-    except Exception as exc:
-        logger.error(f"process_transcript failed for {episode_id}: {exc}")
-        await pool.execute(
-            "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
-            str(exc), episode_id,
-        )
+    row = await pool.fetchrow(
+        "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
+    )
+    if row and row["status"] == "failed":
+        _consecutive_failures += 1
+        if _consecutive_failures >= 2:
+            logger.warning("Auto-pausing scheduler after %d consecutive failures", _consecutive_failures)
+            await _persist_scheduler_paused(True)
+            _scheduler.pause()
+            _consecutive_failures = 0
+    else:
+        _consecutive_failures = 0
 
 
 async def download_worker() -> None:
     """
-    Pull-based download worker.  Claims one episode at a time from the
-    'discovered' queue and awaits episode_pipeline() — which drives the episode
-    all the way to processed/failed before returning.  This gives true serial
-    processing: the next episode is never started until the current one is done.
-
-    Sleeps when the queue is empty or auto_download is off, waking immediately
-    when wakeup_worker() is called (e.g. after discovery or a manual trigger).
+    Pre-fetch worker. Claims one 'discovered' episode at a time, downloads the
+    audio, inserts a 'queued' transcription job (invisible to blurb workers), and
+    marks the episode 'downloaded'. Immediately loops to stay up to _DOWNLOAD_BUFFER
+    episodes ahead of the transcribe worker.
     """
     pool = db.get_pool()
     while True:
         try:
-            _wakeup.clear()
+            _download_wakeup.clear()
 
             from apscheduler.schedulers.base import STATE_PAUSED
             if not await settings.get("auto_download") or _scheduler.state == STATE_PAUSED:
                 try:
-                    await asyncio.wait_for(_wakeup.wait(), timeout=5.0)
+                    await asyncio.wait_for(_download_wakeup.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+
+            # Don't get too far ahead — wait if the buffer is already full.
+            buffer_count = await pool.fetchval(
+                "SELECT COUNT(*) FROM episodes WHERE status = 'downloaded'"
+            )
+            if buffer_count >= _DOWNLOAD_BUFFER:
+                try:
+                    await asyncio.wait_for(_download_wakeup.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     pass
                 continue
@@ -189,11 +92,13 @@ async def download_worker() -> None:
                 """
                 UPDATE episodes SET status = 'downloading'
                 WHERE id = (
-                    SELECT id FROM episodes
-                    WHERE status = 'discovered' AND blacklisted = FALSE
-                    ORDER BY created_at DESC
+                    SELECT e.id FROM episodes e
+                    JOIN sources s ON e.source_id = s.id
+                    JOIN podcasts p ON s.podcast_id = p.id
+                    WHERE e.status = 'discovered' AND e.blacklisted = FALSE
+                    ORDER BY p.display_order ASC, e.created_at DESC
                     LIMIT 1
-                    FOR UPDATE SKIP LOCKED
+                    FOR UPDATE OF e SKIP LOCKED
                 )
                 RETURNING id::text
                 """
@@ -201,26 +106,64 @@ async def download_worker() -> None:
 
             if not row:
                 try:
-                    await asyncio.wait_for(_wakeup.wait(), timeout=5.0)
+                    await asyncio.wait_for(_download_wakeup.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     pass
                 continue
 
-            await episode_pipeline(row["id"])
+            episode_id = row["id"]
 
-            global _consecutive_failures
-            ep = await pool.fetchrow(
-                "SELECT status FROM episodes WHERE id = $1::uuid", row["id"]
+            try:
+                audio_path = await download_audio(episode_id)
+
+            except EpisodeUnavailableError as exc:
+                logger.info(f"Episode {episode_id} unavailable: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+                await _check_consecutive_failure(episode_id)
+                continue
+
+            except EpisodeRateLimitedError as exc:
+                logger.warning(f"Episode {episode_id} rate limited, backing off 60s: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
+                    episode_id,
+                )
+                await asyncio.sleep(60)
+                continue
+
+            except EpisodeTooShortError as exc:
+                logger.info(f"Episode {episode_id} too short, blacklisting: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='discovered', blacklisted=TRUE, error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+                continue
+
+            except Exception as exc:
+                logger.error(f"Episode {episode_id} download failed: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+                await _check_consecutive_failure(episode_id)
+                continue
+
+            # Insert as 'queued' — blurb workers only claim 'pending' jobs.
+            await pool.execute(
+                """
+                INSERT INTO transcription_jobs (episode_id, audio_path, status)
+                VALUES ($1::uuid, $2, 'queued')
+                """,
+                episode_id, audio_path,
             )
-            if ep and ep["status"] == "failed":
-                _consecutive_failures += 1
-                if _consecutive_failures >= 2:
-                    logger.warning("Auto-pausing scheduler after %d consecutive failures", _consecutive_failures)
-                    await _persist_scheduler_paused(True)
-                    _scheduler.pause()
-                    _consecutive_failures = 0
-            else:
-                _consecutive_failures = 0
+            await pool.execute(
+                "UPDATE episodes SET status='downloaded' WHERE id=$1::uuid", episode_id
+            )
+            logger.info(f"Episode {episode_id} downloaded and queued for transcription")
+            _transcribe_wakeup.set()
 
         except asyncio.CancelledError:
             raise
@@ -229,30 +172,154 @@ async def download_worker() -> None:
             await asyncio.sleep(5)
 
 
+async def transcribe_worker() -> None:
+    """
+    Serial transcription worker. Claims one 'downloaded' episode at a time,
+    promotes its transcription job from 'queued' to 'pending' (making it
+    claimable by blurb), waits for the result, then processes the transcript.
+    Only one episode is ever in-flight with blurb at a time.
+
+    After claiming a job it immediately wakes the download worker so it can
+    pre-fetch the next episode while blurb is running.
+    """
+    pool = db.get_pool()
+    while True:
+        try:
+            _transcribe_wakeup.clear()
+
+            from apscheduler.schedulers.base import STATE_PAUSED
+            if not await settings.get("auto_transcribe") or _scheduler.state == STATE_PAUSED:
+                try:
+                    await asyncio.wait_for(_transcribe_wakeup.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+
+            # Claim next downloaded episode: promote its job from queued → pending.
+            row = await pool.fetchrow(
+                """
+                UPDATE transcription_jobs SET status = 'pending'
+                WHERE id = (
+                    SELECT tj.id FROM transcription_jobs tj
+                    JOIN episodes e ON tj.episode_id = e.id
+                    JOIN sources s ON e.source_id = s.id
+                    JOIN podcasts p ON s.podcast_id = p.id
+                    WHERE e.status = 'downloaded' AND tj.status = 'queued'
+                    ORDER BY p.display_order ASC, e.created_at DESC
+                    LIMIT 1
+                    FOR UPDATE OF tj SKIP LOCKED
+                )
+                RETURNING id::text, episode_id::text, audio_path
+                """
+            )
+
+            if not row:
+                try:
+                    await asyncio.wait_for(_transcribe_wakeup.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+
+            job_id = row["id"]
+            episode_id = row["episode_id"]
+            audio_path = row["audio_path"]
+
+            await pool.execute(
+                "UPDATE episodes SET status='transcribing' WHERE id=$1::uuid", episode_id
+            )
+
+            # Wake the download worker — it can now pre-fetch the next episode.
+            _download_wakeup.set()
+
+            # ── Wait for transcription result ──────────────────────────────────
+            event = asyncio.Event()
+            _job_events[job_id] = event
+            try:
+                while True:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(event.wait()), timeout=30.0)
+                        break
+                    except asyncio.TimeoutError:
+                        result_row = await pool.fetchrow(
+                            "SELECT status FROM transcription_jobs WHERE id=$1::uuid", job_id
+                        )
+                        if result_row and result_row["status"] in ("completed", "failed"):
+                            break
+
+                result_row = await pool.fetchrow(
+                    "SELECT status, result, error FROM transcription_jobs WHERE id=$1::uuid", job_id
+                )
+                if not result_row or result_row["status"] != "completed":
+                    error = (result_row["error"] if result_row else None) or "transcription job missing or failed"
+                    raise Exception(error)
+
+                transcript = result_row["result"]
+                if isinstance(transcript, str):
+                    transcript = json.loads(transcript)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"Transcription failed for episode {episode_id}: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+                await _check_consecutive_failure(episode_id)
+                continue
+            finally:
+                _job_events.pop(job_id, None)
+                try:
+                    os.unlink(audio_path)
+                except OSError:
+                    pass
+
+            # ── Process transcript ─────────────────────────────────────────────
+            try:
+                target_words = await settings.get_int("chunk_target_words") or 50
+                await process_transcript(episode_id, transcript, target_words=target_words)
+                await pool.execute(
+                    "UPDATE episodes SET status='processed' WHERE id=$1::uuid", episode_id
+                )
+                logger.info(f"Episode {episode_id} fully processed")
+            except Exception as exc:
+                logger.error(f"process_transcript failed for {episode_id}: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+
+            await _check_consecutive_failure(episode_id)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"Transcribe worker unhandled error: {exc}")
+            await asyncio.sleep(5)
+
+
 def wakeup_worker() -> None:
-    """Signal download worker(s) to check the queue immediately."""
-    _wakeup.set()
+    """Signal the download worker to check the queue immediately."""
+    _download_wakeup.set()
 
 
 def start_download_worker() -> None:
-    n = int(os.environ.get("DOWNLOAD_CONCURRENCY", 1))
-    for i in range(n):
-        task = asyncio.create_task(download_worker(), name=f"download-worker-{i}")
-        _download_worker_tasks.append(task)
-    logger.info(f"Download worker started ({n} concurrent)")
+    dl = asyncio.create_task(download_worker(), name="download-worker")
+    tr = asyncio.create_task(transcribe_worker(), name="transcribe-worker")
+    _worker_tasks.extend([dl, tr])
+    logger.info("Download + transcribe workers started")
 
 
 def stop_download_worker() -> None:
-    for task in _download_worker_tasks:
+    for task in _worker_tasks:
         task.cancel()
-    _download_worker_tasks.clear()
-    logger.info("Download worker stopped")
+    _worker_tasks.clear()
+    logger.info("Workers stopped")
 
 
 def get_worker_status() -> dict:
-    n = int(os.environ.get("DOWNLOAD_CONCURRENCY", 1))
-    active = sum(1 for t in _download_worker_tasks if not t.done())
-    return {"active": active, "capacity": n}
+    active = sum(1 for t in _worker_tasks if not t.done())
+    return {"active": active, "capacity": len(_worker_tasks)}
 
 
 async def run_discovery(
@@ -308,26 +375,22 @@ async def recover_interrupted_downloads() -> None:
     """
     On startup, reset any in-flight episodes and clean up leftover state.
 
-    With serial processing there is at most one episode in flight at a time.
-    Any episode in 'downloading' or 'transcribing' lost its pipeline coroutine
-    when the conductor restarted — reset both back to 'discovered' so the worker
-    picks them up cleanly.  Pending/claimed transcription jobs are cancelled and
-    leftover audio files are deleted.
+    Reset 'downloading', 'downloaded', and 'transcribing' episodes back to
+    'discovered'. Cancel all queued/pending/claimed transcription jobs.
+    Delete leftover audio files.
     """
     pool = db.get_pool()
 
-    # Cancel any orphaned transcription jobs — their pipeline coroutines are gone.
     await pool.execute(
         "UPDATE transcription_jobs SET status='failed', error='Cancelled: conductor restarted' "
-        "WHERE status IN ('pending', 'claimed')"
+        "WHERE status IN ('queued', 'pending', 'claimed')"
     )
 
-    # Reset in-flight episodes to discovered.
     r1 = await pool.execute(
         """
         UPDATE episodes
         SET status = 'discovered', error_message = 'Reset: interrupted by conductor restart'
-        WHERE status IN ('downloading', 'transcribing') AND blacklisted = FALSE
+        WHERE status IN ('downloading', 'downloaded', 'transcribing') AND blacklisted = FALSE
         """
     )
     n1 = int(r1.split()[-1])
@@ -336,7 +399,6 @@ async def recover_interrupted_downloads() -> None:
     else:
         logger.info("Startup recovery: no interrupted episodes found")
 
-    # Delete all leftover audio files — all jobs were just cancelled above.
     audio_dir = os.environ.get("AUDIO_PATH", "/tmp")
     leftovers = glob_module.glob(os.path.join(audio_dir, "*"))
     for f in leftovers:
@@ -352,10 +414,6 @@ async def reclaim_stuck_jobs() -> None:
     """
     Reset transcription_jobs stuck in 'claimed' for more than 2 hours back
     to 'pending'. Runs every 30 minutes.
-
-    A job gets stuck if the worker crashed before posting a result. 2 hours
-    gives long episodes enough time to finish transcribing before being reclaimed.
-    Resetting to pending makes the job available for the next worker poll.
     """
     pool = db.get_pool()
     result = await pool.execute(
@@ -473,4 +531,5 @@ async def resume_scheduler() -> None:
     _consecutive_failures = 0
     await _persist_scheduler_paused(False)
     _scheduler.resume()
+    wakeup_worker()
     logger.info("Scheduler resumed via admin")
