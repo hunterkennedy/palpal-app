@@ -68,7 +68,6 @@ class BulkActionRequest(BaseModel):
 class PodcastResult(BaseModel):
     id: str
     display_name: str
-    description: str
     image: str
     has_icon: bool
     social_sections: list

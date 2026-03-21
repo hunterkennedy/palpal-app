@@ -400,10 +400,6 @@
       <input type="text" id="pm-name" placeholder="My Podcast" oninput="updateSlugPreview()" />
       <div id="pm-slug-preview" class="muted small" style="margin-top:0.3rem;display:none">slug: <code id="pm-slug-val" style="color:var(--text)"></code><input type="hidden" id="pm-id" /></div>
     </div>
-    <div class="form-row">
-      <label>Description</label>
-      <input type="text" id="pm-desc" placeholder="Optional" />
-    </div>
     <div class="form-row-inline">
       <div class="form-row" style="flex:0 0 auto">
         <label>Display Order</label>
@@ -780,7 +776,6 @@ async function savePodOrder() {
     await Promise.all(updates.map(({ pod, order }) =>
       api('PUT', `/admin/podcasts/${pod.id}`, {
         display_name: pod.display_name,
-        description: pod.description || '',
         enabled: pod.enabled,
         display_order: order,
       })
@@ -1406,7 +1401,6 @@ function openNewPodModal() {
   document.getElementById('pod-modal-title').textContent = 'New Podcast';
   document.getElementById('pm-id').value = '';
   document.getElementById('pm-name').value = '';
-  document.getElementById('pm-desc').value = '';
   document.getElementById('pm-order').value = '0';
   document.getElementById('pm-enabled').checked = true;
   document.getElementById('pm-sources-section').style.display = 'none';
@@ -1428,7 +1422,6 @@ function openEditPodModal(podId) {
   document.getElementById('pm-slug-val').textContent = pod.id;
   document.getElementById('pm-slug-preview').style.display = '';
   document.getElementById('pm-name').value = pod.display_name;
-  document.getElementById('pm-desc').value = pod.description || '';
   document.getElementById('pm-order').value = pod.display_order ?? 0;
   document.getElementById('pm-enabled').checked = pod.enabled !== false;
   document.getElementById('pm-sources-section').style.display = '';
@@ -1546,7 +1539,6 @@ async function savePodcast() {
     const body = {
       id: document.getElementById('pm-id').value.trim(),
       display_name: document.getElementById('pm-name').value.trim(),
-      description: document.getElementById('pm-desc').value.trim(),
       display_order: parseInt(document.getElementById('pm-order').value) || 0,
       enabled: document.getElementById('pm-enabled').checked,
     };

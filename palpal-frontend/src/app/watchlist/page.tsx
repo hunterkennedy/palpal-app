@@ -15,7 +15,6 @@ export default async function Watchlist() {
   const podcasts: PodcastConfig[] = rawPodcasts.map(p => ({
     id: p.id,
     displayName: p.display_name,
-    description: p.description || '',
     image: p.has_icon ? `/api/podcast-image/${p.id}` : '',
     socialSections: (p.social_sections || []).map(section => ({
       title: section.title,

@@ -697,7 +697,7 @@ async def admin_list_podcasts():
     """All podcasts (including disabled) with all sources and filter config."""
     pool = db.get_pool()
     pod_rows = await pool.fetch(
-        "SELECT id, display_name, description, enabled, display_order FROM podcasts ORDER BY display_order, id"
+        "SELECT id, display_name, enabled, display_order FROM podcasts ORDER BY display_order, id"
     )
     src_rows = await pool.fetch(
         "SELECT id::text, podcast_id, name, site, url, enabled, filters FROM sources ORDER BY name"
@@ -722,8 +722,8 @@ async def create_podcast(body: dict):
     pool = db.get_pool()
     try:
         await pool.execute(
-            "INSERT INTO podcasts (id, display_name, description, enabled, display_order) VALUES ($1, $2, $3, $4, $5)",
-            pod_id, body.get("display_name", pod_id), body.get("description", ""),
+            "INSERT INTO podcasts (id, display_name, enabled, display_order) VALUES ($1, $2, $3, $4)",
+            pod_id, body.get("display_name", pod_id),
             bool(body.get("enabled", True)), int(body.get("display_order", 0)),
         )
     except Exception as e:
@@ -739,8 +739,8 @@ async def update_podcast(podcast_id: str, body: dict):
     """Update podcast metadata."""
     pool = db.get_pool()
     result = await pool.execute(
-        "UPDATE podcasts SET display_name=$1, description=$2, enabled=$3, display_order=$4 WHERE id=$5",
-        body.get("display_name", podcast_id), body.get("description", ""),
+        "UPDATE podcasts SET display_name=$1, enabled=$2, display_order=$3 WHERE id=$4",
+        body.get("display_name", podcast_id),
         bool(body.get("enabled", True)), int(body.get("display_order", 0)), podcast_id,
     )
     if result == "UPDATE 0":
@@ -909,7 +909,7 @@ async def _fetch_podcasts() -> list[PodcastResult]:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
-        SELECT id, display_name, description, image,
+        SELECT id, display_name, image,
                (icon IS NOT NULL) AS has_icon,
                social_sections, display_order
         FROM podcasts

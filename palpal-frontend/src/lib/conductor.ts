@@ -101,7 +101,6 @@ export async function checkHealth(): Promise<{ status: string }> {
 export interface ConductorPodcast {
   id: string;
   display_name: string;
-  description: string | null;
   image: string | null;
   has_icon: boolean;
   social_sections: Array<{

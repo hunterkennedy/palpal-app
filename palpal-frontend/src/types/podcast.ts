@@ -8,7 +8,6 @@ export interface PodcastSocialSection {
 export interface PodcastConfig {
   id: string;
   displayName: string;
-  description: string;
   image: string;
   socialSections: PodcastSocialSection[];
   enabled: boolean;
