@@ -15,9 +15,6 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "palpal - The Podcast Search Engine",
   description: "Search every word of your favorite podcasts",
-  icons: {
-    icon: '/favicon.ico',
-  },
 };
 
 export default async function RootLayout({

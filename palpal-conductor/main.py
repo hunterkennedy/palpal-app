@@ -264,7 +264,8 @@ async def admin_live():
                    COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
                    COUNT(*) FILTER (WHERE e.status = 'transcribing') AS transcribing,
                    COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
-                   COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed
+                   COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed,
+                   COUNT(*) FILTER (WHERE e.status = 'orphaned')     AS orphaned
             FROM episodes e
             JOIN sources s ON e.source_id = s.id
             JOIN podcasts p ON s.podcast_id = p.id

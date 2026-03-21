@@ -59,6 +59,7 @@
     .badge-transcribing { color: #d8b4fe; background: rgba(192,132,252,0.1); border-color: rgba(192,132,252,0.2); }
     .badge-processed    { color: #86efac; background: rgba(74,222,128,0.1);  border-color: rgba(74,222,128,0.2); }
     .badge-failed       { color: #fca5a5; background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.2); }
+    .badge-orphaned     { color: #94a3b8; background: rgba(148,163,184,0.1); border-color: rgba(148,163,184,0.2); }
     .badge-bl           { color: #fdba74; background: rgba(249,115,22,0.1);  border-color: rgba(249,115,22,0.2); }
     .badge-running      { color: #86efac; background: rgba(74,222,128,0.1);  border-color: rgba(74,222,128,0.2); }
     .badge-paused       { color: #fdba74; background: rgba(249,115,22,0.1);  border-color: rgba(249,115,22,0.2); }
@@ -285,6 +286,7 @@
               <th style="text-align:center">transcribing</th>
               <th style="text-align:center">processed</th>
               <th style="text-align:center">failed</th>
+              <th style="text-align:center">orphaned</th>
               <th>actions</th>
             </tr>
           </thead>
@@ -634,8 +636,8 @@ function renderTape() {
 
   function badge(ep) {
     if (!ep) return '';
-    const cls = { downloading:'badge-downloading', transcribing:'badge-transcribing', processed:'badge-processed', failed:'badge-failed', discovered:'badge-discovered' }[ep.status] || '';
-    const lbl = ep.status === 'discovered' ? 'queued' : ep.status;
+    const cls = { downloading:'badge-downloading', downloaded:'badge-downloading', transcribing:'badge-transcribing', processed:'badge-processed', failed:'badge-failed', discovered:'badge-discovered', orphaned:'badge-orphaned' }[ep.status] || '';
+    const lbl = ep.status === 'discovered' ? 'queued' : ep.status === 'downloaded' ? 'ready' : ep.status;
     return `<span class="badge ${cls}">${lbl}</span>`;
   }
   function cell(ep, cls) {
@@ -688,9 +690,9 @@ function fmtNextRun(iso) {
 // ---------------------------------------------------------------------------
 const SCOLOR = {
   discovered: '#93c5fd', downloading: '#fde047',
-  transcribing: '#d8b4fe', processed: '#86efac', failed: '#fca5a5',
+  transcribing: '#d8b4fe', processed: '#86efac', failed: '#fca5a5', orphaned: '#94a3b8',
 };
-const PIPELINE_PHASES = ['discovered', 'downloading', 'transcribing', 'processed', 'failed'];
+const PIPELINE_PHASES = ['discovered', 'downloading', 'transcribing', 'processed', 'failed', 'orphaned'];
 
 function renderPodcastPipeline(podStats) {
   const statsMap = {};
@@ -709,8 +711,6 @@ function renderPodcastPipeline(podStats) {
       ${cells}
       <td><div class="action-row">
         <button class="btn btn-blue act" id="pp-disc-${esc(p.id)}" onclick="triggerDiscover('${esc(p.id)}')">▶ disc</button>
-        <button class="btn btn-yellow act" id="pp-dl-${esc(p.id)}" onclick="triggerDownload('${esc(p.id)}')">▶ dl</button>
-        <button class="btn btn-purple act" id="pp-tx-${esc(p.id)}" onclick="triggerTranscribe('${esc(p.id)}')">▶ tx</button>
         <button class="btn btn-ghost icon-btn" onclick="openEditPodModal('${esc(p.id)}')" title="Edit">⚙</button>
       </div></td>
     </tr>`;
@@ -722,8 +722,6 @@ function renderPodcastPipeline(podStats) {
     ${PIPELINE_PHASES.map(() => '<td></td>').join('')}
     <td><div class="action-row">
       <button class="btn btn-blue act" id="pp-disc-all" onclick="triggerDiscover(null)">▶ disc</button>
-      <button class="btn btn-yellow act" id="pp-dl-all" onclick="triggerDownload(null)">▶ dl</button>
-      <button class="btn btn-purple act" id="pp-tx-all" onclick="triggerTranscribe(null)">▶ tx</button>
     </div></td>
   </tr>`;
 
@@ -1119,7 +1117,7 @@ async function saveYoutubeCookies() {
 // ---------------------------------------------------------------------------
 const RETRYABLE   = new Set(['failed', 'transcribing', 'downloading']);
 const PROCESSABLE = new Set(['discovered']);
-const STATUS_TABS = ['all', 'discovered', 'downloading', 'transcribing', 'failed', 'processed', 'blacklisted'];
+const STATUS_TABS = ['all', 'discovered', 'downloading', 'transcribing', 'failed', 'processed', 'orphaned', 'blacklisted'];
 
 function getFiltered() {
   let r = S.episodes;

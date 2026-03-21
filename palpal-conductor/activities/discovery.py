@@ -183,6 +183,9 @@ async def discover_youtube_source(
         s.lower() for s in filters.get("title_exclude", [])
     ]
 
+    # Collect all video_ids seen in this run (before any filtering) so we can
+    # orphan episodes that have truly disappeared from the source.
+    all_seen_video_ids: list[str] = []
     entries: list[dict] = []
     for line in stdout_bytes.decode().splitlines():
         line = line.strip()
@@ -200,7 +203,9 @@ async def discover_youtube_source(
         if not video_id:
             continue
 
-        # Skip unavailable videos — they'll be re-evaluated on the next discovery run
+        all_seen_video_ids.append(video_id)
+
+        # Skip unavailable videos — they still exist in the playlist, just unplayable
         if title.startswith("[") and title.endswith("]"):
             logger.debug(f"Skipping unavailable video {video_id} ('{title}')")
             continue
@@ -309,6 +314,27 @@ async def discover_youtube_source(
                 logger.info(
                     f"Source {source_id}: retroactively blacklisted {retro_count} existing episode(s) (too short)"
                 )
+
+    # Orphan episodes that are no longer present in the source.
+    # We use all_seen_video_ids (pre-filter) so that episodes excluded by title_exclude
+    # or currently unavailable (but still in the playlist) are not wrongly orphaned.
+    # In-flight episodes (downloading/downloaded/transcribing) are left alone.
+    if all_seen_video_ids:
+        orphaned = await pool.execute(
+            """
+            UPDATE episodes
+            SET status = 'orphaned', updated_at = NOW()
+            WHERE source_id = $1::uuid
+              AND video_id != ALL($2)
+              AND status NOT IN ('downloading', 'downloaded', 'transcribing', 'orphaned')
+              AND blacklisted = FALSE
+            """,
+            source_id,
+            all_seen_video_ids,
+        )
+        orphaned_count = int(orphaned.split()[-1])
+        if orphaned_count:
+            logger.info(f"Source {source_id}: orphaned {orphaned_count} episode(s) no longer in source")
 
     # Update channel icon using the source URL (channel/playlist page)
     if podcast_id:
@@ -425,6 +451,7 @@ async def discover_patreon_source(
         params["filter[collection_id]"] = collection_id
 
     all_entries: list[dict] = []
+    all_seen_post_ids: list[str] = []
     cursor: str | None = None
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -445,6 +472,8 @@ async def discover_patreon_source(
 
                 if not post_id or post_type not in _PATREON_AUDIO_POST_TYPES:
                     continue
+
+                all_seen_post_ids.append(post_id)
 
                 if any(excl in title.lower() for excl in title_exclude):
                     logger.debug(f"Skipping '{title}' (title_exclude match)")
@@ -494,4 +523,22 @@ async def discover_patreon_source(
             new_episodes.append(NewEpisode(episode_id=row["id"], video_id=entry["video_id"]))
 
     logger.info(f"Patreon source {source_id}: {len(new_episodes)} new episodes inserted")
+
+    if all_seen_post_ids:
+        orphaned = await pool.execute(
+            """
+            UPDATE episodes
+            SET status = 'orphaned', updated_at = NOW()
+            WHERE source_id = $1::uuid
+              AND video_id != ALL($2)
+              AND status NOT IN ('downloading', 'downloaded', 'transcribing', 'orphaned')
+              AND blacklisted = FALSE
+            """,
+            source_id,
+            all_seen_post_ids,
+        )
+        orphaned_count = int(orphaned.split()[-1])
+        if orphaned_count:
+            logger.info(f"Patreon source {source_id}: orphaned {orphaned_count} episode(s) no longer in source")
+
     return new_episodes
