@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import SavedPage from '@/components/SavedPage';
+import Footer from '@/components/Footer';
 
 export default function Saved() {
   return (
@@ -13,14 +13,7 @@ export default function Saved() {
         <SavedPage />
       </div>
 
-      <footer className="footer-container">
-        <div className="footer-content">
-          <div className="flex space-x-6 text-sm justify-center">
-            <Link href="/tos" className="nav-link">Terms of Service</Link>
-            <Link href="/pp" className="nav-link">Privacy Policy</Link>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

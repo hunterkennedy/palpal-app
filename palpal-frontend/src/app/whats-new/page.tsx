@@ -1,10 +1,10 @@
 export const dynamic = 'force-dynamic';
 
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import WhatsNewPage from '@/components/WhatsNewPage';
 import { getWhatsNew } from '@/lib/conductor';
+import Footer from '@/components/Footer';
 
 export const metadata: Metadata = {
   title: "What's New - palpal",
@@ -21,14 +21,7 @@ export default async function WhatsNew() {
         <WhatsNewPage entries={entries} />
       </div>
 
-      <footer className="footer-container">
-        <div className="footer-content">
-          <div className="flex space-x-6 text-sm justify-center">
-            <Link href="/tos" className="nav-link">Terms of Service</Link>
-            <Link href="/pp" className="nav-link">Privacy Policy</Link>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import Image from 'next/image';
 import SearchResults from '@/components/SearchResults';
 import SearchBar from '@/components/SearchBar';
 import Navbar from '@/components/Navbar';
+import Footer from '@/components/Footer';
 import { DateRange } from '@/components/SearchFilters';
 import { GroupByOption } from '@/components/GroupByFilter';
 import { SearchHit, ErrorState } from '@/types';
@@ -442,19 +442,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="footer-container">
-        <div className="footer-content">
-          <div className="flex space-x-8 text-sm justify-center">
-            <Link href="/tos" className="nav-link hover:text-orange-300 transition-colors duration-200">
-              Terms of Service
-            </Link>
-            <Link href="/pp" className="nav-link hover:text-orange-300 transition-colors duration-200">
-              Privacy Policy
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

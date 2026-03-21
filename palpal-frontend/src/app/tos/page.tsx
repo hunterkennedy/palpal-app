@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import TermsPage from '@/components/TermsPage';
+import Footer from '@/components/Footer';
 
 export const metadata: Metadata = {
   title: "Terms of Service - palpal",
@@ -17,14 +17,7 @@ export default function TermsOfService() {
         <TermsPage />
       </div>
 
-      <footer className="footer-container">
-        <div className="footer-content">
-          <div className="flex space-x-6 text-sm justify-center">
-            <Link href="/tos" className="nav-link">Terms of Service</Link>
-            <Link href="/pp" className="nav-link">Privacy Policy</Link>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

@@ -15,9 +15,11 @@ WORKDIR /app
 
 # Accept build-time arguments
 ARG NEXT_TELEMETRY_DISABLED
+ARG APP_VERSION=dev
 
 # Set environment variables for build
 ENV NEXT_TELEMETRY_DISABLED=$NEXT_TELEMETRY_DISABLED
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

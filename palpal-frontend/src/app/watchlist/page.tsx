@@ -1,10 +1,10 @@
 export const dynamic = 'force-dynamic';
 
-import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import WatchlistPage from '@/components/WatchlistPage';
 import { getEpisodes, getPodcasts } from '@/lib/conductor';
 import { PodcastConfig } from '@/types/podcast';
+import Footer from '@/components/Footer';
 
 export default async function Watchlist() {
   const [episodes, rawPodcasts] = await Promise.all([
@@ -40,14 +40,7 @@ export default async function Watchlist() {
         <WatchlistPage initialEpisodes={episodes} initialPodcasts={podcasts} />
       </div>
 
-      <footer className="footer-container">
-        <div className="footer-content">
-          <div className="flex space-x-6 text-sm justify-center">
-            <Link href="/tos" className="nav-link">Terms of Service</Link>
-            <Link href="/pp" className="nav-link">Privacy Policy</Link>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }
