@@ -424,7 +424,7 @@ async def discover_patreon_source(
     """
     logger.info(f"Discovering Patreon source {source_id} ({url})")
 
-    session_cookie = _parse_cookie_value(await settings.get_string("youtube_cookies"), "patreon.com", "session_id")
+    session_cookie = _parse_cookie_value(await settings.get_string("patreon_cookies"), "patreon.com", "session_id")
 
     collection_match = _PATREON_COLLECTION_RE.search(url)
     collection_id = collection_match.group(1) if collection_match else None

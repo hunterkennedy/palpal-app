@@ -13,7 +13,7 @@ from activities.discovery import (
     get_enabled_youtube_sources, discover_youtube_source,
     get_enabled_patreon_sources, discover_patreon_source,
 )
-from activities.download import download_audio, EpisodeTooShortError, EpisodeUnavailableError, EpisodeRateLimitedError
+from activities.download import download_audio, EpisodeTooShortError, EpisodeUnavailableError, EpisodeRateLimitedError, EpisodeAgeRestrictedError
 from activities.blurb import enqueue_transcription
 from activities.process import process_transcript
 
@@ -30,6 +30,9 @@ _job_events: dict[str, asyncio.Event] = {}
 
 # Number of pre-downloaded episodes to keep ready while transcription runs.
 _DOWNLOAD_BUFFER = 1
+
+# Set when rate-limited; cleared after backoff sleep completes.
+_download_backoff_until: datetime | None = None
 
 
 def signal_job_complete(job_id: str) -> None:
@@ -125,13 +128,26 @@ async def download_worker() -> None:
                 await _check_consecutive_failure(episode_id)
                 continue
 
+            except EpisodeAgeRestrictedError as exc:
+                logger.info(f"Episode {episode_id} age-restricted, failing: {exc}")
+                await pool.execute(
+                    "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid",
+                    str(exc), episode_id,
+                )
+                await _check_consecutive_failure(episode_id)
+                continue
+
             except EpisodeRateLimitedError as exc:
-                logger.warning(f"Episode {episode_id} rate limited, backing off 60s: {exc}")
+                global _download_backoff_until
+                backoff_secs = 60
+                _download_backoff_until = datetime.now(timezone.utc) + timedelta(seconds=backoff_secs)
+                logger.warning(f"Episode {episode_id} rate limited, backing off {backoff_secs}s: {exc}")
                 await pool.execute(
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
                     episode_id,
                 )
-                await asyncio.sleep(60)
+                await asyncio.sleep(backoff_secs)
+                _download_backoff_until = None
                 continue
 
             except EpisodeTooShortError as exc:
@@ -512,11 +528,13 @@ def get_scheduler_status() -> dict:
             "id": job.id,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
         })
+    backoff_until = _download_backoff_until
     return {
         "running": _scheduler.running,
         "paused": paused,
         "jobs": jobs,
         "worker": get_worker_status(),
+        "download_backoff_until": backoff_until.isoformat() if backoff_until else None,
     }
 
 

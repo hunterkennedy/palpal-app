@@ -666,6 +666,10 @@ function renderTape() {
       let reason = 'idle';
       if (sched.paused) reason = 'paused';
       else if (!ps.auto_download) reason = 'downloads off';
+      else if (sched.download_backoff_until) {
+        const secsLeft = Math.max(0, Math.round((new Date(sched.download_backoff_until) - Date.now()) / 1000));
+        reason = secsLeft > 0 ? `rate limit (${secsLeft}s)` : 'rate limit backoff';
+      }
       else if ((S.live.counts?.discovered || 0) === 0) reason = 'queue empty';
       return `<div class="tape-cell tape-idle"><div class="tape-title muted" style="margin-top:0.55rem;text-align:center">${reason}</div></div>`;
     }
@@ -925,8 +929,8 @@ function renderPipelineSettings() {
   const ytCookieRow = `
     <div class="setting-row" style="align-items:flex-start">
       <div>
-        <div style="font-size:0.875rem;font-weight:500">Download Cookies</div>
-        <div class="muted small">Netscape-format cookies.txt (exported from browser) for age-restricted YouTube and Patreon downloads. ${ytCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
+        <div style="font-size:0.875rem;font-weight:500">YouTube Cookies</div>
+        <div class="muted small">Netscape-format cookies.txt for age-restricted YouTube downloads. ${ytCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
       </div>
       <div style="display:flex;align-items:flex-start;gap:0.5rem">
         <textarea id="youtube-cookies-input" rows="4" placeholder="${ytCookieSet ? '(cookies already saved — paste to replace)' : '# Netscape HTTP Cookie File\n...'}"
@@ -935,7 +939,21 @@ function renderPipelineSettings() {
       </div>
     </div>`;
 
-  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + ytCookieRow;
+  const ptCookieSet = !!(S.pipelineSettings.patreon_cookies);
+  const ptCookieRow = `
+    <div class="setting-row" style="align-items:flex-start">
+      <div>
+        <div style="font-size:0.875rem;font-weight:500">Patreon Cookies</div>
+        <div class="muted small">Netscape-format cookies.txt for Patreon discovery and downloads. ${ptCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:0.5rem">
+        <textarea id="patreon-cookies-input" rows="4" placeholder="${ptCookieSet ? '(cookies already saved — paste to replace)' : '# Netscape HTTP Cookie File\n...'}"
+          style="width:220px;font-family:monospace;font-size:0.75rem;resize:vertical" autocomplete="off"></textarea>
+        <button class="btn btn-orange act" onclick="savePatreonCookies()">save</button>
+      </div>
+    </div>`;
+
+  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + ytCookieRow + ptCookieRow;
   renderDangerZone();
 }
 
@@ -1185,6 +1203,17 @@ async function saveYoutubeCookies() {
   S.pipelineSettings = await res.json();
   document.getElementById('youtube-cookies-input').value = '';
   toast('YouTube cookies saved');
+  renderPipelineSettings();
+}
+
+async function savePatreonCookies() {
+  const val = document.getElementById('patreon-cookies-input').value.trim();
+  if (!val) return toast('Paste a cookies.txt file first', false);
+  const res = await api('POST', '/admin/pipeline-settings', { patreon_cookies: val });
+  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
+  S.pipelineSettings = await res.json();
+  document.getElementById('patreon-cookies-input').value = '';
+  toast('Patreon cookies saved');
   renderPipelineSettings();
 }
 

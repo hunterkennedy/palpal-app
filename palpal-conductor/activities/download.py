@@ -24,6 +24,10 @@ class EpisodeRateLimitedError(Exception):
     """Raised when YouTube rate-limits the download request (transient — will be retried)."""
 
 
+class EpisodeAgeRestrictedError(Exception):
+    """Raised when the video requires age verification (needs cookies — permanent failure without them)."""
+
+
 def _write_cookie_file(cookies_txt: str) -> str:
     """Write a browser-exported Netscape cookie file for yt-dlp. Returns the temp file path."""
     f = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="cookies_")
@@ -73,10 +77,12 @@ async def download_audio(episode_id: str) -> str:
         "-f", "bestaudio/best",
         "--print", "upload_date",
         "--no-simulate",
+        "--js-runtimes", "node",
         "-o", output_template,
     ]
 
-    cookies_txt = await settings.get_string("youtube_cookies")
+    cookie_key = "patreon_cookies" if site == "patreon" else "youtube_cookies"
+    cookies_txt = await settings.get_string(cookie_key)
     if cookies_txt:
         cookie_file = _write_cookie_file(cookies_txt)
         cmd += ["--cookies", cookie_file]
@@ -107,7 +113,9 @@ async def download_audio(episode_id: str) -> str:
         logger.warning(f"yt-dlp stderr for {video_id}: {stderr[:1000]}")
         if any(phrase in stderr for phrase in ("Private video", "This video is private", "Video unavailable", "This post is")):
             raise EpisodeUnavailableError(f"Content {video_id} is private or unavailable")
-        if any(phrase in stderr for phrase in ("HTTP Error 429", "Too Many Requests", "Sign in to confirm")):
+        if "Sign in to confirm your age" in stderr:
+            raise EpisodeAgeRestrictedError(f"Age-restricted content {video_id} — cookies required")
+        if any(phrase in stderr for phrase in ("HTTP Error 429", "Too Many Requests")):
             raise EpisodeRateLimitedError(f"Rate limited for {video_id} — will retry next run")
         raise RuntimeError(
             f"yt-dlp download failed for {video_id}: {stderr[:500]}"
