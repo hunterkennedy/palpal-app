@@ -306,6 +306,22 @@
       </div>
     </div>
 
+    <!-- Search Placeholders -->
+    <div class="card" id="placeholders-card">
+      <button class="section-hdr" onclick="togglePlaceholders()">
+        <h2>🔍 search placeholders</h2>
+        <span id="ph-arrow" class="arrow">▸</span>
+      </button>
+      <div id="placeholders-body" style="display:none;margin-top:1rem">
+        <div class="muted small" style="margin-bottom:0.75rem">Rotating placeholder text shown in the search bar. One per row.</div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:0.75rem" id="ph-table">
+          <tbody id="ph-tbody"></tbody>
+        </table>
+        <button class="btn btn-green" style="font-size:0.78rem" onclick="addPlaceholderRow()">+ add</button>
+        <button class="btn btn-orange act" style="font-size:0.78rem;margin-left:0.5rem" onclick="savePlaceholders()">save</button>
+      </div>
+    </div>
+
     <!-- Danger Zone -->
     <div class="card danger-zone" id="danger-zone-card">
       <button class="danger-zone-hdr" onclick="toggleDangerZone()">
@@ -486,6 +502,8 @@ const S = {
   confirmDeleteId: null,
   confirmBulkDelete: false,
   live: null,
+  placeholders: [],
+  whatsNewEntries: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -553,18 +571,20 @@ async function doRefresh(silent) {
   const status = document.getElementById('refresh-status');
   status.textContent = silent ? '↻' : 'loading…';
   try {
-    const [podStatsRes, epsRes, settingsRes, podsRes, wnRes] = await Promise.all([
+    const [podStatsRes, epsRes, settingsRes, podsRes, wnRes, phRes] = await Promise.all([
       api('GET', '/admin/status/by-podcast'),
       api('GET', '/admin/episodes'),
       api('GET', '/admin/pipeline-settings'),
       api('GET', '/admin/podcasts'),
       fetch('/api/whats-new'),
+      api('GET', '/search-placeholders'),
     ]);
     const failures = [];
     if (podStatsRes.ok)  S.podStats         = await podStatsRes.json(); else failures.push(`status/by-podcast ${podStatsRes.status}`);
     if (epsRes.ok)       S.episodes         = await epsRes.json();      else failures.push(`episodes ${epsRes.status}`);
     if (settingsRes.ok)  S.pipelineSettings = await settingsRes.json(); else failures.push(`pipeline-settings ${settingsRes.status}`);
     if (wnRes.ok)        S.whatsNewEntries  = await wnRes.json();       else failures.push(`whats-new ${wnRes.status}`);
+    if (phRes.ok)        S.placeholders     = await phRes.json();
     if (podsRes.ok) {
       S.podcasts = await podsRes.json();
       renderPodcastFilter();
@@ -572,7 +592,6 @@ async function doRefresh(silent) {
     if (failures.length) toast(`API error: ${failures.join(', ')}`, false);
     renderPipelineSettings();
     renderPodcastPipeline(S.podStats);
-    initPodDragDrop();
     renderEpisodesTable();
     status.textContent = '';
   } catch (e) {
@@ -641,7 +660,15 @@ function renderTape() {
     return `<div class="tape-cell ${cls}">${badge(ep)}<div class="tape-title" title="${esc(ep.title)}">${esc(ep.title)}</div><div class="tape-pod">${esc(ep.podcast_name)}</div></div>`;
   }
   function headCell(ep) {
-    if (!ep) return `<div class="tape-cell tape-idle"><div class="tape-title muted" style="margin-top:0.55rem;text-align:center">idle</div></div>`;
+    if (!ep) {
+      const sched = S.live.scheduler || {};
+      const ps = S.pipelineSettings || {};
+      let reason = 'idle';
+      if (sched.paused) reason = 'paused';
+      else if (!ps.auto_download) reason = 'downloads off';
+      else if ((S.live.counts?.discovered || 0) === 0) reason = 'queue empty';
+      return `<div class="tape-cell tape-idle"><div class="tape-title muted" style="margin-top:0.55rem;text-align:center">${reason}</div></div>`;
+    }
     return `<div class="tape-cell tape-head">${badge(ep)}<div class="tape-title" title="${esc(ep.title)}">${esc(ep.title)}</div><div class="tape-pod">${esc(ep.podcast_name)}</div></div>`;
   }
   document.getElementById('tape-body').innerHTML = `
@@ -722,6 +749,7 @@ function renderPodcastPipeline(podStats) {
   </tr>`;
 
   document.getElementById('pipeline-tbody').innerHTML = rows + allRow;
+  initPodDragDrop();
 }
 
 function initPodDragDrop() {
@@ -897,8 +925,8 @@ function renderPipelineSettings() {
   const ytCookieRow = `
     <div class="setting-row" style="align-items:flex-start">
       <div>
-        <div style="font-size:0.875rem;font-weight:500">YouTube Cookies</div>
-        <div class="muted small">Netscape-format cookies.txt (exported from browser) for age-restricted videos. ${ytCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
+        <div style="font-size:0.875rem;font-weight:500">Download Cookies</div>
+        <div class="muted small">Netscape-format cookies.txt (exported from browser) for age-restricted YouTube and Patreon downloads. ${ytCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
       </div>
       <div style="display:flex;align-items:flex-start;gap:0.5rem">
         <textarea id="youtube-cookies-input" rows="4" placeholder="${ytCookieSet ? '(cookies already saved — paste to replace)' : '# Netscape HTTP Cookie File\n...'}"
@@ -959,6 +987,60 @@ async function deleteWhatsNew(id) {
   S.whatsNewEntries = await res.json();
   toast('Entry deleted');
   renderWhatsNew();
+}
+
+// ---------------------------------------------------------------------------
+// Search Placeholders
+// ---------------------------------------------------------------------------
+function togglePlaceholders() {
+  const body = document.getElementById('placeholders-body');
+  const arrow = document.getElementById('ph-arrow');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  arrow.textContent = open ? '▸' : '▾';
+  if (!open) renderPlaceholders();
+}
+
+function renderPlaceholders() {
+  const tbody = document.getElementById('ph-tbody');
+  const items = S.placeholders || [];
+  tbody.innerHTML = items.map((text, i) => `
+    <tr>
+      <td style="padding:0.2rem 0.4rem 0.2rem 0">
+        <input type="text" value="${esc(text)}" data-ph-idx="${i}"
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:0.3rem 0.5rem;border-radius:4px;font-size:0.85rem" />
+      </td>
+      <td style="padding:0.2rem 0 0.2rem 0.4rem;width:2rem;text-align:right">
+        <button class="btn btn-ghost icon-btn" style="color:var(--muted)" onclick="removePlaceholderRow(${i})">✕</button>
+      </td>
+    </tr>`).join('');
+}
+
+function addPlaceholderRow() {
+  S.placeholders = getPlaceholderValues();
+  S.placeholders.push('');
+  renderPlaceholders();
+  const inputs = document.querySelectorAll('[data-ph-idx]');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
+function removePlaceholderRow(idx) {
+  S.placeholders = getPlaceholderValues();
+  S.placeholders.splice(idx, 1);
+  renderPlaceholders();
+}
+
+function getPlaceholderValues() {
+  return Array.from(document.querySelectorAll('[data-ph-idx]')).map(el => el.value.trim());
+}
+
+async function savePlaceholders() {
+  const items = getPlaceholderValues().filter(Boolean);
+  const res = await api('PUT', '/admin/search-placeholders', items);
+  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
+  S.placeholders = await res.json();
+  toast('Placeholders saved');
+  renderPlaceholders();
 }
 
 async function saveChunkWords() {

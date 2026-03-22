@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
 
 import db
@@ -361,7 +361,11 @@ async def retry_episode(episode_id: str):
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
         episode_id,
     )
-    wakeup_worker()
+    sched = get_scheduler_status()
+    if sched["paused"]:
+        await resume_scheduler()
+    else:
+        wakeup_worker()
     return {"status": "queued", "episode_id": episode_id}
 
 
@@ -975,6 +979,36 @@ async def episodes_check(
 
 
 # --------------------------------------------------------------------------- #
+_placeholders_cache: list[str] | None = None
+
+
+@app.get("/search-placeholders", tags=["search"])
+async def get_search_placeholders():
+    """Rotating search bar placeholder texts."""
+    global _placeholders_cache
+    if _placeholders_cache is not None:
+        return _placeholders_cache
+    pool = db.get_pool()
+    row = await pool.fetchrow("SELECT value FROM settings WHERE key = 'search_placeholders'")
+    _placeholders_cache = json.loads(row["value"]) if row else []
+    return _placeholders_cache
+
+
+@app.put("/admin/search-placeholders", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def set_search_placeholders(body: list[str] = Body(...)):
+    """Replace the list of search bar placeholder texts."""
+    global _placeholders_cache
+    items = [str(s).strip() for s in body if str(s).strip()]
+    pool = db.get_pool()
+    await pool.execute(
+        """INSERT INTO settings (key, value) VALUES ('search_placeholders', $1)
+           ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()""",
+        json.dumps(items),
+    )
+    _placeholders_cache = items
+    return items
+
+
 # Health                                                                       #
 # --------------------------------------------------------------------------- #
 

@@ -85,12 +85,17 @@ export default function Home() {
   const [customEndDate, setCustomEndDate] = useState<string>('');
 
   const [podcasts, setPodcasts] = useState<PodcastConfig[]>([]);
+  const [friendlyPlaceholders, setFriendlyPlaceholders] = useState<string[]>(["search..."]);
 
   useEffect(() => {
     fetch('/api/podcasts')
       .then(r => r.json())
       .then(setPodcasts)
       .catch(err => console.error('Failed to load podcasts:', err));
+    fetch('/api/search-placeholders')
+      .then(r => r.json())
+      .then((data: string[]) => { if (data.length) setFriendlyPlaceholders(data); })
+      .catch(() => {});
   }, []);
   const enabledPodcastIds = useMemo(
     () => podcasts.filter(p => p.enabled).map(p => p.id).sort(),
@@ -146,15 +151,6 @@ export default function Home() {
     const newURL = url.pathname + (url.search ? url.search : '');
     window.history.replaceState(null, '', newURL);
   }, [router, enabledPodcastIds]);
-
-  const friendlyPlaceholders = [
-    "there's multiple...",
-    "gothic lolitas...",
-    "it goes kuru...",
-    "the very limit of a molecule...",
-    "even a peppermint...",
-    "pizza..."
-  ];
 
   // Rotate placeholder text every 5.5 seconds
   useEffect(() => {
