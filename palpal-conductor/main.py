@@ -150,7 +150,10 @@ async def worker_complete(job_id: str, body: dict, _key: str = Depends(verify_wo
         json.dumps(body), job_id,
     )
     if not row:
-        raise HTTPException(status_code=404, detail="Job not found or not in claimed state")
+        # Job was cancelled or reset (e.g. conductor restarted mid-transcription).
+        # Return 200 so blurb doesn't retry — the result is stale and can be discarded.
+        logger.warning(f"Stale complete for job {job_id} — job no longer claimed, discarding result")
+        return {"status": "stale"}
     signal_job_complete(job_id)
     logger.info(f"Transcription result received for job {job_id}, episode {row['episode_id']}")
     return {"status": "accepted", "episode_id": row["episode_id"]}
@@ -171,7 +174,8 @@ async def worker_fail(job_id: str, body: dict, _key: str = Depends(verify_worker
         error, job_id,
     )
     if not row:
-        raise HTTPException(status_code=404, detail="Job not found or not in claimed state")
+        logger.warning(f"Stale fail for job {job_id} — job no longer claimed, ignoring")
+        return {"status": "stale"}
     signal_job_complete(job_id)
     logger.warning(f"Worker reported failure for job {job_id} (episode {row['episode_id']}): {error}")
     return {"status": "failed", "episode_id": row["episode_id"]}
