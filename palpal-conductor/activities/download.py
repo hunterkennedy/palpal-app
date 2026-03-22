@@ -70,7 +70,7 @@ async def download_audio(episode_id: str) -> str:
         yt_dlp_path(),
         "-x",
         "--audio-format", "best",
-        "--no-warnings",
+        "-f", "bestaudio/best",
         "--print", "upload_date",
         "--no-simulate",
         "-o", output_template,
@@ -104,6 +104,7 @@ async def download_audio(episode_id: str) -> str:
 
     if proc.returncode != 0:
         stderr = stderr_bytes.decode()
+        logger.warning(f"yt-dlp stderr for {video_id}: {stderr[:1000]}")
         if any(phrase in stderr for phrase in ("Private video", "This video is private", "Video unavailable", "This post is")):
             raise EpisodeUnavailableError(f"Content {video_id} is private or unavailable")
         if any(phrase in stderr for phrase in ("HTTP Error 429", "Too Many Requests", "Sign in to confirm")):
