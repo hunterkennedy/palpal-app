@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       packages: write
+      contents: read
     steps:
       - name: Delete untagged palpal-frontend versions
         uses: actions/delete-package-versions@v5
