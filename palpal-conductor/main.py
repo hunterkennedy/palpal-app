@@ -61,8 +61,23 @@ app = FastAPI(title="palpal-conductor", lifespan=lifespan)
 
 @app.get("/worker/jobs/next", tags=["worker"])
 async def worker_next_job(_key: str = Depends(verify_worker_key)):
-    """Atomically claim the next pending transcription job. Returns 204 if none."""
+    """Atomically claim the next pending transcription job. Returns 204 if none.
+
+    Also reclaims jobs stuck in 'claimed' for more than 10 minutes (handles worker restarts).
+    """
     pool = db.get_pool()
+
+    # Inline reclaim: if blurb restarted and lost its claimed job, recover it quickly
+    # rather than waiting for the scheduled reclaim (which has a 2-hour threshold).
+    await pool.execute(
+        """
+        UPDATE transcription_jobs
+        SET status = 'pending', claimed_at = NULL
+        WHERE status = 'claimed'
+          AND claimed_at < now() - interval '10 minutes'
+        """
+    )
+
     row = await pool.fetchrow(
         """
         UPDATE transcription_jobs
