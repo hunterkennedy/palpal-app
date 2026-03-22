@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Build and push both images to ghcr.io.
+# Build and push both images to ghcr.io as :latest only.
 # Usage: ./scripts/build-push.sh
-# Prompts for a version, defaulting to a patch increment of the current VERSION.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,19 +22,15 @@ echo "==> Building palpal v${VERSION}..."
 
 docker build \
   --build-arg APP_VERSION="${VERSION}" \
-  -t "${REGISTRY}/palpal-frontend:${VERSION}" \
   -t "${REGISTRY}/palpal-frontend:latest" \
   "${REPO_ROOT}/palpal-frontend"
 
 docker build \
-  -t "${REGISTRY}/palpal-conductor:${VERSION}" \
   -t "${REGISTRY}/palpal-conductor:latest" \
   "${REPO_ROOT}/palpal-conductor"
 
 echo "==> Pushing to ghcr.io..."
-docker push "${REGISTRY}/palpal-frontend:${VERSION}"
 docker push "${REGISTRY}/palpal-frontend:latest"
-docker push "${REGISTRY}/palpal-conductor:${VERSION}"
 docker push "${REGISTRY}/palpal-conductor:latest"
 
-echo "==> Done: ${REGISTRY}/*:${VERSION}"
+echo "==> Done."

@@ -1,0 +1,26 @@
+name: Cleanup untagged GHCR images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete untagged palpal-frontend versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: palpal-frontend
+          package-type: container
+          delete-only-untagged-versions: true
+
+      - name: Delete untagged palpal-conductor versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: palpal-conductor
+          package-type: container
+          delete-only-untagged-versions: true
