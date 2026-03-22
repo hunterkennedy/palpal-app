@@ -48,7 +48,7 @@ async def _check_consecutive_failure(episode_id: str) -> None:
     )
     if row and row["status"] == "failed":
         _consecutive_failures += 1
-        if _consecutive_failures >= 2:
+        if _consecutive_failures >= 5:
             logger.warning("Auto-pausing scheduler after %d consecutive failures", _consecutive_failures)
             await _persist_scheduler_paused(True)
             _scheduler.pause()
