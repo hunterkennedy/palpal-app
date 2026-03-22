@@ -129,45 +129,12 @@ Open `http://localhost:$APP_PORT`. Type something a podcast host said. Get back 
 
 ## Maintenance
 
-### Check pipeline health
+The admin panel shows pipeline health, recent failures, and lets you retry episodes or trigger discovery manually.
+
+For logs:
 
 ```bash
-curl -s http://localhost:8000/admin/status \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
-```
-
-Returns counts by status, recent failures with error messages, and any episodes stuck in `transcribing` for more than 2 hours.
-
-### Diagnose a failure
-
-```bash
-# Check error_message first — it covers most cases
-curl -s http://localhost:8000/admin/status \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq '.recent_failures'
-
-# Grep logs by episode ID for more detail
-docker logs palpal-conductor 2>&1 | grep <episode_id>
-```
-
-### Retry an episode
-
-```bash
-curl -s -X POST http://localhost:8000/admin/episodes/<episode_id>/retry \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
-```
-
-The episode resets to `discovered` and the download worker picks it up on the next cycle.
-
-### Trigger discovery manually
-
-```bash
-# All podcasts
-curl -s -X POST http://localhost:8000/admin/discover \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
-
-# One podcast
-curl -s -X POST "http://localhost:8000/admin/discover?podcast_id=pal" \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
+docker logs -f palpal-conductor
 ```
 
 ### Common failure patterns
@@ -181,26 +148,12 @@ curl -s -X POST "http://localhost:8000/admin/discover?podcast_id=pal" \
 | `process_transcript:` | Bad transcript shape from blurb | Check blurb output format; may need a blurb fix |
 | `no file found matching` | yt-dlp ran but produced no output | Run yt-dlp manually against the video URL |
 
-### Other useful commands
-
-```bash
-# Live logs
-docker logs -f palpal-conductor
-
-# Episode counts by status
-docker compose exec postgres psql -U palpal -d palpal \
-  -c "SELECT status, COUNT(*) FROM episodes GROUP BY status ORDER BY status;"
-
-# Pending transcription jobs (waiting for blurb worker)
-docker compose exec postgres psql -U palpal -d palpal \
-  -c "SELECT status, COUNT(*) FROM transcription_jobs GROUP BY status;"
-```
-
 ---
 
 ## Updating
 
 ```bash
+git pull
 docker compose up -d --build
 ```
 

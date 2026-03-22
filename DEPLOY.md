@@ -12,7 +12,7 @@ VPS (palpal.app via Cloudflare tunnel, port 3001)
   └─ postgres          (internal Docker network only)
 
 Local PC (GPU)
-  └─ palpal-blurb  →  https://palpal.app/api/worker/...
+  └─ blurb  →  https://palpal.app/api/worker/...
 ```
 
 Blurb connects outbound to the frontend's worker proxy (`/api/worker/*`), which forwards to conductor over the internal Docker network. Conductor is never publicly exposed.
@@ -21,68 +21,31 @@ Blurb connects outbound to the frontend's worker proxy (`/api/worker/*`), which 
 
 ## One-time setup
 
-### 1. Create a ghcr.io personal access token
+### 1. Create ghcr.io personal access tokens
 
-In GitHub: **Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+In GitHub: **Settings → Developer settings → Personal access tokens → Tokens (classic)**
 
-Scopes needed: `write:packages`, `read:packages`, `delete:packages`
+Create two tokens:
 
-Save it — you'll need it on the dev machine and the VPS.
+- **Dev machine token**: `write:packages`, `read:packages`, `delete:packages`
+- **VPS token**: `read:packages` only
 
 ### 2. Log in on the dev machine
 
 ```bash
-echo "<your-token>" | docker login ghcr.io -u <your-github-username> --password-stdin
+echo "<your-token>" | docker login ghcr.io -u hunterkennedy --password-stdin
 ```
 
-### 3. Export your GitHub username
+### 3. Set up the VPS
 
-Add to your shell profile (`~/.bashrc` or `~/.zshrc`):
-
-```bash
-export GHCR_USER=your-github-username
-```
-
----
-
-## VPS setup
-
-### 1. Install Docker
-
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-# log out and back in
-```
-
-### 2. Log in to ghcr.io
-
-```bash
-echo "<your-token>" | docker login ghcr.io -u <your-github-username> --password-stdin
-```
-
-### 3. Create the deploy directory
-
-```bash
-sudo mkdir -p /opt/palpal /opt/palpal-audio
-sudo chown $USER:$USER /opt/palpal /opt/palpal-audio
-```
-
-### 4. Copy files to the VPS
-
-From your dev machine:
+The VPS only needs two files in `/opt/palpal/`:
 
 ```bash
 scp docker-compose.prod.yml user@yourserver.com:/opt/palpal/
 scp .env.example user@yourserver.com:/opt/palpal/.env
 ```
 
-### 5. Edit the env file
-
-```bash
-ssh user@yourserver.com
-nano /opt/palpal/.env
-```
+Then SSH in and fill out the `.env`:
 
 | Variable | Notes |
 |---|---|
@@ -93,25 +56,18 @@ nano /opt/palpal/.env
 | `ADMIN_SESSION_TOKEN` | Long random string (session cookie value) |
 | `BLURB_API_KEY` | Shared with blurb — same value on both sides |
 | `AUDIO_HOST_PATH` | Host path for audio storage (default `/opt/palpal-audio`) |
-| `GHCR_USER` | Your GitHub username |
 
-### 6. Start everything
+Log in to ghcr.io on the VPS using the read-only token:
+
+```bash
+echo "<vps-token>" | docker login ghcr.io -u hunterkennedy --password-stdin
+```
+
+Start everything:
 
 ```bash
 cd /opt/palpal
 docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml logs -f
-```
-
-### 7. Set up the Cloudflare tunnel
-
-Install `cloudflared`, authenticate, and create a tunnel pointing `palpal.app` at `http://localhost:3001`. Use `cloudflared.yml.example` as your config template.
-
-```bash
-cloudflared tunnel login
-cloudflared tunnel create palpal
-# edit cloudflared.yml.example, then:
-cloudflared tunnel run palpal
 ```
 
 ---
@@ -126,42 +82,31 @@ BLURB_API_KEY=<shared secret — must match VPS BLURB_API_KEY>
 POLL_INTERVAL=5
 ```
 
-No Cloudflare Access service tokens needed. The worker proxy at `/api/worker/*` validates the `BLURB_API_KEY` directly.
-
 ---
 
 ## Building and deploying
 
-### Build + push from dev machine
+### Build + push
+
+Run the build script from your dev machine. It will prompt for a version, defaulting to a patch increment:
 
 ```bash
-# Tag defaults to "latest"
 ./scripts/build-push.sh
-
-# Or with an explicit tag
-./scripts/build-push.sh v1.2
+# Version [3.0.1]: <enter to accept or type e.g. 3.1.0>
 ```
+
+Images are tagged with both the version number and `latest`.
 
 ### Deploy
 
-Set SSH target once in your shell profile:
+SSH into the VPS and run:
 
 ```bash
-export CONDUCTOR_SSH=user@yourserver.com
+cd /opt/palpal
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+docker image prune -f
 ```
-
-Then deploy:
-
-```bash
-./scripts/deploy-conductor.sh    # redeploys conductor
-./scripts/deploy-frontend.sh     # redeploys frontend
-
-# Or a specific tag
-./scripts/deploy-conductor.sh v1.2
-./scripts/deploy-frontend.sh v1.2
-```
-
-Each script SSHes into the VPS, pulls the new image, restarts the container, and prunes old images.
 
 ---
 
