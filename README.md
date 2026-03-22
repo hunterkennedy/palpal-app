@@ -10,7 +10,7 @@
 
 palpal is a self-hosted podcast search engine. Every episode gets downloaded, transcribed, chunked, and indexed. You type a phrase, you get back the clip — with a link to the timestamp.
 
-The whole stack lives here: database, pipeline, transcription coordination, and frontend. The only thing outside Docker is [palpal-blurb](https://github.com/hunterkennedy/blurb), a Whisper transcription service designed to run on GPU hardware you already have — a gaming PC, a home server, anything with a decent card. Blurb connects outbound to conductor to pick up work; it doesn't need to be reachable from the outside.
+The whole stack lives here: database, pipeline, transcription coordination, and frontend. The only thing outside Docker is [blurb](https://github.com/hunterkennedy/blurb), a Whisper transcription service designed to run on GPU hardware you already have — a gaming PC, a home server, anything with a decent card. Blurb connects outbound to conductor to pick up work; it doesn't need to be reachable from the outside.
 
 ---
 
@@ -24,7 +24,7 @@ YouTube playlist/channel
         │
         │  (pull — blurb connects outbound, claims jobs, posts results back)
         │
-  palpal-blurb              transcribes audio on your GPU hardware
+  blurb              transcribes audio on your GPU hardware
         │
         ▼
   palpal-conductor          receives transcript, chunks it, writes to postgres
@@ -43,7 +43,7 @@ Everything in the pipeline is automatic once configured. A persistent download w
 ## Prerequisites
 
 - **Docker + Docker Compose**
-- **[palpal-blurb](https://github.com/hunterkennedy/blurb)** running somewhere with a GPU. Blurb connects *outbound* to conductor to claim transcription jobs — no inbound ports or firewall rules needed on the blurb side. Configure blurb with `CONDUCTOR_URL` pointing at your conductor and the same `BLURB_API_KEY` set on both sides.
+- **[blurb](https://github.com/hunterkennedy/blurb)** running somewhere with a GPU. Blurb connects *outbound* to conductor to claim transcription jobs — no inbound ports or firewall rules needed on the blurb side. Configure blurb with `CONDUCTOR_URL` pointing at your conductor and the same `BLURB_API_KEY` set on both sides.
 
 ---
 
