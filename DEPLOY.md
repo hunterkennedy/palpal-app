@@ -1,21 +1,21 @@
 # Deployment Guide
 
-Split deployment: conductor + postgres on one server, frontend on a cheap VPS. Images are built locally and distributed via GitHub Container Registry (ghcr.io).
+Single-server deployment. Frontend, conductor, and postgres all run together on one VPS. Images are built locally and distributed via GitHub Container Registry (ghcr.io).
 
 ```
 Dev machine
   └─ build + push → ghcr.io
 
-Conductor server (api.palpal.app via Cloudflare tunnel)
-  ├─ postgres
-  └─ palpal-conductor
-
-Frontend VPS (palpal.app via Cloudflare tunnel)
-  └─ palpal-frontend  →  https://api.palpal.app
+VPS (palpal.app via Cloudflare tunnel, port 3001)
+  ├─ palpal-frontend   (public, port 3001)
+  ├─ palpal-conductor  (internal Docker network only)
+  └─ postgres          (internal Docker network only)
 
 Local PC (GPU)
-  └─ palpal-blurb  ←  polled by conductor at https://api.palpal.app
+  └─ palpal-blurb  →  https://palpal.app/api/worker/...
 ```
+
+Blurb connects outbound to the frontend's worker proxy (`/api/worker/*`), which forwards to conductor over the internal Docker network. Conductor is never publicly exposed.
 
 ---
 
@@ -27,7 +27,7 @@ In GitHub: **Settings → Developer settings → Personal access tokens → Fine
 
 Scopes needed: `write:packages`, `read:packages`, `delete:packages`
 
-Save it — you'll need it for the dev machine and both servers.
+Save it — you'll need it on the dev machine and the VPS.
 
 ### 2. Log in on the dev machine
 
@@ -45,7 +45,7 @@ export GHCR_USER=your-github-username
 
 ---
 
-## Conductor server setup
+## VPS setup
 
 ### 1. Install Docker
 
@@ -64,18 +64,17 @@ echo "<your-token>" | docker login ghcr.io -u <your-github-username> --password-
 ### 3. Create the deploy directory
 
 ```bash
-sudo mkdir -p /opt/palpal
-sudo chown $USER:$USER /opt/palpal
-mkdir -p /opt/palpal-audio   # or wherever you want audio stored
+sudo mkdir -p /opt/palpal /opt/palpal-audio
+sudo chown $USER:$USER /opt/palpal /opt/palpal-audio
 ```
 
-### 4. Copy files to the server
+### 4. Copy files to the VPS
 
 From your dev machine:
 
 ```bash
-scp docker-compose.conductor.yml user@yourserver.com:/opt/palpal/
-scp .env.conductor.example user@yourserver.com:/opt/palpal/.env
+scp docker-compose.prod.yml user@yourserver.com:/opt/palpal/
+scp .env.example user@yourserver.com:/opt/palpal/.env
 ```
 
 ### 5. Edit the env file
@@ -85,108 +84,49 @@ ssh user@yourserver.com
 nano /opt/palpal/.env
 ```
 
-Fill in the values (see `.env.conductor.example` for all variables):
-
 | Variable | Notes |
 |---|---|
 | `POSTGRES_PASSWORD` | Strong random password |
 | `DATABASE_URL` | Update password to match |
 | `CONDUCTOR_ADMIN_KEY` | Strong random secret |
+| `ADMIN_PASSWORD` | Password for the `/admin` login page |
+| `ADMIN_SESSION_TOKEN` | Long random string (session cookie value) |
 | `BLURB_API_KEY` | Shared with blurb — same value on both sides |
-| `BLURB_URL` | Network address of your GPU machine, e.g. `http://192.168.1.x:8001` |
-| `AUDIO_HOST_PATH` | Host path for audio storage, e.g. `/opt/palpal-audio` |
+| `AUDIO_HOST_PATH` | Host path for audio storage (default `/opt/palpal-audio`) |
 | `GHCR_USER` | Your GitHub username |
 
-### 6. Start postgres + conductor
+### 6. Start everything
 
 ```bash
 cd /opt/palpal
-docker compose -f docker-compose.conductor.yml up -d
-docker compose -f docker-compose.conductor.yml logs -f palpal-conductor
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml logs -f
 ```
 
 ### 7. Set up the Cloudflare tunnel
 
-Install and authenticate `cloudflared`, then use `cloudflared.yml.example` as your tunnel config. The key section blocks admin routes from the public internet:
+Install `cloudflared`, authenticate, and create a tunnel pointing `palpal.app` at `http://localhost:3001`. Use `cloudflared.yml.example` as your config template.
 
-```yaml
-ingress:
-  - hostname: api.palpal.app
-    path: ^/admin
-    service: http_status:403
-  - hostname: api.palpal.app
-    service: http://localhost:8000
-  - service: http_status:404
+```bash
+cloudflared tunnel login
+cloudflared tunnel create palpal
+# edit cloudflared.yml.example, then:
+cloudflared tunnel run palpal
 ```
-
-Any request to `api.palpal.app/admin/*` returns 403. Admin operations are done locally — see [Admin access](#admin-access) below.
 
 ---
 
-## Frontend VPS setup
+## Blurb worker setup
 
-### 1. Install Docker
-
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-```
-
-### 2. Log in to ghcr.io
-
-```bash
-echo "<your-token>" | docker login ghcr.io -u <your-github-username> --password-stdin
-```
-
-### 3. Create the deploy directory
-
-```bash
-sudo mkdir -p /opt/palpal
-sudo chown $USER:$USER /opt/palpal
-```
-
-### 4. Copy files to the VPS
-
-From your dev machine:
-
-```bash
-scp docker-compose.frontend.yml user@vps.com:/opt/palpal/
-scp .env.frontend.example user@vps.com:/opt/palpal/.env
-```
-
-### 5. Edit the env file
-
-```bash
-ssh user@vps.com
-nano /opt/palpal/.env
-```
-
-| Variable | Value |
-|---|---|
-| `CONDUCTOR_URL` | `https://api.palpal.app` |
-| `CONDUCTOR_ADMIN_KEY` | Same value as on the conductor server |
-| `GHCR_USER` | Your GitHub username |
-
-### 6. Start the frontend
-
-```bash
-cd /opt/palpal
-docker compose -f docker-compose.frontend.yml up -d
-```
-
-### 7. Set up the Cloudflare tunnel
-
-Point it at `http://localhost:3001` (or whatever `APP_PORT` is). No path restrictions needed here.
-
----
-
-## Update blurb
-
-Conductor polls blurb for job status. In your blurb config, set the API key:
+Blurb runs on your GPU machine and polls conductor for jobs via the frontend proxy. In blurb's `.env`:
 
 ```
-BLURB_API_KEY=<shared secret>
+CONDUCTOR_URL=https://palpal.app
+BLURB_API_KEY=<shared secret — must match VPS BLURB_API_KEY>
+POLL_INTERVAL=5
 ```
+
+No Cloudflare Access service tokens needed. The worker proxy at `/api/worker/*` validates the `BLURB_API_KEY` directly.
 
 ---
 
@@ -204,66 +144,39 @@ BLURB_API_KEY=<shared secret>
 
 ### Deploy
 
-Set SSH targets once in your shell profile:
+Set SSH target once in your shell profile:
 
 ```bash
 export CONDUCTOR_SSH=user@yourserver.com
-export FRONTEND_SSH=user@vps.com
 ```
 
 Then deploy:
 
 ```bash
-# Deploy both
-./scripts/deploy-conductor.sh
-./scripts/deploy-frontend.sh
+./scripts/deploy-conductor.sh    # redeploys conductor
+./scripts/deploy-frontend.sh     # redeploys frontend
 
 # Or a specific tag
 ./scripts/deploy-conductor.sh v1.2
 ./scripts/deploy-frontend.sh v1.2
 ```
 
-Each deploy script SSHes into the server, pulls the new image, restarts the container, and prunes old images.
+Each script SSHes into the VPS, pulls the new image, restarts the container, and prunes old images.
 
 ---
 
 ## Admin access
 
-Admin routes (`/admin/*`) are blocked at the Cloudflare tunnel. To use them, forward the conductor port over SSH:
-
-```bash
-ssh -L 8000:localhost:8000 user@yourserver.com
-```
-
-Then in another terminal, hit the admin API normally:
-
-```bash
-# Pipeline status
-curl -s http://localhost:8000/admin/status \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
-
-# Trigger discovery
-curl -s -X POST http://localhost:8000/admin/discover \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
-
-# Retry a failed episode
-curl -s -X POST http://localhost:8000/admin/episodes/<id>/retry \
-  -H "Authorization: Bearer <CONDUCTOR_ADMIN_KEY>" | jq
-```
-
-The frontend admin panel (`/admin`) won't work remotely — it calls conductor's admin routes which are blocked. Use the SSH tunnel + curl above instead.
+The admin panel is at `https://palpal.app/admin`. Log in with `ADMIN_PASSWORD`. All admin API calls are proxied server-side through the frontend to conductor — `CONDUCTOR_ADMIN_KEY` never reaches the browser.
 
 ---
 
 ## Verify the deployment
 
 ```bash
-# Conductor health (public)
-curl https://api.palpal.app/health
-
-# Frontend (should load the search UI)
+# Frontend health
 curl -I https://palpal.app
 
-# Admin blocked (should return 403)
-curl -I https://api.palpal.app/admin/status
+# Conductor health (via frontend proxy)
+curl https://palpal.app/api/health
 ```
