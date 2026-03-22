@@ -16,6 +16,7 @@ jobs:
         with:
           package-name: palpal-frontend
           package-type: container
+          owner: hunterkennedy
           delete-only-untagged-versions: true
 
       - name: Delete untagged palpal-conductor versions
@@ -23,4 +24,5 @@ jobs:
         with:
           package-name: palpal-conductor
           package-type: container
+          owner: hunterkennedy
           delete-only-untagged-versions: true
