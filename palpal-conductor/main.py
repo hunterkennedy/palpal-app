@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse
 
 import uvicorn
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, status
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
 
 import db
@@ -60,28 +60,46 @@ app = FastAPI(title="palpal-conductor", lifespan=lifespan)
 # --------------------------------------------------------------------------- #
 
 @app.get("/worker/jobs/next", tags=["worker"])
-async def worker_next_job(_key: str = Depends(verify_worker_key)):
+async def worker_next_job(
+    _key: str = Depends(verify_worker_key),
+    x_worker_id: str | None = Header(default=None),
+):
     """Atomically claim the next pending transcription job. Returns 204 if none.
 
-    Also reclaims jobs stuck in 'claimed' for more than 10 minutes (handles worker restarts).
+    If X-Worker-ID is supplied and that worker already has a claimed job, the job
+    is reset to pending and immediately returned — transparently recovering from
+    dropped connections without waiting for the scheduled reclaim.
+
+    Falls back to a 10-minute time-based reclaim for workers without an ID.
     """
     pool = db.get_pool()
 
-    # Inline reclaim: if blurb restarted and lost its claimed job, recover it quickly
-    # rather than waiting for the scheduled reclaim (which has a 2-hour threshold).
-    await pool.execute(
-        """
-        UPDATE transcription_jobs
-        SET status = 'pending', claimed_at = NULL
-        WHERE status = 'claimed'
-          AND claimed_at < now() - interval '10 minutes'
-        """
-    )
+    if x_worker_id:
+        # If this worker already has a claimed job, something went wrong on its
+        # last attempt. Reset it to pending so we can hand it straight back.
+        await pool.execute(
+            """
+            UPDATE transcription_jobs
+            SET status = 'pending', claimed_at = NULL, claimed_by_worker = NULL
+            WHERE status = 'claimed' AND claimed_by_worker = $1
+            """,
+            x_worker_id,
+        )
+    else:
+        # Fallback: time-based reclaim for workers that don't send an ID.
+        await pool.execute(
+            """
+            UPDATE transcription_jobs
+            SET status = 'pending', claimed_at = NULL, claimed_by_worker = NULL
+            WHERE status = 'claimed'
+              AND claimed_at < now() - interval '10 minutes'
+            """
+        )
 
     row = await pool.fetchrow(
         """
         UPDATE transcription_jobs
-        SET status = 'claimed', claimed_at = now()
+        SET status = 'claimed', claimed_at = now(), claimed_by_worker = $1
         WHERE id = (
             SELECT id FROM transcription_jobs
             WHERE status = 'pending'
@@ -90,7 +108,8 @@ async def worker_next_job(_key: str = Depends(verify_worker_key)):
             FOR UPDATE SKIP LOCKED
         )
         RETURNING id::text, episode_id::text, audio_path
-        """
+        """,
+        x_worker_id,
     )
     if not row:
         return Response(status_code=204)
