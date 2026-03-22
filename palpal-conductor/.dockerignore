@@ -1,0 +1,21 @@
+# Dev environment
+.env*
+.venv/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Docker files (not needed inside the image)
+Dockerfile
+.dockerignore

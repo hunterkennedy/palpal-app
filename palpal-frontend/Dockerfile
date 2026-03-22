@@ -14,7 +14,7 @@ FROM base AS builder
 WORKDIR /app
 
 # Accept build-time arguments
-ARG NEXT_TELEMETRY_DISABLED
+ARG NEXT_TELEMETRY_DISABLED=1
 ARG APP_VERSION=dev
 
 # Set environment variables for build
