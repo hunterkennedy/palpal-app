@@ -31,6 +31,7 @@ services:
       - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_SESSION_TOKEN=${ADMIN_SESSION_TOKEN}
+      - BLURB_API_KEY=${BLURB_API_KEY}
     ports:
       - "127.0.0.1:${APP_PORT}:${APP_PORT}"
     depends_on:
@@ -50,14 +51,14 @@ services:
     container_name: palpal-conductor
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - BLURB_URL=${BLURB_URL}
       - BLURB_API_KEY=${BLURB_API_KEY}
+      - AUDIO_PATH=/audio
       - PORT=${CONDUCTOR_PORT}
       - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
     ports:
       - "127.0.0.1:${CONDUCTOR_PORT}:${CONDUCTOR_PORT}"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${AUDIO_HOST_PATH}:/audio:z
     depends_on:
       postgres:
         condition: service_healthy

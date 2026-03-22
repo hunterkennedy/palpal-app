@@ -7,6 +7,9 @@ services:
       - PORT=${APP_PORT}
       - NODE_ENV=production
       - CONDUCTOR_URL=${CONDUCTOR_URL}
+      - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_SESSION_TOKEN=${ADMIN_SESSION_TOKEN}
     ports:
       - "127.0.0.1:${APP_PORT}:${APP_PORT}"
     healthcheck:
