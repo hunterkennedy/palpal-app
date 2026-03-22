@@ -19,6 +19,7 @@ jobs:
           package-type: container
           owner: hunterkennedy
           delete-only-untagged-versions: true
+          token: ${{ secrets.PACKAGES_TOKEN }}
 
       - name: Delete untagged palpal-conductor versions
         uses: actions/delete-package-versions@v5
@@ -27,3 +28,4 @@ jobs:
           package-type: container
           owner: hunterkennedy
           delete-only-untagged-versions: true
+          token: ${{ secrets.PACKAGES_TOKEN }}
