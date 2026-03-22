@@ -71,7 +71,6 @@ async def download_audio(episode_id: str) -> str:
         "-x",
         "--audio-format", "best",
         "-f", "bestaudio/best",
-        "--extractor-args", "youtube:player_client=ios",
         "--print", "upload_date",
         "--no-simulate",
         "-o", output_template,

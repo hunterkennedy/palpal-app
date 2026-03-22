@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install ffmpeg static binary (smaller than apt ffmpeg)
-RUN apt-get update && apt-get install -y --no-install-recommends xz-utils wget \
+RUN apt-get update && apt-get install -y --no-install-recommends xz-utils wget nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
     && tar -xf ffmpeg-release-amd64-static.tar.xz \
