@@ -101,7 +101,12 @@ async def download_audio(episode_id: str) -> str:
         stderr=asyncio.subprocess.PIPE,
     )
 
-    stdout_bytes, stderr_bytes = await proc.communicate()
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=3600)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise RuntimeError(f"yt-dlp download timed out after 1 hour for {video_id}")
 
     if cookie_file:
         try:

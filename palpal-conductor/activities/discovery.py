@@ -101,7 +101,12 @@ async def fetch_channel_icon(podcast_id: str, source_url: str) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_bytes, _ = await proc.communicate()
+        try:
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return
         if proc.returncode != 0 or not stdout_bytes:
             return
 
@@ -175,7 +180,12 @@ async def discover_youtube_source(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout_bytes, stderr_bytes = await proc.communicate()
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=300)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise RuntimeError(f"yt-dlp flat-playlist timed out after 5 minutes for {url}")
     if proc.returncode != 0:
         raise RuntimeError(
             f"yt-dlp failed for {url}: {stderr_bytes.decode()[:500]}"

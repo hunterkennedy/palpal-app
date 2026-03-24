@@ -30,6 +30,7 @@ async def init_pool() -> None:
         min_size=int(os.environ.get("DB_POOL_MIN", 4)),
         max_size=int(os.environ.get("DB_POOL_MAX", 20)),
         init=_init_conn,
+        max_inactive_connection_lifetime=300,  # recycle idle connections every 5 min
     )
 
 

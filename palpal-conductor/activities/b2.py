@@ -17,6 +17,7 @@ import logging
 import os
 
 import boto3
+from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ def _get_client():
             endpoint_url=os.environ["B2_ENDPOINT_URL"],
             aws_access_key_id=os.environ["B2_KEY_ID"],
             aws_secret_access_key=os.environ["B2_APP_KEY"],
+            config=BotocoreConfig(connect_timeout=10, read_timeout=120, retries={"max_attempts": 2}),
         )
     return _client
 

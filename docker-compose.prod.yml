@@ -36,7 +36,7 @@ services:
     depends_on:
       - palpal-conductor
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${APP_PORT:-3001}/ > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${APP_PORT:-3001}/ > /dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5

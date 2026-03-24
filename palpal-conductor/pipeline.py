@@ -263,15 +263,15 @@ async def transcribe_worker() -> None:
                             break
 
                 result_row = await pool.fetchrow(
-                    "SELECT status, result, error FROM transcription_jobs WHERE id=$1::uuid", job_id
+                    "SELECT status, result::text AS result_text, error FROM transcription_jobs WHERE id=$1::uuid", job_id
                 )
                 if not result_row or result_row["status"] != "completed":
                     error = (result_row["error"] if result_row else None) or "transcription job missing or failed"
                     raise Exception(error)
 
-                transcript = result_row["result"]
-                if isinstance(transcript, str):
-                    transcript = json.loads(transcript)
+                # Parse the transcript JSON in a thread to avoid blocking the event loop
+                # (large transcripts can be 5-10 MB; json.loads on the event loop causes connect timeouts)
+                transcript = await asyncio.to_thread(json.loads, result_row["result_text"])
 
             except asyncio.CancelledError:
                 raise

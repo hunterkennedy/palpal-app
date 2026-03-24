@@ -163,12 +163,17 @@ async def worker_audio(episode_id: str, _key: str = Depends(verify_worker_key)):
 
 
 @app.post("/worker/jobs/{job_id}/complete", tags=["worker"])
-async def worker_complete(job_id: str, body: dict, _key: str = Depends(verify_worker_key)):
+async def worker_complete(job_id: str, request: Request, _key: str = Depends(verify_worker_key)):
     """
     Receive a transcript from a worker and wake the waiting pipeline coroutine.
     Body: {language, segments} — same shape blurb returns.
     Processing (chunking, DB writes) happens inside episode_pipeline, not here.
+
+    We accept the raw request body and pass the JSON string directly to postgres
+    to avoid blocking the event loop with json.loads + json.dumps on large transcripts.
     """
+    raw_body = await request.body()
+    result_json = raw_body.decode("utf-8")
     pool = db.get_pool()
     row = await pool.fetchrow(
         """
@@ -177,7 +182,7 @@ async def worker_complete(job_id: str, body: dict, _key: str = Depends(verify_wo
         WHERE id = $2::uuid AND status = 'claimed'
         RETURNING episode_id::text
         """,
-        json.dumps(body), job_id,
+        result_json, job_id,
     )
     if not row:
         # Job was cancelled or reset (e.g. conductor restarted mid-transcription).
@@ -1124,6 +1129,10 @@ async def delete_whats_new(entry_id: int):
 
 @app.get("/health", tags=["meta"])
 async def health():
+    try:
+        await asyncio.wait_for(db.get_pool().fetchval("SELECT 1"), timeout=3.0)
+    except Exception:
+        raise HTTPException(status_code=503, detail="db unavailable")
     return {"status": "ok"}
 
 
