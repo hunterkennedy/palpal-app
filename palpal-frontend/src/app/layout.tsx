@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ClientWrapper from "@/components/ClientWrapper";
+import KofiWidgets from "@/components/KofiWidgets";
 import { Suspense } from "react";
 
 const inter = Inter({
@@ -28,6 +29,7 @@ export default async function RootLayout({
         className={`${inter.variable} antialiased`}
         suppressHydrationWarning
       >
+        <KofiWidgets />
         <ErrorBoundary>
           <ClientWrapper>
             <Suspense fallback={<div>Loading...</div>}>

@@ -162,6 +162,21 @@ export default function AboutPage() {
           </div>
         </section>
 
+        {/* Ko-fi Support */}
+        <section>
+          <div className="card-primary">
+            <h2 className="heading-secondary">Support palpal</h2>
+            <p className="text-body mb-6">If you find palpal useful, consider buying me a coffee!</p>
+            <iframe
+              id="kofiframe"
+              src="https://ko-fi.com/hunterkennedysoftware/?hidefeed=true&widget=true&embed=true&preview=true"
+              style={{ border: 'none', width: '100%', borderRadius: '8px' }}
+              height="712"
+              title="Support on Ko-fi"
+            />
+          </div>
+        </section>
+
         {/* Contact Section */}
         <section>
           <div className="card-elevated" style={{background: 'linear-gradient(to right, rgba(251, 146, 60, 0.1), rgba(249, 115, 22, 0.1))', borderColor: 'var(--border-accent)'}}>

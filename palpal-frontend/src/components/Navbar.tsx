@@ -1,6 +1,5 @@
 "use client";
 
-import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Search, Info, Heart, Tv2, Newspaper } from 'lucide-react';
@@ -77,6 +76,16 @@ export default function Navbar({ currentPage }: NavbarProps) {
             <Info className="w-4 h-4 mr-2" />
             About
           </Link>
+          <a
+            href="https://ko-fi.com/hunterkennedysoftware"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 btn-secondary nav-pill px-6 py-3 transition-all duration-300 shadow-lg"
+            aria-label="Support on Ko-fi"
+          >
+            <Image src="/kofi_symbol.png" alt="Ko-fi" width={16} height={16} className="w-4 h-4 mr-2" />
+            Ko-fi
+          </a>
         </div>
 
         {/* Mobile Layout - Icon Only */}
@@ -116,6 +125,15 @@ export default function Navbar({ currentPage }: NavbarProps) {
           >
             <Info className="w-4 h-4" />
           </Link>
+          <a
+            href="https://ko-fi.com/hunterkennedysoftware"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center btn-secondary nav-pill px-3 py-2.5 transition-all duration-300 shadow-lg"
+            aria-label="Support on Ko-fi"
+          >
+            <Image src="/kofi_symbol.png" alt="Ko-fi" width={16} height={16} className="w-4 h-4" />
+          </a>
         </div>
       </nav>
     </div>
