@@ -94,6 +94,7 @@ async def fetch_channel_icon(podcast_id: str, source_url: str) -> None:
             "--flat-playlist",
             "--playlist-items", "0",
             "--remote-components", "ejs:github",
+            "--cache-dir", "/tmp/yt-dlp-cache",
             source_url,
         ]
         proc = await asyncio.create_subprocess_exec(
@@ -168,6 +169,7 @@ async def discover_youtube_source(
         "--dump-json",
         "--no-warnings",
         "--remote-components", "ejs:github",
+        "--cache-dir", "/tmp/yt-dlp-cache",
         url,
     ]
     proc = await asyncio.create_subprocess_exec(

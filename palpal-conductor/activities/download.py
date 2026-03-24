@@ -79,6 +79,7 @@ async def download_audio(episode_id: str) -> str:
         "--no-simulate",
         "--js-runtimes", "node",
         "--remote-components", "ejs:github",
+        "--cache-dir", "/tmp/yt-dlp-cache",
         "-o", output_template,
     ]
 
