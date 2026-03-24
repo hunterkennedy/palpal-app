@@ -28,6 +28,7 @@ from pipeline import (
     get_scheduler_status, pause_scheduler, resume_scheduler,
     recover_interrupted_downloads,
 )
+from activities.b2 import delete_transcript as b2_delete_transcript
 from activities.process import process_transcript
 
 logging.basicConfig(
@@ -411,9 +412,11 @@ async def retry_episode(episode_id: str):
 async def delete_episode(episode_id: str):
     """Hard-delete an episode and all associated data (transcript, chunks)."""
     pool = db.get_pool()
-    result = await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
-    if result == "DELETE 0":
+    row = await pool.fetchrow("SELECT id FROM episodes WHERE id = $1::uuid", episode_id)
+    if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
+    await b2_delete_transcript(episode_id)
+    await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
     return {"status": "deleted", "episode_id": episode_id}
 
 
@@ -462,11 +465,10 @@ async def retranscribe_episode(episode_id: str):
             episode_id,
         )
 
-    await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
-    await pool.execute("DELETE FROM transcripts WHERE episode_id = $1::uuid", episode_id)
     await pool.execute(
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
     )
+    await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
     wakeup_worker()
     return {"status": "retranscribing", "episode_id": episode_id}
 
@@ -503,14 +505,15 @@ async def rechunk_all_episodes(
 
     async def _rechunk(episode_id: str) -> None:
         async with sem:
-            row = await pool.fetchrow(
-                "SELECT language, segments FROM transcripts WHERE episode_id = $1::uuid",
-                episode_id,
-            )
-            if not row:
-                return
-            transcript = {"language": row["language"], "segments": row["segments"]}
-            await process_transcript(episode_id, transcript, target_words=target_words)
+            try:
+                from activities.b2 import download_transcript as b2_download_transcript
+                transcript = await b2_download_transcript(episode_id)
+                if not transcript:
+                    logger.warning("rechunk: no transcript in B2 for episode %s, skipping", episode_id)
+                    return
+                await process_transcript(episode_id, transcript, target_words=target_words)
+            except Exception as exc:
+                logger.error("rechunk failed for episode %s: %s", episode_id, exc)
 
     for row in rows:
         asyncio.create_task(_rechunk(row["id"]))
@@ -606,6 +609,7 @@ async def bulk_episode_action(body: BulkActionRequest):
                 wakeup_worker()
 
             elif body.action == "delete":
+                await b2_delete_transcript(episode_id)
                 await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
 
             elif body.action == "blacklist":
@@ -624,11 +628,10 @@ async def bulk_episode_action(body: BulkActionRequest):
                         "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
                         episode_id,
                     )
-                await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
-                await pool.execute("DELETE FROM transcripts WHERE episode_id = $1::uuid", episode_id)
                 await pool.execute(
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
                 )
+                await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
                 wakeup_worker()
 
             results.append({"id": episode_id, "ok": True})

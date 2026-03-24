@@ -1,6 +1,7 @@
 import logging
 
 import db
+from activities.b2 import upload_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -100,21 +101,10 @@ async def process_transcript(episode_id: str, transcript: dict, target_words: in
         f"Episode {episode_id}: {len(segments)} segments → {len(chunks)} chunks (target_words={target_words})"
     )
 
+    await upload_transcript(episode_id, transcript)
+
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                """
-                INSERT INTO transcripts (episode_id, language, segments)
-                VALUES ($1::uuid, $2, $3::jsonb)
-                ON CONFLICT (episode_id) DO UPDATE
-                    SET language = EXCLUDED.language,
-                        segments = EXCLUDED.segments
-                """,
-                episode_id,
-                transcript.get("language"),
-                transcript.get("segments", []),
-            )
-
             await conn.execute(
                 "DELETE FROM transcript_chunks WHERE episode_id = $1::uuid",
                 episode_id,
