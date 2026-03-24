@@ -10,7 +10,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# nodejs required at runtime for yt-dlp JS extraction (--js-runtimes node)
+# nodejs required at runtime for yt-dlp JS/EJS challenge solving (--js-runtimes node)
 RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
