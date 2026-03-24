@@ -53,7 +53,6 @@ Then SSH in and fill out the `.env`:
 | `DATABASE_URL` | Update password to match |
 | `CONDUCTOR_ADMIN_KEY` | Strong random secret |
 | `ADMIN_PASSWORD` | Password for the `/admin` login page |
-| `ADMIN_SESSION_TOKEN` | Long random string (session cookie value) |
 | `BLURB_API_KEY` | Shared with blurb — same value on both sides |
 | `AUDIO_HOST_PATH` | Host path for audio storage (default `/opt/palpal-audio`) |
 

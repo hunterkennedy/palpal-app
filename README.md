@@ -64,7 +64,6 @@ Edit `.env`:
 | `AUDIO_HOST_PATH` | Host directory where downloaded audio is staged before transcription (e.g. `/home/you/palpal-audio`) |
 | `APP_PORT` | Port the frontend listens on (default `3001`) |
 | `ADMIN_PASSWORD` | Password for the admin panel login page |
-| `ADMIN_SESSION_TOKEN` | Long random string used as the session cookie value — generate with `openssl rand -hex 32` |
 
 Create the audio directory before starting:
 
