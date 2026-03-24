@@ -12,17 +12,14 @@ type SiteFilter = 'all' | 'youtube' | 'patreon';
 type SortColumn = 'date' | 'title' | 'duration';
 type SortDir = 'asc' | 'desc';
 
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '—';
-  try {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  } catch {
-    return '—';
-  }
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '—';
+  const [, year, month, day] = m;
+  return `${MONTHS_SHORT[parseInt(month) - 1]} ${parseInt(day)}, ${year}`;
 }
 
 function formatDuration(seconds: number | null): string {

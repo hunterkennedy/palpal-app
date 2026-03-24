@@ -12,7 +12,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import Image from 'next/image';
-import DOMPurify from 'dompurify';
+import DOMPurify from 'isomorphic-dompurify';
 import { SearchHit } from '@/types';
 import { PodcastConfig } from '@/types/podcast';
 import { getWatchUrl, getWatchText, isPatreonSource } from '@/lib/chunk-utils';

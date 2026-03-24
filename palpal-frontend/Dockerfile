@@ -55,4 +55,4 @@ EXPOSE 3000
 # PORT and HOSTNAME will be set via env_file
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+CMD ["node", "server.js", "--keepAliveTimeout", "110000"]
