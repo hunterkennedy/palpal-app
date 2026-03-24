@@ -498,8 +498,7 @@ async def start_scheduler() -> None:
         return now + timedelta(**delta_kwargs)
 
     _scheduler.add_job(
-        scheduled_discovery, "interval", hours=24, id="discovery",
-        next_run_time=_next_run("last_discovery_run", hours=24),
+        scheduled_discovery, "cron", hour="0,6,12,18", minute=0, id="discovery", timezone="America/Los_Angeles",
     )
     _scheduler.add_job(
         reclaim_stuck_jobs, "interval", minutes=30, id="reclaim",
@@ -511,7 +510,7 @@ async def start_scheduler() -> None:
         _scheduler.pause()
         logger.info("Scheduler started in paused state (restored from DB)")
     else:
-        logger.info("Scheduler started (discovery every 24h, reclaim every 30min)")
+        logger.info("Scheduler started (discovery every 6h, reclaim every 30min)")
 
 
 def stop_scheduler() -> None:
