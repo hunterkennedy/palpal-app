@@ -59,6 +59,10 @@ services:
       - BLURB_API_KEY=${BLURB_API_KEY}
       - PORT=${CONDUCTOR_PORT}
       - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
+      - B2_ENDPOINT_URL=${B2_ENDPOINT_URL}
+      - B2_KEY_ID=${B2_KEY_ID}
+      - B2_APP_KEY=${B2_APP_KEY}
+      - B2_BUCKET=${B2_BUCKET}
     ports:
       - "127.0.0.1:${CONDUCTOR_PORT}:${CONDUCTOR_PORT}"
     extra_hosts:

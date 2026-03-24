@@ -78,6 +78,7 @@ async def download_audio(episode_id: str) -> str:
         "--print", "upload_date",
         "--no-simulate",
         "--js-runtimes", "node",
+        "--remote-components", "ejs:github",
         "-o", output_template,
     ]
 
