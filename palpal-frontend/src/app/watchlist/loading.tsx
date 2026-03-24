@@ -1,11 +1,12 @@
+import React from 'react';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 
-function Skeleton({ className }: { className?: string }) {
+function Skeleton({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
     <div
       className={`animate-pulse rounded-lg ${className ?? ''}`}
-      style={{ backgroundColor: 'var(--surface-secondary)' }}
+      style={{ backgroundColor: 'var(--surface-secondary)', ...style }}
     />
   );
 }
