@@ -1,4 +1,4 @@
-export const dynamic = 'force-dynamic';
+export const revalidate = 21600; // 6h
 
 import Navbar from '@/components/Navbar';
 import WatchlistPage from '@/components/WatchlistPage';

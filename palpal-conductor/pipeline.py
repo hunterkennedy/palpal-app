@@ -153,7 +153,7 @@ async def download_worker() -> None:
             except EpisodeTooShortError as exc:
                 logger.info(f"Episode {episode_id} too short, blacklisting: {exc}")
                 await pool.execute(
-                    "UPDATE episodes SET status='discovered', blacklisted=TRUE, error_message=$1 WHERE id=$2::uuid",
+                    "UPDATE episodes SET status='blacklisted', blacklisted=TRUE, error_message=$1 WHERE id=$2::uuid",
                     str(exc), episode_id,
                 )
                 continue

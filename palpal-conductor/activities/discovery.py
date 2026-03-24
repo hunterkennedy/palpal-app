@@ -260,8 +260,8 @@ async def discover_youtube_source(
         )
         row = await pool.fetchrow(
             """
-            INSERT INTO episodes (source_id, video_id, title, publication_date, duration_seconds, blacklisted, error_message)
-            VALUES ($1::uuid, $2, $3, $4::date, $5, $6, $7)
+            INSERT INTO episodes (source_id, video_id, title, publication_date, duration_seconds, blacklisted, error_message, status)
+            VALUES ($1::uuid, $2, $3, $4::date, $5, $6, $7, CASE WHEN $6 THEN 'blacklisted' ELSE 'discovered' END)
             ON CONFLICT (source_id, video_id) DO NOTHING
             RETURNING id::text
             """,
@@ -301,6 +301,7 @@ async def discover_youtube_source(
                 """
                 UPDATE episodes
                 SET blacklisted     = TRUE,
+                    status          = 'blacklisted',
                     error_message   = 'Auto-blacklisted: duration too short',
                     updated_at      = NOW()
                 WHERE source_id     = $1::uuid

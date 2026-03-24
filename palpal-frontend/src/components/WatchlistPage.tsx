@@ -148,9 +148,12 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
     list = [...list].sort((a, b) => {
       let cmp = 0;
       if (sortCol === 'date') {
-        const da = a.publication_date ?? '';
-        const db = b.publication_date ?? '';
-        cmp = da < db ? -1 : da > db ? 1 : 0;
+        const da = a.publication_date;
+        const db = b.publication_date;
+        if (!da && !db) cmp = 0;
+        else if (!da) return 1;
+        else if (!db) return -1;
+        else cmp = da < db ? -1 : da > db ? 1 : 0;
       } else if (sortCol === 'title') {
         cmp = a.title.localeCompare(b.title);
       } else if (sortCol === 'duration') {

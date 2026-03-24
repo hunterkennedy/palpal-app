@@ -85,7 +85,7 @@ export interface EpisodeInfo {
 }
 
 export async function getEpisodes(): Promise<EpisodeInfo[]> {
-  const res = await fetch(`${getConductorUrl()}/episodes`, { next: { revalidate: 300 } });
+  const res = await fetch(`${getConductorUrl()}/episodes`, { next: { revalidate: 21600 } });
   if (!res.ok) throw new Error(`Conductor /episodes error: ${res.status}`);
   return res.json();
 }
@@ -112,7 +112,7 @@ export interface ConductorPodcast {
 }
 
 export async function getPodcasts(): Promise<ConductorPodcast[]> {
-  const res = await fetch(`${getConductorUrl()}/podcasts`, { next: { revalidate: 300 } });
+  const res = await fetch(`${getConductorUrl()}/podcasts`, { next: { revalidate: 21600 } });
   if (!res.ok) throw new Error(`Conductor /podcasts error: ${res.status}`);
   return res.json();
 }

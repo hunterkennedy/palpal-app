@@ -9,7 +9,7 @@ export async function GET(
   const conductorUrl = process.env.CONDUCTOR_URL;
 
   try {
-    const response = await fetch(`${conductorUrl}/podcasts/${id}/image`);
+    const response = await fetch(`${conductorUrl}/podcasts/${id}/image`, { next: { revalidate: 21600 } });
 
     if (!response.ok) {
       return new NextResponse(null, { status: 404 });

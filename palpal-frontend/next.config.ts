@@ -28,11 +28,11 @@ const nextConfig: NextConfig = {
         key: 'Content-Security-Policy',
         value: `
           default-src 'self';
-          script-src 'self' 'unsafe-inline' 'unsafe-eval' https://storage.ko-fi.com;
+          script-src 'self' 'unsafe-inline' 'unsafe-eval';
           style-src 'self' 'unsafe-inline' fonts.googleapis.com;
           img-src 'self' data: https: blob:;
           font-src 'self' data: fonts.gstatic.com;
-          connect-src 'self' https://www.youtube.com https://patreon.com https://www.twitch.tv https://ko-fi.com https://storage.ko-fi.com;
+          connect-src 'self' https://www.youtube.com https://patreon.com https://www.twitch.tv https://ko-fi.com;
           frame-src https://www.youtube.com https://ko-fi.com;
           object-src 'none';
           base-uri 'self';

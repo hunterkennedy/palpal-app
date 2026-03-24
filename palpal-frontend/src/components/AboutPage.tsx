@@ -1,6 +1,7 @@
 'use client';
 
 import { Github } from 'lucide-react';
+import Image from 'next/image';
 
 const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? 'contact@palpal.app';
 
@@ -167,13 +168,11 @@ export default function AboutPage() {
           <div className="card-primary">
             <h2 className="heading-secondary">Support palpal</h2>
             <p className="text-body mb-6">If you find palpal useful, consider buying me a coffee!</p>
-            <iframe
-              id="kofiframe"
-              src="https://ko-fi.com/hunterkennedysoftware/?hidefeed=true&widget=true&embed=true&preview=true"
-              style={{ border: 'none', width: '100%', borderRadius: '8px' }}
-              height="712"
-              title="Support on Ko-fi"
-            />
+            <div className="flex justify-center">
+              <a href="https://ko-fi.com/hunterkennedysoftware" target="_blank" rel="noopener noreferrer">
+                <Image src="/support_me_on_kofi_badge_red.png" alt="Support me on Ko-fi" width={223} height={60} />
+              </a>
+            </div>
           </div>
         </section>
 
