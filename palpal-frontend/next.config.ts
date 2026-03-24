@@ -30,9 +30,9 @@ const nextConfig: NextConfig = {
         value: `
           default-src 'self';
           script-src 'self' 'unsafe-inline' 'unsafe-eval';
-          style-src 'self' 'unsafe-inline' fonts.googleapis.com;
+          style-src 'self' 'unsafe-inline';
           img-src 'self' data: https: blob:;
-          font-src 'self' data: fonts.gstatic.com;
+          font-src 'self' data:;
           connect-src 'self' https://www.youtube.com https://patreon.com https://www.twitch.tv https://ko-fi.com;
           frame-src https://www.youtube.com https://ko-fi.com;
           object-src 'none';

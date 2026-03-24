@@ -1,5 +1,3 @@
-export const dynamic = 'force-dynamic';
-
 import Navbar from '@/components/Navbar';
 import WatchlistPage from '@/components/WatchlistPage';
 import { getEpisodes, getPodcasts } from '@/lib/conductor';
