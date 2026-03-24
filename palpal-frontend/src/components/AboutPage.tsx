@@ -23,17 +23,16 @@ export default function AboutPage() {
             <h2 className="heading-secondary">The Story</h2>
             <div className="text-body space-y-4">
               <p>
-                Welcome to palpal, the podcast search engine!
-              </p>
-              <p> This site was originally made as a search engine for Podcast About List (i.e. PAL-pal).
-                I really wanted to find a bit where Pierce was talking about roasting marshmallows, and expressing frustration in people that burn them for fun.
-                Something about smores, or marshmallows, or more dexterity, or something along those lines. It wasn't easy to find clips or transcripts for PAL,
-                so I kind of just gave up.
+                palpal started as a search engine for Podcast About List — hence PAL-pal. I really wanted to find a bit where Pierce was talking about roasting marshmallows, and his frustration with people who burn them on purpose. Something about s'mores, marshmallows, dexterity — I couldn't pin it down. It wasn't easy to find clips or transcripts for PAL, so I kind of just gave up.
               </p>
               <p>
-                But eventually I thought, "I could probably just made some script to search, or a search site" and that's how this was born!
-                I have created a pipeline to download, transcribe, and process transcripts from podcasts and push them to this app. Originally, the only podcasts supported were
-                Pod About List and Joe Box, but now it supports a wide array of pods.
+                Eventually I thought, "I could probably just make a script to search this." That turned into a pipeline to download, transcribe, and index podcast audio — and that turned into this site. It started with just Pod About List and Joe Box, but now supports a wide array of pods.
+              </p>
+              <p>
+                The site outgrew its original setup pretty quickly. MeiliSearch was the only search backend — a dedicated search engine that had to be kept in sync with everything else. It worked, but it was one more thing to run and one more thing to break. Eventually I realized Postgres could do it all with full-text search built in, so MeiliSearch got the axe and the stack got a lot simpler.
+              </p>
+              <p>
+                The pipeline went through a similar evolution. What started as a loose collection of scripts became palpal-conductor — a little FastAPI app that manages discovery, downloading, and transcription in a queue. The original scripts were so fragile they eventually just broke, and starting fresh was easier. It also meant the whole thing could finally run on a VPS instead of just my machine.
               </p>
             </div>
           </div>
