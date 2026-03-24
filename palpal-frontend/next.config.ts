@@ -7,9 +7,10 @@ const nextConfig: NextConfig = {
 
   experimental: {
     optimizeCss: true,
-    turbo: {
-      rules: {},
-    },
+  },
+
+  turbopack: {
+    rules: {},
   },
 
   images: {

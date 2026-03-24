@@ -364,7 +364,6 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                         <tbody>
                           {filteredSortedEpisodes.map((ep, i) => {
                             const isEpWatched = watched.has(ep.video_id);
-                            const isLast = i === filteredSortedEpisodes.length - 1;
                             return (
                               <tr
                                 key={ep.id}

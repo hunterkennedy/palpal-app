@@ -66,7 +66,6 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
         [chunkId]: { ...prev[chunkId], loading: false, failed: true },
       }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleToggleContext = (chunkId: string) => {

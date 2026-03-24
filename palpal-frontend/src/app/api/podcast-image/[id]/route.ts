@@ -9,7 +9,7 @@ export async function GET(
   const conductorUrl = process.env.CONDUCTOR_URL;
 
   try {
-    const response = await fetch(`${conductorUrl}/podcasts/${id}/image`, { next: { revalidate: 21600 } });
+    const response = await fetch(`${conductorUrl}/podcasts/${id}/image`, { cache: 'no-store' });
 
     if (!response.ok) {
       return new NextResponse(null, { status: 404 });
@@ -24,6 +24,7 @@ export async function GET(
     return new NextResponse(compressed as unknown as BodyInit, {
       headers: {
         'Content-Type': 'image/webp',
+        'Content-Length': String(compressed.byteLength),
         'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
       },
     });

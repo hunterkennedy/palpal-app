@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPodcasts } from '@/lib/conductor';
 
-export async function GET(_request: NextRequest) {
+export async function GET() {
   try {
     const raw = await getPodcasts();
 

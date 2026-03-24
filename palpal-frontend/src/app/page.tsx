@@ -150,7 +150,7 @@ export default function Home() {
     // Update URL without triggering a Next.js re-render
     const newURL = url.pathname + (url.search ? url.search : '');
     window.history.replaceState(null, '', newURL);
-  }, [router, enabledPodcastIds]);
+  }, [enabledPodcastIds]);
 
   // Rotate placeholder text every 5.5 seconds
   useEffect(() => {

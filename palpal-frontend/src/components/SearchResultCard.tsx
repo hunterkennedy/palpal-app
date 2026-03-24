@@ -12,7 +12,10 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import Image from 'next/image';
-import DOMPurify from 'isomorphic-dompurify';
+// Strip all tags except <mark> (data is from our own ts_headline, no external input)
+function sanitizeHighlight(html: string): string {
+  return html.replace(/<(?!\/?mark\s*>)[^>]*>/gi, '');
+}
 import { SearchHit } from '@/types';
 import { PodcastConfig } from '@/types/podcast';
 import { getWatchUrl, getWatchText, isPatreonSource } from '@/lib/chunk-utils';
@@ -138,10 +141,7 @@ export default function SearchResultCard({
             id={`result-${groupKey}-${index}-title`}
             className="heading-secondary [&_mark]:bg-orange-500 [&_mark]:text-white [&_mark]:px-1 [&_mark]:rounded"
             dangerouslySetInnerHTML={{
-              __html: DOMPurify.sanitize(hit.title_highlighted, {
-                ALLOWED_TAGS: ['mark'],
-                ALLOWED_ATTR: [],
-              }),
+              __html: sanitizeHighlight(hit.title_highlighted),
             }}
           />
         ) : (
@@ -189,10 +189,7 @@ export default function SearchResultCard({
               id={`result-${groupKey}-${index}-content`}
               className="text-body leading-relaxed [&_mark]:bg-orange-500 [&_mark]:text-white [&_mark]:px-1 [&_mark]:rounded"
               dangerouslySetInnerHTML={{
-                __html: DOMPurify.sanitize(hit.text_highlighted, {
-                  ALLOWED_TAGS: ['mark'],
-                  ALLOWED_ATTR: [],
-                }),
+                __html: sanitizeHighlight(hit.text_highlighted),
               }}
             />
           ) : (
