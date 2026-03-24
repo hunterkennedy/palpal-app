@@ -72,16 +72,22 @@ export async function GET(request: NextRequest) {
 
 export async function OPTIONS(request: NextRequest) {
   const origin = request.headers.get('origin');
+
+  // No origin header means a non-browser request — no CORS response needed
+  if (!origin) {
+    return new NextResponse(null, { status: 204 });
+  }
+
   const allowedOrigins = process.env.NODE_ENV === 'production'
-    ? [process.env.ALLOWED_ORIGINS?.split(',') || []].flat()
+    ? (process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) ?? [])
     : ['http://localhost:3000', 'http://localhost:3001'];
 
-  const isAllowedOrigin = !origin || allowedOrigins.includes(origin);
+  const isAllowedOrigin = allowedOrigins.length === 0 || allowedOrigins.includes(origin);
 
   return new NextResponse(null, {
     status: 200,
     headers: {
-      'Access-Control-Allow-Origin': isAllowedOrigin ? (origin || '*') : 'null',
+      'Access-Control-Allow-Origin': isAllowedOrigin ? origin : 'null',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, X-Requested-With',
       'Access-Control-Max-Age': '86400',

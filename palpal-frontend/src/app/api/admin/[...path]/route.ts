@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { verifySessionToken } from '@/lib/session';
 
 const CONDUCTOR_URL = process.env.CONDUCTOR_URL!;
 const ADMIN_KEY     = process.env.CONDUCTOR_ADMIN_KEY!;
 async function proxy(request: NextRequest, path: string[]) {
   const session = (await cookies()).get('palpal_admin_session');
-  if (!session || session.value !== process.env.ADMIN_PASSWORD) {
+  if (!session || !verifySessionToken(session.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

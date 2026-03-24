@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { makeSessionToken } from '@/lib/session';
 
 async function loginAction(formData: FormData) {
   'use server';
@@ -7,7 +8,7 @@ async function loginAction(formData: FormData) {
   if (!password || password !== process.env.ADMIN_PASSWORD) {
     redirect('/admin/login?error=1');
   }
-  (await cookies()).set('palpal_admin_session', process.env.ADMIN_PASSWORD!, {
+  (await cookies()).set('palpal_admin_session', makeSessionToken(), {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',

@@ -60,7 +60,7 @@ export default function Navbar({ currentPage }: NavbarProps) {
             className={`${getButtonClasses('watchlist')} nav-pill px-6 py-3 transition-all duration-300 shadow-lg`}
           >
             <Tv2 className="w-4 h-4 mr-2" />
-            Episodes
+            Watchlist
           </Link>
           <Link
             href="/about"
@@ -100,7 +100,7 @@ export default function Navbar({ currentPage }: NavbarProps) {
           <Link
             href="/watchlist"
             className={`${getButtonClasses('watchlist')} nav-pill px-3 py-2.5 transition-all duration-300 shadow-lg`}
-            aria-label="Episodes"
+            aria-label="Watchlist"
           >
             <Tv2 className="w-4 h-4" />
           </Link>

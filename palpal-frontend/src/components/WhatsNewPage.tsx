@@ -1,3 +1,4 @@
+import sanitizeHtml from 'sanitize-html';
 import type { WhatsNewEntry } from '@/lib/conductor';
 
 interface WhatsNewPageProps {
@@ -31,7 +32,7 @@ export default function WhatsNewPage({ entries }: WhatsNewPageProps) {
                 <div className="text-meta mb-3">{formatDate(entry.posted_at)}</div>
                 <div
                   className="text-body"
-                  dangerouslySetInnerHTML={{ __html: entry.content }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(entry.content) }}
                 />
               </div>
             </section>
