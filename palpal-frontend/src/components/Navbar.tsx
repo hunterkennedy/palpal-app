@@ -26,8 +26,8 @@ export default function Navbar({ currentPage }: NavbarProps) {
         <Image
           src={currentPage === 'search' ? '/favicon.ico' : '/title.png'}
           alt="palpal"
-          width={currentPage === 'search' ? 32 : 80}
-          height={currentPage === 'search' ? 32 : 40}
+          width={currentPage === 'search' ? 256 : 2427}
+          height={currentPage === 'search' ? 256 : 1371}
           className={`drop-shadow-lg ${
             currentPage === 'search'
               ? 'w-5 h-5 md:w-8 md:h-8 mx-auto'
@@ -76,7 +76,7 @@ export default function Navbar({ currentPage }: NavbarProps) {
             className="flex items-center gap-2 btn-secondary nav-pill px-6 py-3 transition-all duration-300 shadow-lg"
             aria-label="Support on Ko-fi"
           >
-            <Image src="/kofi_symbol.png" alt="Ko-fi" width={16} height={16} className="w-4 h-4 mr-2" />
+            <Image src="/kofi_symbol.png" alt="Ko-fi" width={321} height={258} className="h-4 w-auto mr-2" />
             Ko-fi
           </a>
         </div>

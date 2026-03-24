@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse
 
 import uvicorn
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response
 
 import db
@@ -38,8 +38,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class _HealthFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "GET /health" not in record.getMessage()
+
+
+class _AdminLiveFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "GET /admin/live" not in record.getMessage()
+
+
+class _SearchFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "GET /search" not in record.getMessage()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Attach after uvicorn has initialised its own logging
+    _access_logger = logging.getLogger("uvicorn.access")
+    _access_logger.addFilter(_HealthFilter())
+    _access_logger.addFilter(_AdminLiveFilter())
+    _access_logger.addFilter(_SearchFilter())
+    # Ensure timestamps appear and formatting is consistent regardless of how uvicorn was invoked
+    from uvicorn.logging import AccessFormatter, DefaultFormatter
+    _access_fmt = "%(asctime)s %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+    _default_fmt = "%(asctime)s %(levelprefix)s %(message)s"
+    for _h in _access_logger.handlers:
+        _h.setFormatter(AccessFormatter(_access_fmt))
+    for _h in logging.getLogger().handlers:
+        _h.setFormatter(DefaultFormatter(_default_fmt))
+
     await db.init_pool()
     logger.info("DB pool initialised")
     await run_migrations()
@@ -870,11 +899,14 @@ async def admin_delete_source(source_id: str):
 
 @app.get("/search", tags=["search"], response_model=SearchResponse)
 async def search(
+    request: Request,
     q: str = Query(..., description="Full-text search query"),
     podcast_id: str | None = Query(None, description="Filter to a single podcast ID"),
     page: int = Query(1, ge=1, le=1000, description="Page number (1-based)"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
 ) -> SearchResponse:
+    client_ip = request.headers.get("x-forwarded-for") or (request.client.host if request.client else "unknown")
+    logger.info("search q=%r podcast_id=%r page=%d ip=%s", q, podcast_id, page, client_ip)
     order_clause = "ts_rank(tc.search_vector, query) DESC"
 
     pool = db.get_pool()
@@ -1101,4 +1133,8 @@ async def health():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
+    import copy
+    log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    log_config["formatters"]["access"]["fmt"] = "%(asctime)s %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+    log_config["formatters"]["default"]["fmt"] = "%(asctime)s %(levelprefix)s %(message)s"
+    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info", log_config=log_config)

@@ -536,10 +536,29 @@ function toast(msg, ok = true) {
 // ---------------------------------------------------------------------------
 // Init & refresh
 // ---------------------------------------------------------------------------
+let _liveInterval = null;
+let _refreshInterval = null;
+
+function startPolling() {
+  if (_liveInterval) return;
+  _liveInterval = setInterval(() => doLiveRefresh(), 1000);
+  _refreshInterval = setInterval(() => doRefresh(true), 30000);
+}
+
+function stopPolling() {
+  clearInterval(_liveInterval);
+  clearInterval(_refreshInterval);
+  _liveInterval = null;
+  _refreshInterval = null;
+}
+
 async function init() {
   await Promise.all([doRefresh(false), doLiveRefresh()]);
-  setInterval(() => doLiveRefresh(), 1000);
-  setInterval(() => doRefresh(true), 30000);
+  startPolling();
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopPolling();
+    else { doLiveRefresh(); startPolling(); }
+  });
 }
 
 let _liveRefreshing = false;

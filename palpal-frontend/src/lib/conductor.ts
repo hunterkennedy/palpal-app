@@ -45,14 +45,17 @@ export interface ConductorChunk {
   title_highlighted?: string;
 }
 
-export async function searchChunks(params: ConductorSearchParams): Promise<ConductorSearchResponse> {
+export async function searchChunks(params: ConductorSearchParams, clientIp?: string): Promise<ConductorSearchResponse> {
   const qs = new URLSearchParams();
   qs.set('q', params.q);
   if (params.podcast_id) qs.set('podcast_id', params.podcast_id);
   if (params.page != null) qs.set('page', String(params.page));
   if (params.page_size != null) qs.set('page_size', String(params.page_size));
 
-  const res = await fetch(`${getConductorUrl()}/search?${qs.toString()}`, { next: { revalidate: 300 } });
+  const headers: Record<string, string> = {};
+  if (clientIp) headers['X-Forwarded-For'] = clientIp;
+
+  const res = await fetch(`${getConductorUrl()}/search?${qs.toString()}`, { next: { revalidate: 300 }, headers });
   if (!res.ok) {
     throw new Error(`Conductor /search error: ${res.status}`);
   }

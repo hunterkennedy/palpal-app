@@ -3,6 +3,11 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: palpal-postgres
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -27,6 +32,11 @@ services:
       dockerfile: Dockerfile
       args:
         - NEXT_TELEMETRY_DISABLED=${NEXT_TELEMETRY_DISABLED}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     container_name: palpal-frontend
     environment:
       - PORT=${APP_PORT}
@@ -52,6 +62,11 @@ services:
     build:
       context: ./palpal-conductor
       dockerfile: Dockerfile
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     container_name: palpal-conductor
     environment:
       - DATABASE_URL=${DATABASE_URL}

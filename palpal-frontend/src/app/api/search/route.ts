@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
       podcast_id: rawPodcastId || undefined,
       page,
       page_size: limit,
-    });
+    }, ip);
 
     // Normalize to the shape page.tsx already expects
     return NextResponse.json(
