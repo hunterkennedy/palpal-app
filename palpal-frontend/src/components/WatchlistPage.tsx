@@ -173,7 +173,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
   }, [podcastEpisodes, filter, siteFilter, watched, sortCol, sortDir]);
 
   const thClass =
-    'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider select-none cursor-pointer group';
+    'px-2 sm:px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider select-none cursor-pointer group';
   const thStyle = { color: 'var(--text-muted)', borderBottom: '1px solid var(--border-primary)' };
 
   return (
@@ -181,28 +181,30 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
       {/* Page Header */}
       <div className="mb-12">
         <h1 className="heading-primary">Episodes</h1>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <p className="text-xl text-body">
             {totalWatched} episode{totalWatched !== 1 ? 's' : ''} watched across all podcasts
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {importMsg && (
               <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{importMsg}</span>
             )}
             <button
               onClick={handleExport}
               disabled={watched.size === 0}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-3 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Export watched"
             >
               <Download className="w-4 h-4" />
-              Export
+              <span className="hidden sm:inline">Export</span>
             </button>
             <label
               htmlFor="watchlist-import"
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced cursor-pointer"
+              className="flex items-center gap-2 px-3 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 pill-enhanced cursor-pointer"
+              aria-label="Import watched"
             >
               <Upload className="w-4 h-4" />
-              Import
+              <span className="hidden sm:inline">Import</span>
             </label>
             <input
               id="watchlist-import"
@@ -214,10 +216,11 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
             {totalWatched > 0 && (
               <button
                 onClick={handleClearAll}
-                className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 text-gray-200 hover:bg-red-500/10 hover:text-red-300"
+                className="flex items-center gap-2 px-3 py-2.5 text-sm font-medium rounded-2xl transition-all duration-300 text-gray-200 hover:bg-red-500/10 hover:text-red-300"
+                aria-label="Clear history"
               >
                 <Trash2 className="w-4 h-4" />
-                Clear History
+                <span className="hidden sm:inline">Clear History</span>
               </button>
             )}
           </div>
@@ -291,7 +294,12 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                         filter === f ? 'pill-selected' : 'pill-enhanced'
                       }`}
                     >
-                      {f === 'all' ? `All (${podcastEpisodes.length})` : f === 'unwatched' ? `Unwatched (${podcastEpisodes.length - watchedCount})` : `Watched (${watchedCount})`}
+                      {f === 'all'
+                        ? <><span className="sm:hidden">All</span><span className="hidden sm:inline">All ({podcastEpisodes.length})</span></>
+                        : f === 'unwatched'
+                        ? <><span className="sm:hidden">Unwatched</span><span className="hidden sm:inline">Unwatched ({podcastEpisodes.length - watchedCount})</span></>
+                        : <><span className="sm:hidden">Watched</span><span className="hidden sm:inline">Watched ({watchedCount})</span></>
+                      }
                     </button>
                   ))}
                   {podcastSites.size > 1 && (
@@ -329,7 +337,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                         <thead>
                           <tr style={{ backgroundColor: 'var(--surface-secondary)' }}>
                             {/* Watched toggle col — not sortable */}
-                            <th className="px-4 py-3 w-10" style={thStyle} />
+                            <th className="px-2 sm:px-4 py-3 w-8 sm:w-10" style={thStyle} />
 
                             {/* Title */}
                             <th
@@ -368,7 +376,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                             </th>
 
                             {/* Watch link col — not sortable */}
-                            <th className="px-4 py-3 w-20" style={thStyle} />
+                            <th className="px-2 sm:px-4 py-3 w-10 sm:w-20" style={thStyle} />
                           </tr>
                         </thead>
                         <tbody>
@@ -384,7 +392,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                                 }}
                               >
                                 {/* Checkbox */}
-                                <td className="px-4 py-3">
+                                <td className="px-2 sm:px-4 py-3">
                                   <button
                                     onClick={() => handleToggle(ep.video_id)}
                                     className="flex items-center justify-center transition-transform duration-150 hover:scale-110"
@@ -399,7 +407,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                                 </td>
 
                                 {/* Title */}
-                                <td className="px-4 py-3">
+                                <td className="px-2 sm:px-4 py-3">
                                   <span
                                     className={`font-medium leading-snug ${
                                       isEpWatched ? 'line-through text-gray-500' : 'text-body'
@@ -425,7 +433,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                                 </td>
 
                                 {/* Watch */}
-                                <td className="px-4 py-3">
+                                <td className="px-2 sm:px-4 py-3">
                                   <a
                                     href={getEpisodeUrl(ep)}
                                     target="_blank"
