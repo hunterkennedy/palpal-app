@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
       {
         hits: conductorResult.results,
         estimatedTotalHits: conductorResult.total,
+        correctedQuery: conductorResult.corrected_query ?? null,
       },
       {
         headers: {

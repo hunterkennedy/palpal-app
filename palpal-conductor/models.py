@@ -40,6 +40,7 @@ class SearchResponse(BaseModel):
     page: int
     page_size: int
     results: list[ChunkResult]
+    corrected_query: Optional[str] = None
 
 
 class EpisodeInfo(BaseModel):

@@ -21,6 +21,7 @@ export interface ConductorSearchResponse {
   page: number;
   page_size: number;
   results: ConductorChunk[];
+  corrected_query?: string;
 }
 
 export interface ConductorChunk {

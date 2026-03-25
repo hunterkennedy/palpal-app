@@ -13,6 +13,7 @@ import SearchResultCard from '@/components/SearchResultCard';
 
 interface SearchResultsProps {
   query: string;
+  correctedQuery?: string | null;
   results: SearchHit[];
   totalHits: number;
   error: ErrorState | null;
@@ -27,7 +28,7 @@ interface SearchResultsProps {
 }
 
 
-export default function SearchResults({ query, results, totalHits, error, isSearching, hasSearched, isLoadingMore, hasMore, onLoadMore, refreshSaveStatus, groupBy = 'none', podcasts }: SearchResultsProps) {
+export default function SearchResults({ query, correctedQuery, results, totalHits, error, isSearching, hasSearched, isLoadingMore, hasMore, onLoadMore, refreshSaveStatus, groupBy = 'none', podcasts }: SearchResultsProps) {
   const [savedChunkIds, setSavedChunkIds] = useState<Set<string>>(new Set());
   const [watchedVideoIds, setWatchedVideoIds] = useState<Set<string>>(new Set());
 
@@ -191,8 +192,13 @@ export default function SearchResults({ query, results, totalHits, error, isSear
       aria-live="polite"
       aria-atomic="false"
     >
+      {correctedQuery && (
+        <p className="text-meta" aria-live="polite">
+          Showing results for &ldquo;<em>{correctedQuery}</em>&rdquo;
+        </p>
+      )}
       <p className="text-meta" aria-live="polite">
-        {totalHits >= 1000 ? '1000+' : totalHits} result{totalHits !== 1 ? 's' : ''} for &ldquo;{query}&rdquo;
+        {totalHits >= 1000 ? '1000+' : totalHits} result{totalHits !== 1 ? 's' : ''}{!correctedQuery && <> for &ldquo;{query}&rdquo;</>}
       </p>
 
       <div

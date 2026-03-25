@@ -71,6 +71,7 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const [totalHits, setTotalHits] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [correctedQuery, setCorrectedQuery] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<ErrorState | null>(null);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [selectedPodcasts, setSelectedPodcasts] = useState<string[]>([]);
@@ -310,6 +311,7 @@ export default function Home() {
       } else {
         setSearchResults(results.hits as SearchHit[]);
         setCurrentPage(1);
+        setCorrectedQuery(results.correctedQuery ?? null);
       }
       setTotalHits(results.estimatedTotalHits || 0);
     } catch (err) {
@@ -356,6 +358,7 @@ export default function Home() {
     setTotalHits(0);
     setCurrentPage(1);
     setSearchError(null);
+    setCorrectedQuery(null);
     setIsSearching(false);
     setIsLoadingMore(false);
 
@@ -418,6 +421,7 @@ export default function Home() {
             <SearchResults
               key="search-results"
               query={searchQuery || ''}
+              correctedQuery={correctedQuery}
               results={searchResults}
               totalHits={totalHits}
               error={searchError}

@@ -148,3 +148,18 @@ async def process_transcript(episode_id: str, transcript: dict, target_words: in
     logger.info(
         f"Episode {episode_id}: inserted {len(chunks)} transcript chunks"
     )
+
+    await refresh_word_frequencies()
+
+
+async def refresh_word_frequencies() -> None:
+    """Rebuild word_frequencies from the current search vectors. Called after each episode."""
+    pool = db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("TRUNCATE word_frequencies")
+            await conn.execute("""
+                INSERT INTO word_frequencies (word, ndoc, nentry)
+                SELECT word, ndoc, nentry
+                FROM ts_stat('SELECT search_vector FROM transcript_chunks')
+            """)

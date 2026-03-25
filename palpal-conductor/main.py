@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse
@@ -902,6 +903,54 @@ async def admin_delete_source(source_id: str):
 # Search API                                                                   #
 # --------------------------------------------------------------------------- #
 
+async def correct_query(pool, q: str) -> str | None:
+    """
+    Attempt to correct misspelled words in q against the word_frequencies corpus.
+    Returns a corrected query string, or None if no corrections were needed.
+    Quoted phrases and operators are left untouched.
+    """
+    # Strip quoted phrases before extracting words to correct
+    stripped = re.sub(r'"[^"]*"', '', q)
+    words = list({w.lower() for w in re.findall(r'[a-zA-Z]{3,}', stripped)})
+    if not words:
+        return None
+
+    corrections: dict[str, str] = {}
+    for word in words:
+        # Stem via the English FTS config so "marshmallows" → "marshmallow"
+        # and we check the same representation that's stored in word_frequencies
+        stem = await pool.fetchval(
+            "SELECT lexeme FROM unnest(to_tsvector('english', $1)) LIMIT 1",
+            word,
+        )
+        if not stem:
+            continue
+        if await pool.fetchval("SELECT 1 FROM word_frequencies WHERE word = $1", stem):
+            continue  # word is in corpus, no correction needed
+        # Find closest trigram match, prefer high-frequency words
+        correction = await pool.fetchval(
+            """
+            SELECT word FROM word_frequencies
+            WHERE similarity(word, $1) > 0.45
+            ORDER BY similarity(word, $1) DESC, nentry DESC
+            LIMIT 1
+            """,
+            stem,
+        )
+        if correction:
+            corrections[word] = correction
+
+    if not corrections:
+        return None
+
+    corrected = q
+    for original, replacement in corrections.items():
+        corrected = re.sub(
+            rf'\b{re.escape(original)}\b', replacement, corrected, flags=re.IGNORECASE
+        )
+    return corrected if corrected.lower() != q.lower() else None
+
+
 @app.get("/search", tags=["search"], response_model=SearchResponse)
 async def search(
     request: Request,
@@ -912,11 +961,21 @@ async def search(
 ) -> SearchResponse:
     client_ip = request.headers.get("x-forwarded-for") or (request.client.host if request.client else "unknown")
     logger.info("search q=%r podcast_id=%r page=%d ip=%s", q, podcast_id, page, client_ip)
-    order_clause = "ts_rank(tc.search_vector, query) DESC"
+    # rank * freshness decay: 0.999^days_old (~30% decay after 1 year, ~50% after 2)
+    # NULL publication_date gets no decay (treated as age 0)
+    order_clause = (
+        "ts_rank_cd(tc.search_vector, query, 1)"
+        " * POWER(0.999, GREATEST(0, COALESCE(EXTRACT(DAYS FROM NOW() - tc.publication_date)::float, 0)))"
+        " DESC"
+    )
 
     pool = db.get_pool()
     offset = (page - 1) * page_size
     chunk_target_words = await pipeline_settings.get_int("chunk_target_words") or 50
+
+    # Attempt spell-correction; if corrected query returns results use it instead
+    corrected_query: str | None = await correct_query(pool, q)
+    search_q = corrected_query if corrected_query else q
 
     main_q = f"""
         SELECT
@@ -924,7 +983,7 @@ async def search(
             tc.start_time, tc.end_time, tc.duration, tc.start_formatted,
             tc.start_minutes, tc.word_count, tc.podcast_id, tc.podcast_name,
             tc.source_name, tc.episode_title, tc.video_id, tc.publication_date,
-            ts_rank(tc.search_vector, query) AS rank,
+            ts_rank_cd(tc.search_vector, query, 1) AS rank,
             ts_headline('english', tc.text, query,
                 'StartSel=<mark>, StopSel=</mark>, MaxWords={chunk_target_words}, MinWords={chunk_target_words // 2}, MaxFragments=1'
             ) AS text_highlighted,
@@ -947,8 +1006,8 @@ async def search(
     """
 
     rows, total_row = await asyncio.gather(
-        pool.fetch(main_q, q, podcast_id, page_size, offset),
-        pool.fetchrow(count_q, q, podcast_id),
+        pool.fetch(main_q, search_q, podcast_id, page_size, offset),
+        pool.fetchrow(count_q, search_q, podcast_id),
     )
 
     results = [ChunkResult(**dict(row)) for row in rows]
@@ -957,6 +1016,7 @@ async def search(
         page=page,
         page_size=page_size,
         results=results,
+        corrected_query=corrected_query,
     )
 
 
