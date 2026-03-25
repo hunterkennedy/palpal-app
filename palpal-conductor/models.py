@@ -55,7 +55,6 @@ class EpisodeInfo(BaseModel):
     podcast_name: str
     source_name: str
     site: str
-    chunk_count: int
     duration_seconds: Optional[float]
     youtube_url: str
     created_at: Optional[DateTime] = None

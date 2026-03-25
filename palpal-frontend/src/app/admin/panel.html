@@ -1329,9 +1329,7 @@ function renderEpRow(ep) {
   if (ep.status === 'processed') {
     acts += `<button class="btn btn-purple act" onclick="epAction('retranscribe','${ep.id}')">re-tx</button>`;
   }
-  if (ep.status === 'processed' && ep.chunk_count > 0) {
-    acts += `<span style="color:var(--green);font-size:0.72rem;padding:0 0.15rem">${ep.chunk_count}</span>`;
-  }
+
   acts += `<span class="sep">|</span>`;
   const blCls = ep.blacklisted ? 'btn-orange' : 'btn-ghost';
   acts += `<button class="btn ${blCls} icon-btn" onclick="epAction('${ep.blacklisted ? 'unblacklist' : 'blacklist'}','${ep.id}')" title="${ep.blacklisted ? 'Remove blacklist' : 'Blacklist'}">⊘</button>`;

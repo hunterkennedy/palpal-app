@@ -709,15 +709,11 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
             p.display_name  AS podcast_name,
             s.name          AS source_name,
             s.site,
-            COUNT(tc.id)       AS chunk_count,
-            COALESCE(e.duration_seconds, MAX(tc.end_time)) AS duration_seconds,
+            e.duration_seconds,
             e.created_at
         FROM episodes e
         JOIN sources  s  ON s.id  = e.source_id
         JOIN podcasts p  ON p.id  = s.podcast_id
-        LEFT JOIN transcript_chunks tc ON tc.episode_id = e.id
-        GROUP BY e.id, e.video_id, e.title, e.publication_date, e.status,
-                 e.error_message, e.blacklisted, s.podcast_id, p.display_name, s.name, s.site, e.created_at
         ORDER BY e.publication_date DESC NULLS LAST, e.created_at DESC
         """
     )

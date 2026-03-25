@@ -83,7 +83,6 @@ export interface EpisodeInfo {
   podcast_name: string;
   source_name: string;
   site: string;
-  chunk_count: number;
   duration_seconds: number | null;
   youtube_url: string;
 }
@@ -96,6 +95,7 @@ export async function getEpisodes(): Promise<EpisodeInfo[]> {
   if (!res.ok) throw new Error(`Conductor /episodes error: ${res.status}`);
   return res.json();
 }
+
 
 export async function checkHealth(): Promise<{ status: string }> {
   const res = await fetch(`${getConductorUrl()}/health`);
