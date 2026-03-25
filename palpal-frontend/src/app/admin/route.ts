@@ -3,12 +3,13 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { verifyAdminToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const session = (await cookies()).get('palpal_admin_session');
-  if (session?.value !== process.env.ADMIN_PASSWORD) {
+  if (!session || !(await verifyAdminToken(session.value))) {
     redirect('/admin/login');
   }
   const html = readFileSync(join(process.cwd(), 'src/app/admin/panel.html'), 'utf-8');

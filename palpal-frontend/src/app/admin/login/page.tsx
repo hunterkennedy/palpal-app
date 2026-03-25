@@ -1,22 +1,4 @@
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
-import { makeSessionToken } from '@/lib/session';
-
-async function loginAction(formData: FormData) {
-  'use server';
-  const password = formData.get('password') as string;
-  if (!password || password !== process.env.ADMIN_PASSWORD) {
-    redirect('/admin/login?error=1');
-  }
-  (await cookies()).set('palpal_admin_session', makeSessionToken(), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 60 * 60 * 24 * 7,
-    path: '/',
-  });
-  redirect('/admin');
-}
+import { loginAction } from './actions';
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;
