@@ -118,13 +118,23 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
     }
   };
 
-  const podcastEpisodes = episodes.filter(e => e.podcast_id === selectedPodcastId);
-  const watchedCount = podcastEpisodes.filter(e => watched.has(e.video_id)).length;
-  const totalWatched = episodes.filter(e => watched.has(e.video_id)).length;
-  const progressPct =
-    podcastEpisodes.length > 0
-      ? Math.round((watchedCount / podcastEpisodes.length) * 100)
-      : 0;
+  const podcastEpisodes = useMemo(
+    () => episodes.filter(e => e.podcast_id === selectedPodcastId),
+    [episodes, selectedPodcastId],
+  );
+
+  const watchedCount = useMemo(
+    () => podcastEpisodes.filter(e => watched.has(e.video_id)).length,
+    [podcastEpisodes, watched],
+  );
+  const totalWatched = useMemo(
+    () => episodes.filter(e => watched.has(e.video_id)).length,
+    [episodes, watched],
+  );
+  const progressPct = useMemo(
+    () => podcastEpisodes.length > 0 ? Math.round((watchedCount / podcastEpisodes.length) * 100) : 0,
+    [podcastEpisodes.length, watchedCount],
+  );
 
   const podcastSites = useMemo(
     () => new Set(podcastEpisodes.map(e => e.site)),

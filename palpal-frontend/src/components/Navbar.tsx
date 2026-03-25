@@ -104,6 +104,22 @@ export default function Navbar({ currentPage }: NavbarProps) {
           >
             <Tv2 className="w-4 h-4" />
           </Link>
+          <Link
+            href="/about"
+            className={`${getButtonClasses('about')} nav-pill px-3 py-2.5 transition-all duration-300 shadow-lg`}
+            aria-label="About"
+          >
+            <Info className="w-4 h-4" />
+          </Link>
+          <a
+            href="https://ko-fi.com/hunterkennedysoftware"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 btn-secondary nav-pill px-3 py-2.5 transition-all duration-300 shadow-lg"
+            aria-label="Support on Ko-fi"
+          >
+            <Image src="/kofi_symbol.png" alt="Ko-fi" width={321} height={258} className="h-4 w-auto" />
+          </a>
         </div>
       </nav>
     </div>

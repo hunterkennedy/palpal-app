@@ -1,19 +1,22 @@
 const WATCHED_KEY = 'palpal_watched_episodes';
 
+let _memCache: Set<string> | null = null;
+
 function getWatchedSet(): Set<string> {
   if (typeof window === 'undefined') return new Set();
+  if (_memCache !== null) return _memCache;
   try {
     const stored = localStorage.getItem(WATCHED_KEY);
-    if (!stored) return new Set();
-    const arr = JSON.parse(stored) as string[];
-    return new Set(arr);
+    _memCache = stored ? new Set(JSON.parse(stored) as string[]) : new Set();
+    return _memCache;
   } catch {
-    return new Set();
+    return (_memCache = new Set());
   }
 }
 
 function saveWatchedSet(watched: Set<string>): void {
   if (typeof window === 'undefined') return;
+  _memCache = watched;
   try {
     localStorage.setItem(WATCHED_KEY, JSON.stringify([...watched]));
   } catch (err) {

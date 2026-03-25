@@ -237,8 +237,8 @@ export default function SearchResultCard({
           {hit.id && (
             <button
               onClick={handleToggleContext}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-500 pill-enhanced"
-              style={{ color: 'var(--text-muted)' }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-500 pill-enhanced border"
+              style={{ color: 'var(--text-secondary)', borderColor: 'var(--border-primary)' }}
               aria-label={isExpanded ? 'Hide episode context' : 'Show episode context'}
               aria-expanded={isExpanded}
             >
