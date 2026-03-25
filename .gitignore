@@ -52,6 +52,10 @@ MANIFEST
 venv/
 .venv/
 
+# local docs
+DBBACKUP.md
+DEPLOY.md
+
 # misc
 .DS_Store
 *.pem
