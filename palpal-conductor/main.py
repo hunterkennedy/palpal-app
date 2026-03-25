@@ -178,7 +178,7 @@ async def worker_complete(job_id: str, request: Request, _key: str = Depends(ver
     row = await pool.fetchrow(
         """
         UPDATE transcription_jobs
-        SET status = 'completed', result = $1::jsonb
+        SET status = 'completed', result = $1::text::jsonb
         WHERE id = $2::uuid AND status = 'claimed'
         RETURNING episode_id::text
         """,
