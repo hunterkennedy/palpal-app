@@ -92,7 +92,7 @@ async def fetch_channel_icon(podcast_id: str, source_url: str) -> None:
             "--dump-single-json",
             "--no-warnings",
             "--flat-playlist",
-            "--playlist-items", "0",
+            "-I", ":0",
             "--cache-dir", "/tmp/yt-dlp-cache",
             source_url,
         ]
@@ -111,11 +111,54 @@ async def fetch_channel_icon(podcast_id: str, source_url: str) -> None:
             return
 
         info = json.loads(stdout_bytes.decode())
+
+        # If yt-dlp returned a single video instead of channel/playlist metadata
+        # (--playlist-items 0 was misinterpreted), bail out to avoid storing episode thumbnails.
+        if info.get("_type") == "video":
+            logger.warning(f"fetch_channel_icon got a video instead of channel metadata for {podcast_id}, skipping")
+            return
+
         thumbnails: list[dict] = info.get("thumbnails") or []
 
-        # Prefer avatar_uncropped, then highest preference value
+        # If no avatar_uncropped in thumbnails, the source URL is likely a playlist rather than
+        # a channel page. Re-fetch using the channel URL to get the actual channel avatar.
         avatar = next((t for t in thumbnails if t.get("id") == "avatar_uncropped"), None)
         if not avatar:
+            channel_url = info.get("channel_url") or info.get("uploader_url")
+            if channel_url and channel_url != source_url:
+                cmd2 = [
+                    yt_dlp_path(),
+                    "--dump-single-json",
+                    "--no-warnings",
+                    "--flat-playlist",
+                    "-I", ":0",
+                    "--cache-dir", "/tmp/yt-dlp-cache",
+                    channel_url,
+                ]
+                proc2 = await asyncio.create_subprocess_exec(
+                    *cmd2,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=60)
+                except asyncio.TimeoutError:
+                    proc2.kill()
+                    await proc2.communicate()
+                    return
+                if proc2.returncode == 0 and stdout2:
+                    info2 = json.loads(stdout2.decode())
+                    thumbnails2: list[dict] = info2.get("thumbnails") or []
+                    avatar = next((t for t in thumbnails2 if t.get("id") == "avatar_uncropped"), None)
+                    if not avatar:
+                        avatar = max(
+                            (t for t in thumbnails2 if t.get("url")),
+                            key=lambda t: t.get("preference", 0),
+                            default=None,
+                        )
+
+        if not avatar:
+            # Fall back to highest-preference thumbnail from original fetch
             avatar = max(
                 (t for t in thumbnails if t.get("url")),
                 key=lambda t: t.get("preference", 0),
