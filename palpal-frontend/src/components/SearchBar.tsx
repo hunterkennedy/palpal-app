@@ -81,13 +81,19 @@ export default function SearchBar({
     : null;
 
   const handlePodcastSelect = (podcastId: string) => {
-    const isExclusive = selectedPodcasts.length === 1 && selectedPodcasts[0] === podcastId;
-    onPodcastSelectionChange(isExclusive ? allIds : [podcastId]);
-    setShowPodcastDropdown(false);
+    if (isAllMode) {
+      onPodcastSelectionChange([podcastId]);
+    } else {
+      const isSelected = selectedPodcasts.includes(podcastId);
+      const newSelection = isSelected
+        ? selectedPodcasts.filter(id => id !== podcastId)
+        : [...selectedPodcasts, podcastId];
+      onPodcastSelectionChange(newSelection);
+    }
   };
 
   const handleAllSelect = () => {
-    onPodcastSelectionChange(allIds);
+    onPodcastSelectionChange([]);
     setShowPodcastDropdown(false);
   };
 
@@ -331,6 +337,7 @@ export default function SearchBar({
 
             <div style={{ height: '1px', background: 'var(--border-secondary)' }} />
 
+            <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
             {enabledPodcasts.map((podcast, i) => {
               const isSelected = !isAllMode && selectedPodcasts.includes(podcast.id);
               return (
@@ -371,6 +378,7 @@ export default function SearchBar({
                 </React.Fragment>
               );
             })}
+            </div>
           </div>
         )}
       </div>
