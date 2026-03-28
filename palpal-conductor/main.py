@@ -981,7 +981,7 @@ async def search(
             tc.source_name, tc.episode_title, tc.video_id, tc.publication_date,
             ts_rank_cd(tc.search_vector, query, 1) AS rank,
             ts_headline('english', tc.text, query,
-                'StartSel=<mark>, StopSel=</mark>, MaxWords={chunk_target_words}, MinWords={chunk_target_words // 2}, MaxFragments=1'
+                'StartSel=<mark>, StopSel=</mark>, HighlightAll=true'
             ) AS text_highlighted,
             ts_headline('english', tc.episode_title, query,
                 'StartSel=<mark>, StopSel=</mark>'
