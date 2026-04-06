@@ -1,4 +1,4 @@
-FROM node:18-alpine AS base
+FROM node:22-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -54,5 +54,6 @@ EXPOSE 3000
 
 # PORT and HOSTNAME will be set via env_file
 ENV HOSTNAME="0.0.0.0"
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 
 CMD ["node", "server.js", "--keepAliveTimeout", "110000"]
