@@ -17,11 +17,13 @@ async function proxy(request: NextRequest, path: string[]) {
     : await request.arrayBuffer();
 
   const contentType = request.headers.get('Content-Type');
+  const workerId = request.headers.get('X-Worker-ID');
   const res = await fetch(upstream, {
     method: request.method,
     headers: {
       'X-API-Key': BLURB_API_KEY,
       ...(contentType ? { 'Content-Type': contentType } : {}),
+      ...(workerId ? { 'X-Worker-ID': workerId } : {}),
     },
     body: body ? body : undefined,
   });

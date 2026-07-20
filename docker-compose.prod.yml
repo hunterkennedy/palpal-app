@@ -1,7 +1,7 @@
 services:
 
   postgres:
-    image: postgres:16-alpine
+    image: docker.io/library/postgres:16-alpine
     container_name: palpal-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -52,7 +52,6 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - BLURB_API_KEY=${BLURB_API_KEY}
-      - AUDIO_PATH=/audio
       - PORT=${CONDUCTOR_PORT}
       - CONDUCTOR_ADMIN_KEY=${CONDUCTOR_ADMIN_KEY}
       - B2_ENDPOINT_URL=${B2_ENDPOINT_URL}
@@ -61,8 +60,6 @@ services:
       - B2_BUCKET=${B2_BUCKET}
     ports:
       - "127.0.0.1:${CONDUCTOR_PORT}:${CONDUCTOR_PORT}"
-    volumes:
-      - ${AUDIO_HOST_PATH}:/audio:z
     depends_on:
       postgres:
         condition: service_healthy

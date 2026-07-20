@@ -9,10 +9,11 @@ from urllib.parse import parse_qs, urlparse
 
 import uvicorn
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 
 import db
 import pipeline_settings
+import worker_status
 from db_migrations import run_migrations
 from auth import verify_admin_token, verify_worker_key
 from models import (
@@ -24,10 +25,12 @@ from models import (
     SearchResponse,
 )
 from pipeline import (
-    run_discovery, wakeup_worker, signal_job_complete,
-    start_scheduler, stop_scheduler, start_download_worker, stop_download_worker,
+    run_discovery, wakeup_worker, cancel_process_job,
+    start_scheduler, stop_scheduler, start_dispatch_worker, stop_dispatch_worker,
     get_scheduler_status, pause_scheduler, resume_scheduler,
     recover_interrupted_downloads,
+    handle_discover_complete, handle_discover_fail,
+    handle_process_complete, handle_process_fail,
 )
 from activities.b2 import delete_transcript as b2_delete_transcript
 from activities.process import process_transcript
@@ -75,9 +78,9 @@ async def lifespan(app: FastAPI):
     await run_migrations()
     await recover_interrupted_downloads()
     await start_scheduler()
-    start_download_worker()
+    start_dispatch_worker()
     yield
-    stop_download_worker()
+    stop_dispatch_worker()
     stop_scheduler()
     await db.close_pool()
     logger.info("Shutdown complete")
@@ -95,7 +98,7 @@ async def worker_next_job(
     _key: str = Depends(verify_worker_key),
     x_worker_id: str | None = Header(default=None),
 ):
-    """Atomically claim the next pending transcription job. Returns 204 if none.
+    """Atomically claim the next pending job (discover or process). Returns 204 if none.
 
     If X-Worker-ID is supplied and that worker already has a claimed job, the job
     is reset to pending and immediately returned — transparently recovering from
@@ -110,7 +113,7 @@ async def worker_next_job(
         # last attempt. Reset it to pending so we can hand it straight back.
         await pool.execute(
             """
-            UPDATE transcription_jobs
+            UPDATE jobs
             SET status = 'pending', claimed_at = NULL, claimed_by_worker = NULL
             WHERE status = 'claimed' AND claimed_by_worker = $1
             """,
@@ -120,7 +123,7 @@ async def worker_next_job(
         # Fallback: time-based reclaim for workers that don't send an ID.
         await pool.execute(
             """
-            UPDATE transcription_jobs
+            UPDATE jobs
             SET status = 'pending', claimed_at = NULL, claimed_by_worker = NULL
             WHERE status = 'claimed'
               AND claimed_at < now() - interval '10 minutes'
@@ -129,92 +132,120 @@ async def worker_next_job(
 
     row = await pool.fetchrow(
         """
-        UPDATE transcription_jobs
+        UPDATE jobs
         SET status = 'claimed', claimed_at = now(), claimed_by_worker = $1
         WHERE id = (
-            SELECT id FROM transcription_jobs
+            SELECT id FROM jobs
             WHERE status = 'pending'
             ORDER BY created_at
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
-        RETURNING id::text, episode_id::text, audio_path
+        RETURNING id::text, kind, payload
         """,
         x_worker_id,
     )
+    await worker_status.record_heartbeat(x_worker_id)
+
     if not row:
         return Response(status_code=204)
-    return dict(row)
-
-
-@app.get("/worker/audio/{episode_id}", tags=["worker"])
-async def worker_audio(episode_id: str, _key: str = Depends(verify_worker_key)):
-    """Serve the audio file for a claimed transcription job."""
-    pool = db.get_pool()
-    row = await pool.fetchrow(
-        "SELECT audio_path FROM transcription_jobs WHERE episode_id=$1::uuid AND status='claimed'",
-        episode_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="No claimed job for this episode")
-    path = row["audio_path"]
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Audio file not found on disk")
-    return FileResponse(path, media_type="audio/mpeg")
+    return {"id": row["id"], "kind": row["kind"], "payload": row["payload"]}
 
 
 @app.post("/worker/jobs/{job_id}/complete", tags=["worker"])
-async def worker_complete(job_id: str, request: Request, _key: str = Depends(verify_worker_key)):
+async def worker_complete(
+    job_id: str, request: Request,
+    _key: str = Depends(verify_worker_key),
+    x_worker_id: str | None = Header(default=None),
+):
     """
-    Receive a transcript from a worker and wake the waiting pipeline coroutine.
-    Body: {language, segments} — same shape blurb returns.
-    Processing (chunking, DB writes) happens inside episode_pipeline, not here.
+    Receive a job result from blurb and dispatch it to the kind-specific handler
+    (discover → apply episodes/orphaning/icon; process → chunk + store transcript).
 
     We accept the raw request body and pass the JSON string directly to postgres
-    to avoid blocking the event loop with json.loads + json.dumps on large transcripts.
+    to avoid blocking the event loop with json.loads on large transcripts, then
+    parse it in a thread for the handler.
     """
+    await worker_status.record_heartbeat(x_worker_id)
     raw_body = await request.body()
     result_json = raw_body.decode("utf-8")
     pool = db.get_pool()
     row = await pool.fetchrow(
         """
-        UPDATE transcription_jobs
+        UPDATE jobs
         SET status = 'completed', result = $1::text::jsonb
         WHERE id = $2::uuid AND status = 'claimed'
-        RETURNING episode_id::text
+        RETURNING kind, payload
         """,
         result_json, job_id,
     )
     if not row:
-        # Job was cancelled or reset (e.g. conductor restarted mid-transcription).
+        # Job was cancelled or reset (e.g. admin retry, or conductor restarted).
         # Return 200 so blurb doesn't retry — the result is stale and can be discarded.
         logger.warning(f"Stale complete for job {job_id} — job no longer claimed, discarding result")
         return {"status": "stale"}
-    signal_job_complete(job_id)
-    logger.info(f"Transcription result received for job {job_id}, episode {row['episode_id']}")
-    return {"status": "accepted", "episode_id": row["episode_id"]}
+
+    kind = row["kind"]
+    payload = row["payload"]
+    result = await asyncio.to_thread(json.loads, result_json)
+
+    if kind == "discover":
+        await handle_discover_complete(job_id, payload, result)
+    else:
+        await handle_process_complete(job_id, payload, result)
+
+    logger.info(f"Job {job_id} ({kind}) completed")
+    return {"status": "accepted", "kind": kind}
 
 
 @app.post("/worker/jobs/{job_id}/fail", tags=["worker"])
-async def worker_fail(job_id: str, body: dict, _key: str = Depends(verify_worker_key)):
-    """Record a worker failure and wake the waiting pipeline coroutine to handle it."""
+async def worker_fail(
+    job_id: str, body: dict,
+    _key: str = Depends(verify_worker_key),
+    x_worker_id: str | None = Header(default=None),
+):
+    """Record a worker failure and dispatch it to the kind-specific handler."""
+    await worker_status.record_heartbeat(x_worker_id)
     pool = db.get_pool()
     error = body.get("error", "unknown error")
+    error_type = body.get("error_type")
     row = await pool.fetchrow(
         """
-        UPDATE transcription_jobs
-        SET status = 'failed', error = $1
-        WHERE id = $2::uuid AND status = 'claimed'
-        RETURNING episode_id::text
+        UPDATE jobs
+        SET status = 'failed', error = $1, error_type = $2
+        WHERE id = $3::uuid AND status = 'claimed'
+        RETURNING kind, payload
         """,
-        error, job_id,
+        error, error_type, job_id,
     )
     if not row:
         logger.warning(f"Stale fail for job {job_id} — job no longer claimed, ignoring")
         return {"status": "stale"}
-    signal_job_complete(job_id)
-    logger.warning(f"Worker reported failure for job {job_id} (episode {row['episode_id']}): {error}")
-    return {"status": "failed", "episode_id": row["episode_id"]}
+
+    kind = row["kind"]
+    payload = row["payload"]
+
+    if kind == "discover":
+        await handle_discover_fail(job_id, payload, error)
+    else:
+        await handle_process_fail(job_id, payload, error, error_type)
+
+    logger.warning(f"Worker reported failure for job {job_id} ({kind}, {error_type}): {error}")
+    return {"status": "failed", "kind": kind}
+
+
+@app.post("/worker/heartbeat", tags=["worker"])
+async def worker_heartbeat(
+    _key: str = Depends(verify_worker_key),
+    x_worker_id: str | None = Header(default=None),
+):
+    """
+    Lightweight liveness ping, independent of job polling. Job-claim polling
+    backs off up to 12h when idle, so blurb calls this on a short fixed
+    interval instead so the admin panel's connectivity indicator stays fresh.
+    """
+    await worker_status.record_heartbeat(x_worker_id)
+    return {"status": "ok"}
 
 
 # --------------------------------------------------------------------------- #
@@ -301,7 +332,7 @@ async def admin_live():
             FROM episodes e
             JOIN sources s ON s.id = e.source_id
             JOIN podcasts p ON p.id = s.podcast_id
-            WHERE e.status IN ('downloading', 'transcribing')
+            WHERE e.status = 'downloading'
             LIMIT 1
             """
         ),
@@ -311,11 +342,8 @@ async def admin_live():
             FROM episodes e
             JOIN sources s ON s.id = e.source_id
             JOIN podcasts p ON p.id = s.podcast_id
-            WHERE e.status IN ('downloaded', 'discovered') AND e.blacklisted = FALSE
-            ORDER BY
-                CASE e.status WHEN 'downloaded' THEN 0 ELSE 1 END,
-                p.display_order ASC,
-                e.created_at DESC
+            WHERE e.status = 'discovered' AND e.blacklisted = FALSE
+            ORDER BY p.display_order ASC, e.created_at DESC
             LIMIT 2
             """
         ),
@@ -336,7 +364,6 @@ async def admin_live():
             SELECT s.podcast_id, p.display_name,
                    COUNT(*) FILTER (WHERE e.status = 'discovered')   AS discovered,
                    COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
-                   COUNT(*) FILTER (WHERE e.status = 'transcribing') AS transcribing,
                    COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
                    COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed,
                    COUNT(*) FILTER (WHERE e.status = 'orphaned')     AS orphaned
@@ -351,6 +378,7 @@ async def admin_live():
 
     return {
         "scheduler": get_scheduler_status(),
+        "blurb": await worker_status.get_worker_status(),
         "active": dict(active_row) if active_row else None,
         "queue": [dict(r) for r in queue_rows],
         "recent": [dict(r) for r in recent_rows],
@@ -383,7 +411,7 @@ async def admin_status():
         """
         SELECT id::text, title, updated_at
         FROM episodes
-        WHERE status = 'transcribing'
+        WHERE status = 'downloading'
           AND updated_at < now() - interval '2 hours'
         ORDER BY updated_at ASC
         """
@@ -420,17 +448,12 @@ async def retry_episode(episode_id: str):
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
-    if row["status"] not in ("failed", "transcribing", "downloading"):
+    if row["status"] not in ("failed", "downloading"):
         raise HTTPException(
             status_code=409,
             detail=f"Episode is '{row['status']}' — only failed or stuck episodes can be retried",
         )
-    if row["status"] == "transcribing":
-        await pool.execute(
-            "UPDATE transcription_jobs SET status='failed', error='Cancelled by admin retry' "
-            "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
-            episode_id,
-        )
+    await cancel_process_job(episode_id, "Cancelled by admin retry")
     await pool.execute(
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
         episode_id,
@@ -450,6 +473,7 @@ async def delete_episode(episode_id: str):
     row = await pool.fetchrow("SELECT id FROM episodes WHERE id = $1::uuid", episode_id)
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
+    await cancel_process_job(episode_id, "Cancelled by admin delete")
     await b2_delete_transcript(episode_id)
     await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
     return {"status": "deleted", "episode_id": episode_id}
@@ -493,12 +517,7 @@ async def retranscribe_episode(episode_id: str):
             status_code=409,
             detail="Episode is currently downloading — wait for it to complete before retranscribing",
         )
-    if row["status"] == "transcribing":
-        await pool.execute(
-            "UPDATE transcription_jobs SET status='failed', error='Cancelled by retranscribe' "
-            "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
-            episode_id,
-        )
+    await cancel_process_job(episode_id, "Cancelled by retranscribe")
 
     await pool.execute(
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
@@ -565,7 +584,6 @@ async def admin_status_by_podcast():
         SELECT s.podcast_id, p.display_name,
                COUNT(*) FILTER (WHERE e.status = 'discovered')   AS discovered,
                COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
-               COUNT(*) FILTER (WHERE e.status = 'transcribing') AS transcribing,
                COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
                COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed
         FROM episodes e
@@ -623,15 +641,10 @@ async def bulk_episode_action(body: BulkActionRequest):
                 continue
 
             if body.action == "retry":
-                if row["status"] not in ("failed", "transcribing", "downloading"):
+                if row["status"] not in ("failed", "downloading"):
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot retry '{row['status']}'"})
                     continue
-                if row["status"] == "transcribing":
-                    await pool.execute(
-                        "UPDATE transcription_jobs SET status='failed', error='Cancelled by admin retry' "
-                        "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
-                        episode_id,
-                    )
+                await cancel_process_job(episode_id, "Cancelled by admin retry")
                 await pool.execute(
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
                 )
@@ -644,6 +657,7 @@ async def bulk_episode_action(body: BulkActionRequest):
                 wakeup_worker()
 
             elif body.action == "delete":
+                await cancel_process_job(episode_id, "Cancelled by admin delete")
                 await b2_delete_transcript(episode_id)
                 await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
 
@@ -657,12 +671,7 @@ async def bulk_episode_action(body: BulkActionRequest):
                 if row["status"] == "downloading":
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot retranscribe '{row['status']}'"})
                     continue
-                if row["status"] == "transcribing":
-                    await pool.execute(
-                        "UPDATE transcription_jobs SET status='failed', error='Cancelled by retranscribe' "
-                        "WHERE episode_id=$1::uuid AND status IN ('pending','claimed')",
-                        episode_id,
-                    )
+                await cancel_process_job(episode_id, "Cancelled by retranscribe")
                 await pool.execute(
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
                 )

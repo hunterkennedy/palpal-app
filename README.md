@@ -8,26 +8,25 @@
 
 ---
 
-palpal is a self-hosted podcast search engine. Every episode gets downloaded, transcribed, chunked, and indexed. You type a phrase, you get back the clip — with a link to the timestamp.
+palpal is a self-hosted podcast search engine. Every episode gets discovered, downloaded, transcribed, chunked, and indexed. You type a phrase, you get back the clip — with a link to the timestamp.
 
-The whole stack lives here: database, pipeline, transcription coordination, and frontend. The only thing outside Docker is [blurb](https://github.com/hunterkennedy/blurb), a Whisper transcription service designed to run on GPU hardware you already have — a gaming PC, a home server, anything with a decent card. Blurb connects outbound to conductor to pick up work; it doesn't need to be reachable from the outside.
+The whole stack lives here: database, job queue, search, and frontend. The only thing outside Docker is [blurb](https://github.com/hunterkennedy/blurb), a pull-worker that runs on GPU hardware you already have — a gaming PC, a home server, anything with a decent card. Blurb connects outbound to conductor to pick up work; it doesn't need to be reachable from the outside.
+
+Everything that needs your YouTube/Patreon login — discovery and audio download — runs on blurb, using cookies that live only on blurb's own disk. Conductor, which is the one part of the stack reachable from the internet, never sees those credentials. It only ever hands out source URLs and receives back episode metadata and transcripts.
 
 ---
 
 ## How it works
 
 ```
-YouTube playlist/channel
-        │
-        ▼
-  palpal-conductor          discovers new episodes, downloads audio, queues for transcription
+  palpal-conductor          enqueues discover/process jobs, tracks episode state
         │
         │  (pull — blurb connects outbound, claims jobs, posts results back)
         │
-  blurb              transcribes audio on your GPU hardware
+  blurb              scrapes YouTube/Patreon sources, downloads audio, transcribes — all locally
         │
         ▼
-  palpal-conductor          receives transcript, chunks it, writes to postgres
+  palpal-conductor          applies discovery results, chunks the transcript, writes to postgres
         │
         ▼
     postgres                stores everything, full-text search via tsvector
@@ -36,14 +35,14 @@ YouTube playlist/channel
   palpal-frontend           search UI, served on your chosen port
 ```
 
-Everything in the pipeline is automatic once configured. A persistent download worker runs inside conductor, draining the queue one episode at a time (newest-first, so fresh discoveries are processed before old backlog). The scheduler runs discovery every 24 hours; new episodes work their way through without intervention.
+Everything in the pipeline is automatic once configured. Conductor enqueues a `discover` job per source on a schedule (every 6h) and a `process` job for every newly-discovered episode; blurb polls, claims one job at a time, and does the work — audio never touches conductor's disk.
 
 ---
 
 ## Prerequisites
 
 - **Docker + Docker Compose**
-- **[blurb](https://github.com/hunterkennedy/blurb)** running somewhere with a GPU. Blurb connects *outbound* to conductor to claim transcription jobs — no inbound ports or firewall rules needed on the blurb side. Configure blurb with `CONDUCTOR_URL` pointing at your conductor and the same `BLURB_API_KEY` set on both sides.
+- **[blurb](https://github.com/hunterkennedy/blurb)** running somewhere with a GPU. Blurb connects *outbound* to conductor to claim jobs — no inbound ports or firewall rules needed on the blurb side. Configure blurb with `WEB_URL` pointing at your conductor and the same `BLURB_API_KEY` set on both sides. Your YouTube/Patreon cookies are configured on blurb, not here — see blurb's README.
 
 ---
 
@@ -61,15 +60,8 @@ Edit `.env`:
 | `DATABASE_URL` | Full connection string — update to match if you changed `POSTGRES_PASSWORD` |
 | `BLURB_API_KEY` | Shared secret between conductor and blurb — set the same value in your blurb config |
 | `CONDUCTOR_ADMIN_KEY` | Secret for the conductor admin API — make it strong |
-| `AUDIO_HOST_PATH` | Host directory where downloaded audio is staged before transcription (e.g. `/home/you/palpal-audio`) |
 | `APP_PORT` | Port the frontend listens on (default `3001`) |
 | `ADMIN_PASSWORD` | Password for the admin panel login page |
-
-Create the audio directory before starting:
-
-```bash
-mkdir -p /path/to/your/palpal-audio
-```
 
 > **Fedora/RHEL (SELinux):** the `:z` suffix on bind mounts in `docker-compose.yml` is already set. Without it Postgres can't read the init scripts.
 

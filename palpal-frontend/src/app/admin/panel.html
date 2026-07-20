@@ -56,7 +56,6 @@
     .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.72rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap; }
     .badge-discovered   { color: #93c5fd; background: rgba(96,165,250,0.1);  border-color: rgba(96,165,250,0.2); }
     .badge-downloading  { color: #fde047; background: rgba(250,204,21,0.1);  border-color: rgba(250,204,21,0.2); }
-    .badge-transcribing { color: #d8b4fe; background: rgba(192,132,252,0.1); border-color: rgba(192,132,252,0.2); }
     .badge-processed    { color: #86efac; background: rgba(74,222,128,0.1);  border-color: rgba(74,222,128,0.2); }
     .badge-failed       { color: #fca5a5; background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.2); }
     .badge-orphaned     { color: #94a3b8; background: rgba(148,163,184,0.1); border-color: rgba(148,163,184,0.2); }
@@ -642,20 +641,40 @@ function renderScheduler() {
     </div>`).join('');
   const btnCls = s.paused ? 'btn-green' : 'btn-orange';
   const btnLbl = s.paused ? '▶ resume scheduler' : '⏸ pause scheduler';
-  const w = s.worker || {};
-  const workerBadge = (w.active > 0)
-    ? `<span class="badge badge-running">${w.active}/${w.capacity} active</span>`
-    : `<span class="badge badge-paused">idle</span>`;
+  const blurb = S.live?.blurb || {};
+  const blurbBadge = blurb.connected
+    ? `<span class="badge badge-running">connected</span>`
+    : `<span class="badge badge-failed">offline</span>`;
+  const blurbWorkers = blurb.workers || [];
+  const blurbDetail = blurbWorkers.length
+    ? blurbWorkers.map(w => `
+      <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--muted)">
+        <span title="${esc(w.worker_id)}">${esc(w.worker_id.slice(0, 8))}${w.online ? '' : ' (stale)'}</span>
+        <span>${fmtLastSeen(w.last_seen_at)}</span>
+      </div>`).join('')
+    : `<div style="font-size:0.78rem;color:var(--muted)">never seen</div>`;
   document.getElementById('scheduler-body').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
       <span class="muted small">scheduler</span>${badge}
     </div>
     ${jobs}
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:0.6rem 0 0.75rem">
-      <span class="muted small">download worker</span>${workerBadge}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:0.6rem 0 0.35rem">
+      <span class="muted small">blurb</span>${blurbBadge}
     </div>
+    ${blurbDetail}
     <button id="sched-btn" class="btn ${btnCls}" style="width:100%;margin-top:0.75rem" onclick="toggleScheduler()">${btnLbl}</button>
   `;
+}
+
+function fmtLastSeen(iso) {
+  if (!iso) return '—';
+  const diff = Math.max(0, Date.now() - new Date(iso));
+  const s = Math.round(diff / 1000);
+  if (s < 90) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 90) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return `${h}h ago`;
 }
 
 // ---------------------------------------------------------------------------
@@ -670,8 +689,8 @@ function renderTape() {
 
   function badge(ep) {
     if (!ep) return '';
-    const cls = { downloading:'badge-downloading', downloaded:'badge-downloading', transcribing:'badge-transcribing', processed:'badge-processed', failed:'badge-failed', discovered:'badge-discovered', orphaned:'badge-orphaned' }[ep.status] || '';
-    const lbl = ep.status === 'discovered' ? 'queued' : ep.status === 'downloaded' ? 'ready' : ep.status;
+    const cls = { downloading:'badge-downloading', processed:'badge-processed', failed:'badge-failed', discovered:'badge-discovered', orphaned:'badge-orphaned' }[ep.status] || '';
+    const lbl = ep.status === 'discovered' ? 'queued' : ep.status;
     return `<span class="badge ${cls}">${lbl}</span>`;
   }
   function cell(ep, cls) {
@@ -685,10 +704,7 @@ function renderTape() {
       let reason = 'idle';
       if (sched.paused) reason = 'paused';
       else if (!ps.auto_download) reason = 'downloads off';
-      else if (sched.download_backoff_until) {
-        const secsLeft = Math.max(0, Math.round((new Date(sched.download_backoff_until) - Date.now()) / 1000));
-        reason = secsLeft > 0 ? `rate limit (${secsLeft}s)` : 'rate limit backoff';
-      }
+      else if (!S.live.blurb?.connected) reason = 'blurb offline';
       else if ((S.live.counts?.discovered || 0) === 0) reason = 'queue empty';
       return `<div class="tape-cell tape-idle"><div class="tape-title muted" style="margin-top:0.55rem;text-align:center">${reason}</div></div>`;
     }
@@ -736,9 +752,9 @@ function fmtNextRun(iso) {
 // ---------------------------------------------------------------------------
 const SCOLOR = {
   discovered: '#93c5fd', downloading: '#fde047',
-  transcribing: '#d8b4fe', processed: '#86efac', failed: '#fca5a5', orphaned: '#94a3b8',
+  processed: '#86efac', failed: '#fca5a5', orphaned: '#94a3b8',
 };
-const PIPELINE_PHASES = ['discovered', 'downloading', 'transcribing', 'processed', 'failed', 'orphaned'];
+const PIPELINE_PHASES = ['discovered', 'downloading', 'processed', 'failed', 'orphaned'];
 
 function renderPodcastPipeline(podStats) {
   const statsMap = {};
@@ -944,35 +960,15 @@ function renderPipelineSettings() {
       </div>
     </div>`;
 
-  const ytCookieSet = !!(S.pipelineSettings.youtube_cookies);
-  const ytCookieRow = `
+  const cookieNoteRow = `
     <div class="setting-row" style="align-items:flex-start">
       <div>
-        <div style="font-size:0.875rem;font-weight:500">YouTube Cookies</div>
-        <div class="muted small">Netscape-format cookies.txt for age-restricted YouTube downloads. ${ytCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
-      </div>
-      <div style="display:flex;align-items:flex-start;gap:0.5rem">
-        <textarea id="youtube-cookies-input" rows="4" placeholder="${ytCookieSet ? '(cookies already saved — paste to replace)' : '# Netscape HTTP Cookie File\n...'}"
-          style="width:220px;font-family:monospace;font-size:0.75rem;resize:vertical" autocomplete="off"></textarea>
-        <button class="btn btn-orange act" onclick="saveYoutubeCookies()">save</button>
+        <div style="font-size:0.875rem;font-weight:500">YouTube / Patreon Cookies</div>
+        <div class="muted small">Session cookies now live only on blurb's machine (local .env / cookie files) and are never sent to or stored by conductor — see blurb's README.</div>
       </div>
     </div>`;
 
-  const ptCookieSet = !!(S.pipelineSettings.patreon_cookies);
-  const ptCookieRow = `
-    <div class="setting-row" style="align-items:flex-start">
-      <div>
-        <div style="font-size:0.875rem;font-weight:500">Patreon Cookies</div>
-        <div class="muted small">Netscape-format cookies.txt for Patreon discovery and downloads. ${ptCookieSet ? '<span style="color:var(--green)">✓ set</span>' : '<span style="color:var(--muted)">not set</span>'}</div>
-      </div>
-      <div style="display:flex;align-items:flex-start;gap:0.5rem">
-        <textarea id="patreon-cookies-input" rows="4" placeholder="${ptCookieSet ? '(cookies already saved — paste to replace)' : '# Netscape HTTP Cookie File\n...'}"
-          style="width:220px;font-family:monospace;font-size:0.75rem;resize:vertical" autocomplete="off"></textarea>
-        <button class="btn btn-orange act" onclick="savePatreonCookies()">save</button>
-      </div>
-    </div>`;
-
-  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + ytCookieRow + ptCookieRow;
+  document.getElementById('pipeline-body').innerHTML = toggleRows + intRows + cookieNoteRow;
   renderDangerZone();
 }
 
@@ -1214,35 +1210,12 @@ async function togglePipelineSetting(key, cb) {
 }
 
 
-async function saveYoutubeCookies() {
-  const val = document.getElementById('youtube-cookies-input').value.trim();
-  if (!val) return toast('Paste a cookies.txt file first', false);
-  const res = await api('POST', '/admin/pipeline-settings', { youtube_cookies: val });
-  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
-  S.pipelineSettings = await res.json();
-  document.getElementById('youtube-cookies-input').value = '';
-  toast('YouTube cookies saved');
-  renderPipelineSettings();
-}
-
-async function savePatreonCookies() {
-  const val = document.getElementById('patreon-cookies-input').value.trim();
-  if (!val) return toast('Paste a cookies.txt file first', false);
-  const res = await api('POST', '/admin/pipeline-settings', { patreon_cookies: val });
-  if (!res.ok) return toast(`Failed: ${await res.text()}`, false);
-  S.pipelineSettings = await res.json();
-  document.getElementById('patreon-cookies-input').value = '';
-  toast('Patreon cookies saved');
-  renderPipelineSettings();
-}
-
-
 // ---------------------------------------------------------------------------
 // Episodes table
 // ---------------------------------------------------------------------------
-const RETRYABLE   = new Set(['failed', 'transcribing', 'downloading']);
+const RETRYABLE   = new Set(['failed', 'downloading']);
 const PROCESSABLE = new Set(['discovered']);
-const STATUS_TABS = ['all', 'discovered', 'downloading', 'transcribing', 'failed', 'processed', 'orphaned', 'blacklisted'];
+const STATUS_TABS = ['all', 'discovered', 'downloading', 'failed', 'processed', 'orphaned', 'blacklisted'];
 
 function getFiltered() {
   let r = S.episodes;
