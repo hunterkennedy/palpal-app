@@ -122,6 +122,11 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
         if title.startswith("[") and title.endswith("]"):
             continue
 
+        # Skip private videos — the source lists them with no title, and they're
+        # not fetchable anyway
+        if not title:
+            continue
+
         if any(excl in title.lower() for excl in title_exclude):
             continue
 
