@@ -83,18 +83,21 @@ async def get_source(source_id: str) -> SourceRow | None:
     return SourceRow(id=str(row["id"]), url=row["url"], filters=_coerce_filters(row["filters"]), podcast_id=row["podcast_id"])
 
 
-async def apply_discovery_results(source_id: str, filters: dict, entries: list[dict]) -> list[NewEpisode]:
+async def apply_discovery_results(source_id: str, filters: dict, entries: list[dict]) -> tuple[list[NewEpisode], int]:
     """
     Take raw entries scraped by a blurb 'discover' job and apply them to the DB:
     insert new episodes (skipping unavailable/title_exclude-filtered ones and
     auto-blacklisting ones under the duration floor), retroactively blacklist
-    existing episodes whose duration is now known to be too short, and orphan
-    episodes that are no longer present in the source.
+    existing episodes whose duration is now known to be too short, orphan
+    episodes that are no longer present in the source, and reactivate any
+    previously-orphaned episode that has reappeared.
 
     `entries` must include every item blurb saw in the source, unfiltered —
     filtering and orphan detection both happen here so blurb stays a dumb
     scraper with no source-specific business logic. Each entry:
         {"video_id": str, "title": str, "pub_date": "YYYY-MM-DD" | None, "duration": float | None}
+
+    Returns (newly_inserted_episodes, reactivated_count).
     """
     title_exclude: list[str] = [s.lower() for s in filters.get("title_exclude", [])]
     pool = db.get_pool()
@@ -106,6 +109,7 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
     auto_blacklisted = 0
     retro_count = 0
     orphaned_count = 0
+    reactivated_count = 0
 
     for entry in entries:
         video_id = entry.get("video_id")
@@ -194,10 +198,33 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
         if orphaned_count:
             logger.info(f"Source {source_id}: orphaned {orphaned_count} episode(s) no longer in source")
 
-    if new_episodes or auto_blacklisted or retro_count or orphaned_count:
+        # Reactivate previously-orphaned episodes that have reappeared (e.g. a
+        # transient scrape earlier under-reported the source). Restore to
+        # 'processed' if a transcript already exists, otherwise back to
+        # 'discovered' so the pipeline picks it up again.
+        reactivated = await pool.execute(
+            """
+            UPDATE episodes
+            SET status = CASE
+                    WHEN EXISTS (SELECT 1 FROM transcript_chunks tc WHERE tc.episode_id = episodes.id)
+                    THEN 'processed' ELSE 'discovered'
+                END,
+                error_message = NULL,
+                updated_at = NOW()
+            WHERE source_id = $1::uuid
+              AND video_id = ANY($2)
+              AND status = 'orphaned'
+            """,
+            source_id, all_seen_video_ids,
+        )
+        reactivated_count = int(reactivated.split()[-1])
+        if reactivated_count:
+            logger.info(f"Source {source_id}: reactivated {reactivated_count} previously-orphaned episode(s)")
+
+    if new_episodes or auto_blacklisted or retro_count or orphaned_count or reactivated_count:
         caches.bust_episodes_cache()
 
-    return new_episodes
+    return new_episodes, reactivated_count
 
 
 async def apply_channel_icon(podcast_id: str, thumbnail_url: str, content_type: str, image_bytes: bytes) -> None:

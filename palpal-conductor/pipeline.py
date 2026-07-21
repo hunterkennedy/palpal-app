@@ -263,7 +263,7 @@ async def handle_discover_complete(job_id: str, payload: dict, result: dict) -> 
         logger.warning(f"Discover job {job_id}: source {source_id} no longer exists, discarding result")
         return
 
-    new_episodes = await apply_discovery_results(source_id, source["filters"], entries)
+    new_episodes, reactivated_count = await apply_discovery_results(source_id, source["filters"], entries)
 
     if icon and icon.get("bytes_b64"):
         try:
@@ -274,7 +274,7 @@ async def handle_discover_complete(job_id: str, payload: dict, result: dict) -> 
         except Exception as exc:
             logger.warning(f"Discover job {job_id}: failed to apply channel icon: {exc}")
 
-    if payload.get("auto_queue", True) and new_episodes:
+    if payload.get("auto_queue", True) and (new_episodes or reactivated_count):
         wakeup_worker()
 
 
