@@ -289,10 +289,14 @@ async def handle_process_complete(job_id: str, payload: dict, result: dict) -> N
     publication_date = result.get("publication_date")
 
     if publication_date:
-        await pool.execute(
-            "UPDATE episodes SET publication_date = COALESCE(publication_date, $1::date) WHERE id = $2::uuid",
-            publication_date, episode_id,
-        )
+        try:
+            pub_date = datetime.strptime(publication_date, "%Y-%m-%d").date()
+            await pool.execute(
+                "UPDATE episodes SET publication_date = COALESCE(publication_date, $1) WHERE id = $2::uuid",
+                pub_date, episode_id,
+            )
+        except Exception as exc:
+            logger.warning(f"Job {job_id}: failed to set publication_date {publication_date!r} for {episode_id}: {exc}")
 
     try:
         target_words = await settings.get_int("chunk_target_words") or 50
