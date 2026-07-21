@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 from typing import TypedDict
 
 import caches
@@ -125,7 +126,13 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
             continue
 
         duration: float | None = entry.get("duration")
-        pub_date = entry.get("pub_date")
+        pub_date_str = entry.get("pub_date")
+        pub_date = None
+        if pub_date_str:
+            try:
+                pub_date = datetime.strptime(pub_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                logger.warning(f"Source {source_id}: bad pub_date {pub_date_str!r} for video {video_id}")
 
         should_blacklist = min_duration > 0 and duration is not None and duration < min_duration
         blacklist_reason = (
