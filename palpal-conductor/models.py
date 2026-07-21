@@ -43,6 +43,12 @@ class SearchResponse(BaseModel):
     corrected_query: Optional[str] = None
 
 
+class ChunksResponse(BaseModel):
+    chunks: list[ChunkResult]
+    has_more_before: bool
+    has_more_after: bool
+
+
 class EpisodeInfo(BaseModel):
     id: str
     video_id: str

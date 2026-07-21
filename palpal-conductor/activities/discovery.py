@@ -2,6 +2,7 @@ import json
 import logging
 from typing import TypedDict
 
+import caches
 import db
 import pipeline_settings as settings
 
@@ -103,6 +104,8 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
 
     new_episodes: list[NewEpisode] = []
     auto_blacklisted = 0
+    retro_count = 0
+    orphaned_count = 0
 
     for entry in entries:
         video_id = entry.get("video_id")
@@ -190,6 +193,9 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
         orphaned_count = int(orphaned.split()[-1])
         if orphaned_count:
             logger.info(f"Source {source_id}: orphaned {orphaned_count} episode(s) no longer in source")
+
+    if new_episodes or auto_blacklisted or retro_count or orphaned_count:
+        caches.bust_episodes_cache()
 
     return new_episodes
 

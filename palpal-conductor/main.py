@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import re
-import time
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse
 
@@ -11,6 +10,7 @@ import uvicorn
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
+import caches
 import db
 import pipeline_settings
 import worker_status
@@ -19,6 +19,7 @@ from auth import verify_admin_token, verify_worker_key
 from models import (
     BulkActionRequest,
     ChunkResult,
+    ChunksResponse,
     EpisodeExistsResponse,
     EpisodeInfo,
     PodcastResult,
@@ -31,6 +32,7 @@ from pipeline import (
     recover_interrupted_downloads,
     handle_discover_complete, handle_discover_fail,
     handle_process_complete, handle_process_fail,
+    queue_episodes_for_processing,
 )
 from activities.b2 import delete_transcript as b2_delete_transcript
 from activities.process import process_transcript
@@ -304,7 +306,9 @@ async def scheduler_resume():
 
 @app.post("/admin/episodes/{episode_id}/process", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def process_episode(episode_id: str):
-    """Queue a discovered episode through the pipeline."""
+    """Queue a discovered episode through the pipeline immediately — an explicit
+    per-episode request, so it bypasses the auto_download toggle and scheduler
+    pause state rather than silently no-op'ing when either is off."""
     pool = db.get_pool()
     row = await pool.fetchrow(
         "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
@@ -316,7 +320,9 @@ async def process_episode(episode_id: str):
             status_code=409,
             detail=f"Episode is '{row['status']}' — only discovered episodes can be queued this way",
         )
-    wakeup_worker()
+    queued = await queue_episodes_for_processing([episode_id])
+    if not queued:
+        raise HTTPException(status_code=409, detail="Episode already has an in-flight process job")
     return {"status": "queued", "episode_id": episode_id}
 
 
@@ -366,7 +372,8 @@ async def admin_live():
                    COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
                    COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
                    COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed,
-                   COUNT(*) FILTER (WHERE e.status = 'orphaned')     AS orphaned
+                   COUNT(*) FILTER (WHERE e.status = 'orphaned')     AS orphaned,
+                   COUNT(*) FILTER (WHERE e.blacklisted)             AS blacklisted
             FROM episodes e
             JOIN sources s ON e.source_id = s.id
             JOIN podcasts p ON s.podcast_id = p.id
@@ -387,61 +394,11 @@ async def admin_live():
     }
 
 
-@app.get("/admin/status", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def admin_status():
-    """Pipeline health dashboard — episode counts and recent failures."""
-    pool = db.get_pool()
-
-    counts_rows = await pool.fetch(
-        "SELECT status, COUNT(*) AS n FROM episodes GROUP BY status ORDER BY status"
-    )
-    counts = {row["status"]: row["n"] for row in counts_rows}
-
-    failures = await pool.fetch(
-        """
-        SELECT id::text, title, error_message, updated_at
-        FROM episodes
-        WHERE status = 'failed'
-        ORDER BY updated_at DESC
-        LIMIT 20
-        """
-    )
-
-    stuck = await pool.fetch(
-        """
-        SELECT id::text, title, updated_at
-        FROM episodes
-        WHERE status = 'downloading'
-          AND updated_at < now() - interval '2 hours'
-        ORDER BY updated_at ASC
-        """
-    )
-
-    return {
-        "counts": counts,
-        "recent_failures": [
-            {
-                "id": r["id"],
-                "title": r["title"],
-                "error_message": r["error_message"],
-                "updated_at": r["updated_at"].isoformat(),
-            }
-            for r in failures
-        ],
-        "stuck_transcribing": [
-            {
-                "id": r["id"],
-                "title": r["title"],
-                "updated_at": r["updated_at"].isoformat(),
-            }
-            for r in stuck
-        ],
-    }
-
-
 @app.post("/admin/episodes/{episode_id}/retry", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def retry_episode(episode_id: str):
-    """Retry a failed or stuck episode from the beginning."""
+    """Retry a failed or stuck episode from the beginning. Force-queues it directly
+    rather than resuming the whole scheduler as a side effect — retrying one
+    episode shouldn't silently undo a deliberate (or auto-triggered) pause."""
     pool = db.get_pool()
     row = await pool.fetchrow(
         "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
@@ -458,11 +415,7 @@ async def retry_episode(episode_id: str):
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid",
         episode_id,
     )
-    sched = get_scheduler_status()
-    if sched["paused"]:
-        await resume_scheduler()
-    else:
-        wakeup_worker()
+    await queue_episodes_for_processing([episode_id])
     return {"status": "queued", "episode_id": episode_id}
 
 
@@ -476,6 +429,7 @@ async def delete_episode(episode_id: str):
     await cancel_process_job(episode_id, "Cancelled by admin delete")
     await b2_delete_transcript(episode_id)
     await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
+    caches.bust_episodes_cache()
     return {"status": "deleted", "episode_id": episode_id}
 
 
@@ -488,18 +442,33 @@ async def blacklist_episode(episode_id: str):
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Episode not found")
+    caches.bust_episodes_cache()
     return {"status": "blacklisted", "episode_id": episode_id}
 
 
 @app.post("/admin/episodes/{episode_id}/unblacklist", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def unblacklist_episode(episode_id: str):
-    """Remove the blacklist flag from an episode."""
+    """Remove the blacklist flag from an episode. Auto-blacklisting (from the
+    duration filter, or a 'too_short' processing outcome) also sets status to
+    'blacklisted' directly — if we only cleared the flag here, the episode would
+    be left with blacklisted=false but status='blacklisted' forever, a state no
+    process/retry/retranscribe button matches. Reset status back to 'discovered'
+    in that case so the episode re-enters the normal pipeline."""
     pool = db.get_pool()
     result = await pool.execute(
-        "UPDATE episodes SET blacklisted = FALSE WHERE id = $1::uuid", episode_id
+        """
+        UPDATE episodes
+        SET blacklisted   = FALSE,
+            status        = CASE WHEN status = 'blacklisted' THEN 'discovered' ELSE status END,
+            error_message = CASE WHEN status = 'blacklisted' THEN NULL ELSE error_message END
+        WHERE id = $1::uuid
+        """,
+        episode_id,
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Episode not found")
+    caches.bust_episodes_cache()
+    wakeup_worker()
     return {"status": "unblacklisted", "episode_id": episode_id}
 
 
@@ -523,7 +492,8 @@ async def retranscribe_episode(episode_id: str):
         "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
     )
     await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
-    wakeup_worker()
+    caches.bust_episodes_cache()
+    await queue_episodes_for_processing([episode_id])
     return {"status": "retranscribing", "episode_id": episode_id}
 
 
@@ -575,30 +545,10 @@ async def rechunk_all_episodes(
     return {"queued": len(rows), "target_words": target_words}
 
 
-@app.get("/admin/status/by-podcast", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def admin_status_by_podcast():
-    """Per-podcast episode counts by status. Used to populate the pipeline table."""
-    pool = db.get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT s.podcast_id, p.display_name,
-               COUNT(*) FILTER (WHERE e.status = 'discovered')   AS discovered,
-               COUNT(*) FILTER (WHERE e.status = 'downloading')  AS downloading,
-               COUNT(*) FILTER (WHERE e.status = 'processed')    AS processed,
-               COUNT(*) FILTER (WHERE e.status = 'failed')       AS failed
-        FROM episodes e
-        JOIN sources s ON e.source_id = s.id
-        JOIN podcasts p ON s.podcast_id = p.id
-        GROUP BY s.podcast_id, p.display_name, p.display_order
-        ORDER BY p.display_order
-        """
-    )
-    return [dict(r) for r in rows]
-
-
 @app.post("/admin/episodes/process-discovered", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def process_all_discovered(podcast_id: str | None = Query(None)):
-    """Queue discovered episodes through the pipeline, optionally filtered by podcast."""
+    """Queue discovered episodes through the pipeline immediately, optionally
+    filtered by podcast. An explicit request, so bypasses auto_download/pause."""
     pool = db.get_pool()
     if podcast_id:
         rows = await pool.fetch(
@@ -611,9 +561,8 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
         rows = await pool.fetch(
             "SELECT id::text FROM episodes WHERE status = 'discovered' AND blacklisted = FALSE"
         )
-    if rows:
-        wakeup_worker()
-    return {"queued": len(rows)}
+    queued = await queue_episodes_for_processing([r["id"] for r in rows])
+    return {"queued": queued}
 
 
 @app.post("/admin/episodes/process-downloaded", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -630,6 +579,10 @@ async def bulk_episode_action(body: BulkActionRequest):
 
     pool = db.get_pool()
     results = []
+    # Episodes that end this loop as 'discovered' via an explicit process/retry/
+    # retranscribe request — force-queued together (bypassing auto_download and
+    # scheduler-pause) once, after the loop, instead of per-item.
+    to_queue: list[str] = []
 
     for episode_id in body.episode_ids:
         try:
@@ -648,13 +601,13 @@ async def bulk_episode_action(body: BulkActionRequest):
                 await pool.execute(
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
                 )
-                wakeup_worker()
+                to_queue.append(episode_id)
 
             elif body.action == "process":
                 if row["status"] != "discovered":
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot process '{row['status']}'"})
                     continue
-                wakeup_worker()
+                to_queue.append(episode_id)
 
             elif body.action == "delete":
                 await cancel_process_job(episode_id, "Cancelled by admin delete")
@@ -665,7 +618,17 @@ async def bulk_episode_action(body: BulkActionRequest):
                 await pool.execute("UPDATE episodes SET blacklisted = TRUE WHERE id = $1::uuid", episode_id)
 
             elif body.action == "unblacklist":
-                await pool.execute("UPDATE episodes SET blacklisted = FALSE WHERE id = $1::uuid", episode_id)
+                await pool.execute(
+                    """
+                    UPDATE episodes
+                    SET blacklisted   = FALSE,
+                        status        = CASE WHEN status = 'blacklisted' THEN 'discovered' ELSE status END,
+                        error_message = CASE WHEN status = 'blacklisted' THEN NULL ELSE error_message END
+                    WHERE id = $1::uuid
+                    """,
+                    episode_id,
+                )
+                wakeup_worker()
 
             elif body.action == "retranscribe":
                 if row["status"] == "downloading":
@@ -676,30 +639,20 @@ async def bulk_episode_action(body: BulkActionRequest):
                     "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
                 )
                 await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
-                wakeup_worker()
+                to_queue.append(episode_id)
 
             results.append({"id": episode_id, "ok": True})
 
         except Exception as exc:
             results.append({"id": episode_id, "ok": False, "detail": str(exc)})
 
+    if to_queue:
+        await queue_episodes_for_processing(to_queue)
+
     queued = sum(1 for r in results if r["ok"])
+    if queued:
+        caches.bust_episodes_cache()
     return {"queued": queued, "total": len(body.episode_ids), "results": results}
-
-
-# --------------------------------------------------------------------------- #
-# Episodes list (cached)                                                       #
-# --------------------------------------------------------------------------- #
-
-_EPISODES_TTL = 300.0  # seconds
-_episodes_cache: dict = {"data": None, "fetched_at": 0.0}
-
-# --------------------------------------------------------------------------- #
-# Podcasts list (cached)                                                       #
-# --------------------------------------------------------------------------- #
-
-_PODCASTS_TTL = 600.0  # seconds — podcast config changes rarely
-_podcasts_cache: dict = {"data": None, "fetched_at": 0.0}
 
 
 async def _fetch_episodes() -> list[EpisodeInfo]:
@@ -738,15 +691,12 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
 @app.get("/episodes", tags=["episodes"], response_model=list[EpisodeInfo])
 async def list_episodes() -> list[EpisodeInfo]:
     """All episodes with metadata and pipeline status. Cached for 5 minutes."""
-    if (
-        _episodes_cache["data"] is not None
-        and time.monotonic() - _episodes_cache["fetched_at"] < _EPISODES_TTL
-    ):
-        return _episodes_cache["data"]
+    cached = caches.get_episodes()
+    if cached is not None:
+        return cached
 
     data = await _fetch_episodes()
-    _episodes_cache["data"] = data
-    _episodes_cache["fetched_at"] = time.monotonic()
+    caches.set_episodes(data)
     return data
 
 
@@ -757,24 +707,20 @@ async def admin_list_episodes() -> list[EpisodeInfo]:
 
 
 @app.post("/admin/episodes/cache/bust", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def bust_episodes_cache() -> dict:
-    """Force the next /episodes request to re-query the DB."""
-    _episodes_cache["data"] = None
-    _episodes_cache["fetched_at"] = 0.0
+async def bust_episodes_cache_endpoint() -> dict:
+    """Force the next /episodes request to re-query the DB. Every admin action that
+    changes an episode's status already does this automatically — this endpoint is
+    a manual escape hatch, not something the admin panel needs to call itself."""
+    caches.bust_episodes_cache()
     return {"status": "busted"}
 
 
 @app.post("/admin/podcasts/cache/bust", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def bust_podcasts_cache() -> dict:
-    """Force the next /podcasts request to re-query the DB."""
-    _podcasts_cache["data"] = None
-    _podcasts_cache["fetched_at"] = 0.0
+async def bust_podcasts_cache_endpoint() -> dict:
+    """Force the next /podcasts request to re-query the DB. Every admin action that
+    changes podcast/source config already does this automatically."""
+    caches.bust_podcasts_cache()
     return {"status": "busted"}
-
-
-def _bust_caches():
-    _podcasts_cache["data"] = None
-    _podcasts_cache["fetched_at"] = 0.0
 
 
 @app.get("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -815,7 +761,7 @@ async def create_podcast(body: dict):
         if "unique" in str(e).lower() or "duplicate" in str(e).lower():
             raise HTTPException(status_code=409, detail="Podcast ID already exists")
         raise
-    _bust_caches()
+    caches.bust_podcasts_cache()
     return {"status": "created", "id": pod_id}
 
 
@@ -830,7 +776,7 @@ async def update_podcast(podcast_id: str, body: dict):
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Podcast not found")
-    _bust_caches()
+    caches.bust_podcasts_cache()
     return {"status": "updated"}
 
 
@@ -841,7 +787,7 @@ async def admin_delete_podcast(podcast_id: str):
     result = await pool.execute("DELETE FROM podcasts WHERE id = $1", podcast_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Podcast not found")
-    _bust_caches()
+    caches.bust_podcasts_cache()
     return {"status": "deleted"}
 
 
@@ -871,7 +817,7 @@ async def create_source(podcast_id: str, body: dict):
         podcast_id, body.get("name", ""), body.get("site", "youtube"),
         url, enabled, json.dumps(filters),
     )
-    _bust_caches()
+    caches.bust_podcasts_cache()
     return {"status": "created"}
 
 
@@ -889,7 +835,7 @@ async def update_source(source_id: str, body: dict):
     )
     if not row:
         raise HTTPException(status_code=404, detail="Source not found")
-    _bust_caches()
+    caches.bust_podcasts_cache()
     return {"status": "updated"}
 
 
@@ -900,7 +846,7 @@ async def admin_delete_source(source_id: str):
     result = await pool.execute("DELETE FROM sources WHERE id = $1::uuid", source_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Source not found")
-    _bust_caches()
+    caches.bust_podcasts_cache()
     return {"status": "deleted"}
 
 
@@ -956,6 +902,9 @@ async def correct_query(pool, q: str) -> str | None:
     return corrected if corrected.lower() != q.lower() else None
 
 
+_ISO_DATE = r"^\d{4}-\d{2}-\d{2}$"
+
+
 @app.get("/search", tags=["search"], response_model=SearchResponse)
 async def search(
     request: Request,
@@ -963,6 +912,8 @@ async def search(
     podcast_id: str | None = Query(None, description="Filter to a single podcast ID"),
     page: int = Query(1, ge=1, le=1000, description="Page number (1-based)"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
+    date_from: str | None = Query(None, pattern=_ISO_DATE, description="Only include episodes published on/after this date (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, pattern=_ISO_DATE, description="Only include episodes published on/before this date (YYYY-MM-DD)"),
 ) -> SearchResponse:
     client_ip = request.headers.get("x-forwarded-for") or (request.client.host if request.client else "unknown")
     logger.info("search q=%r podcast_id=%r page=%d ip=%s", q, podcast_id, page, client_ip)
@@ -999,6 +950,8 @@ async def search(
              websearch_to_tsquery('english', $1) query
         WHERE tc.search_vector @@ query
           AND ($2::text IS NULL OR tc.podcast_id = $2)
+          AND ($5::date IS NULL OR tc.publication_date >= $5::date)
+          AND ($6::date IS NULL OR tc.publication_date <= $6::date)
         ORDER BY {order_clause}
         LIMIT $3 OFFSET $4
     """
@@ -1008,11 +961,13 @@ async def search(
              websearch_to_tsquery('english', $1) query
         WHERE tc.search_vector @@ query
           AND ($2::text IS NULL OR tc.podcast_id = $2)
+          AND ($3::date IS NULL OR tc.publication_date >= $3::date)
+          AND ($4::date IS NULL OR tc.publication_date <= $4::date)
     """
 
     rows, total_row = await asyncio.gather(
-        pool.fetch(main_q, search_q, podcast_id, page_size, offset),
-        pool.fetchrow(count_q, search_q, podcast_id),
+        pool.fetch(main_q, search_q, podcast_id, page_size, offset, date_from, date_to),
+        pool.fetchrow(count_q, search_q, podcast_id, date_from, date_to),
     )
 
     results = [ChunkResult(**dict(row)) for row in rows]
@@ -1025,22 +980,35 @@ async def search(
     )
 
 
-@app.get("/chunks", tags=["search"], response_model=list[ChunkResult])
+_CHUNK_FIELDS = (
+    "id", "episode_id", "chunk_index", "text", "start_time", "end_time", "duration",
+    "start_formatted", "start_minutes", "word_count", "podcast_id", "podcast_name",
+    "source_name", "episode_title", "video_id", "publication_date",
+)
+
+
+@app.get("/chunks", tags=["search"], response_model=ChunksResponse)
 async def chunks(
     chunk_id: str = Query(..., description="UUID of the central chunk"),
     radius: int = Query(2, ge=0, le=10, description="Number of chunks on each side"),
-) -> list[ChunkResult]:
+) -> ChunksResponse:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
         WITH center AS (
             SELECT episode_id, chunk_index FROM transcript_chunks WHERE id = $1::uuid
+        ),
+        bounds AS (
+            SELECT MAX(tc2.chunk_index) AS max_index
+            FROM transcript_chunks tc2, center
+            WHERE tc2.episode_id = center.episode_id
         )
         SELECT tc.id::text, tc.episode_id::text, tc.chunk_index, tc.text,
                tc.start_time, tc.end_time, tc.duration, tc.start_formatted,
                tc.start_minutes, tc.word_count, tc.podcast_id, tc.podcast_name,
-               tc.source_name, tc.episode_title, tc.video_id, tc.publication_date
-        FROM transcript_chunks tc, center
+               tc.source_name, tc.episode_title, tc.video_id, tc.publication_date,
+               bounds.max_index
+        FROM transcript_chunks tc, center, bounds
         WHERE tc.episode_id = center.episode_id
           AND tc.chunk_index BETWEEN center.chunk_index - $2 AND center.chunk_index + $2
         ORDER BY tc.chunk_index
@@ -1049,7 +1017,12 @@ async def chunks(
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Chunk not found")
-    return [ChunkResult(**dict(row)) for row in rows]
+
+    has_more_before = rows[0]["chunk_index"] > 0
+    has_more_after = rows[-1]["chunk_index"] < rows[0]["max_index"]
+    results = [ChunkResult(**{k: row[k] for k in _CHUNK_FIELDS}) for row in rows]
+
+    return ChunksResponse(chunks=results, has_more_before=has_more_before, has_more_after=has_more_after)
 
 
 async def _fetch_podcasts() -> list[PodcastResult]:
@@ -1073,15 +1046,12 @@ async def _fetch_podcasts() -> list[PodcastResult]:
 @app.get("/podcasts", tags=["search"], response_model=list[PodcastResult])
 async def podcasts() -> list[PodcastResult]:
     """Enabled podcasts with sources. Cached for 10 minutes."""
-    if (
-        _podcasts_cache["data"] is not None
-        and time.monotonic() - _podcasts_cache["fetched_at"] < _PODCASTS_TTL
-    ):
-        return _podcasts_cache["data"]
+    cached = caches.get_podcasts()
+    if cached is not None:
+        return cached
 
     data = await _fetch_podcasts()
-    _podcasts_cache["data"] = data
-    _podcasts_cache["fetched_at"] = time.monotonic()
+    caches.set_podcasts(data)
     return data
 
 

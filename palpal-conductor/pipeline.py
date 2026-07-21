@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import caches
 import db
 import pipeline_settings as settings
 from activities.discovery import (
@@ -75,12 +76,40 @@ async def cancel_process_job(episode_id: str, reason: str) -> None:
     )
 
 
+async def _enqueue_process_jobs(rows) -> int:
+    """Create a 'process' job for each row (episode_id/video_id/site) and flip the
+    episode to 'downloading'. Shared by the auto-dispatch sweep and by admin
+    actions that force a specific episode through immediately."""
+    if not rows:
+        return 0
+    pool = db.get_pool()
+    min_duration = await settings.get_int("min_episode_duration_seconds")
+    for row in rows:
+        await _create_job("process", {
+            "episode_id": row["episode_id"],
+            "site": row["site"],
+            "video_id": row["video_id"],
+            "min_duration_seconds": min_duration,
+        })
+        await pool.execute(
+            "UPDATE episodes SET status='downloading' WHERE id=$1::uuid", row["episode_id"]
+        )
+    caches.bust_episodes_cache()
+    return len(rows)
+
+
 async def sync_process_jobs() -> int:
     """
     Create a 'process' job for every 'discovered' episode that doesn't already
     have one pending/claimed. Idempotent — safe to call after discovery
     completes, after an admin action, or from the periodic sweep. Returns the
     number of jobs created.
+
+    This is the *automatic* dispatch path, so it respects the auto_download
+    toggle. Admin actions that target a specific episode (process/retry/
+    retranscribe) use queue_episodes_for_processing() instead, which bypasses
+    this toggle — those are explicit requests, not automatic behavior, and
+    should never silently no-op just because auto-dispatch is paused.
     """
     if not await settings.get("auto_download"):
         return 0
@@ -101,23 +130,42 @@ async def sync_process_jobs() -> int:
         ORDER BY p.display_order ASC, e.created_at DESC
         """
     )
-    if not rows:
+    n = await _enqueue_process_jobs(rows)
+    if n:
+        logger.info(f"Dispatcher: created {n} process job(s)")
+    return n
+
+
+async def queue_episodes_for_processing(episode_ids: list[str]) -> int:
+    """
+    Force-queue specific discovered episodes for processing right now. Used by
+    admin actions (process/retry/retranscribe) that target particular episodes
+    by explicit request — bypasses both the auto_download toggle and the
+    scheduler's paused state, since those gates are meant to control automatic
+    dispatch, not an explicit per-episode admin action. Returns the number of
+    jobs actually created (an episode already mid-flight is skipped).
+    """
+    if not episode_ids:
         return 0
-
-    min_duration = await settings.get_int("min_episode_duration_seconds")
-    for row in rows:
-        await _create_job("process", {
-            "episode_id": row["episode_id"],
-            "site": row["site"],
-            "video_id": row["video_id"],
-            "min_duration_seconds": min_duration,
-        })
-        await pool.execute(
-            "UPDATE episodes SET status='downloading' WHERE id=$1::uuid", row["episode_id"]
-        )
-
-    logger.info(f"Dispatcher: created {len(rows)} process job(s)")
-    return len(rows)
+    pool = db.get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT e.id::text AS episode_id, e.video_id, s.site
+        FROM episodes e
+        JOIN sources s ON s.id = e.source_id
+        WHERE e.id = ANY($1::uuid[]) AND e.status = 'discovered' AND e.blacklisted = FALSE
+          AND NOT EXISTS (
+              SELECT 1 FROM jobs j
+              WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
+                AND j.payload->>'episode_id' = e.id::text
+          )
+        """,
+        episode_ids,
+    )
+    n = await _enqueue_process_jobs(rows)
+    if n:
+        logger.info(f"Force-queued {n} process job(s) via admin action")
+    return n
 
 
 async def dispatch_worker() -> None:
@@ -155,7 +203,10 @@ def stop_dispatch_worker() -> None:
     logger.info("Dispatch worker stopped")
 
 
-def get_worker_status() -> dict:
+def get_dispatch_status() -> dict:
+    """Status of conductor's own dispatch loop — NOT the remote blurb worker
+    (see worker_status.get_worker_status for that). Named distinctly so the
+    two don't get confused when both end up in the same /admin/live payload."""
     active = 1 if _dispatch_task and not _dispatch_task.done() else 0
     return {"active": active, "capacity": 1}
 
@@ -254,6 +305,7 @@ async def handle_process_complete(job_id: str, payload: dict, result: dict) -> N
             "UPDATE episodes SET status='failed', error_message=$1 WHERE id=$2::uuid", str(exc), episode_id,
         )
 
+    caches.bust_episodes_cache()
     await _check_consecutive_failure(episode_id)
 
 
@@ -292,6 +344,8 @@ async def handle_process_fail(job_id: str, payload: dict, error: str, error_type
         )
         await _check_consecutive_failure(episode_id)
 
+    caches.bust_episodes_cache()
+
 
 # --------------------------------------------------------------------------- #
 # Startup / reclaim                                                           #
@@ -323,6 +377,7 @@ async def recover_interrupted_downloads() -> None:
     n = int(result.split()[-1])
     if n:
         logger.warning("Startup recovery: %d episode(s) stuck in 'downloading' reset to discovered", n)
+        caches.bust_episodes_cache()
     else:
         logger.info("Startup recovery: no orphaned in-flight episodes found")
 
@@ -424,7 +479,8 @@ def stop_scheduler() -> None:
 
 
 def get_scheduler_status() -> dict:
-    """Return scheduler running/paused state, job next-run times, and worker status."""
+    """Return scheduler running/paused state, job next-run times, and conductor's
+    own dispatch-loop status (distinct from the remote blurb worker's status)."""
     from apscheduler.schedulers.base import STATE_PAUSED
     paused = _scheduler.state == STATE_PAUSED
     jobs = []
@@ -437,7 +493,7 @@ def get_scheduler_status() -> dict:
         "running": _scheduler.running,
         "paused": paused,
         "jobs": jobs,
-        "worker": get_worker_status(),
+        "dispatch": get_dispatch_status(),
     }
 
 

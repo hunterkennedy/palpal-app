@@ -282,10 +282,10 @@
               <th>podcast</th>
               <th style="text-align:center">discovered</th>
               <th style="text-align:center">downloading</th>
-              <th style="text-align:center">transcribing</th>
               <th style="text-align:center">processed</th>
               <th style="text-align:center">failed</th>
               <th style="text-align:center">orphaned</th>
+              <th style="text-align:center">blacklisted</th>
               <th>actions</th>
             </tr>
           </thead>
@@ -589,8 +589,12 @@ async function doRefresh(silent) {
   const status = document.getElementById('refresh-status');
   status.textContent = silent ? '↻' : 'loading…';
   try {
-    const [podStatsRes, epsRes, settingsRes, podsRes, wnRes, phRes] = await Promise.all([
-      api('GET', '/admin/status/by-podcast'),
+    // Podcast pipeline counts come only from /admin/live's by_podcast (polled
+    // every 1s by doLiveRefresh) — this used to also fetch a second,
+    // slightly-different aggregate from /admin/status/by-podcast every 30s,
+    // which caused the pipeline table to visibly flicker between two
+    // disagreeing counts. Don't reintroduce a second source here.
+    const [epsRes, settingsRes, podsRes, wnRes, phRes] = await Promise.all([
       api('GET', '/admin/episodes'),
       api('GET', '/admin/pipeline-settings'),
       api('GET', '/admin/podcasts'),
@@ -598,7 +602,6 @@ async function doRefresh(silent) {
       api('GET', '/search-placeholders'),
     ]);
     const failures = [];
-    if (podStatsRes.ok)  S.podStats         = await podStatsRes.json(); else failures.push(`status/by-podcast ${podStatsRes.status}`);
     if (epsRes.ok)       S.episodes         = await epsRes.json();      else failures.push(`episodes ${epsRes.status}`);
     if (settingsRes.ok)  S.pipelineSettings = await settingsRes.json(); else failures.push(`pipeline-settings ${settingsRes.status}`);
     if (wnRes.ok)        S.whatsNewEntries  = await wnRes.json();       else failures.push(`whats-new ${wnRes.status}`);
@@ -752,9 +755,9 @@ function fmtNextRun(iso) {
 // ---------------------------------------------------------------------------
 const SCOLOR = {
   discovered: '#93c5fd', downloading: '#fde047',
-  processed: '#86efac', failed: '#fca5a5', orphaned: '#94a3b8',
+  processed: '#86efac', failed: '#fca5a5', orphaned: '#94a3b8', blacklisted: '#fdba74',
 };
-const PIPELINE_PHASES = ['discovered', 'downloading', 'processed', 'failed', 'orphaned'];
+const PIPELINE_PHASES = ['discovered', 'downloading', 'processed', 'failed', 'orphaned', 'blacklisted'];
 
 function renderPodcastPipeline(podStats) {
   const statsMap = {};

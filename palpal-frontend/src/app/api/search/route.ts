@@ -1,11 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchChunks } from '@/lib/conductor';
-import { searchSchema, checkRateLimit, sanitizeInput } from '@/lib/validation';
+import { searchSchema, checkRateLimit, sanitizeInput, getClientIp } from '@/lib/validation';
 import { z } from 'zod';
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Convert the UI's dateRange enum (+ custom start/end) into a date_from/date_to
+ * pair the conductor's /search endpoint can filter on. Unknown/'all' values
+ * apply no filter. */
+function computeDateBounds(
+  dateRange: string | null,
+  startDate: string | null,
+  endDate: string | null
+): { date_from?: string; date_to?: string } {
+  if (dateRange === 'custom') {
+    return {
+      date_from: startDate && ISO_DATE_RE.test(startDate) ? startDate : undefined,
+      date_to: endDate && ISO_DATE_RE.test(endDate) ? endDate : undefined,
+    };
+  }
+
+  const from = new Date();
+  switch (dateRange) {
+    case 'last_week':
+      from.setUTCDate(from.getUTCDate() - 7);
+      break;
+    case 'last_month':
+      from.setUTCMonth(from.getUTCMonth() - 1);
+      break;
+    case 'last_3_months':
+      from.setUTCMonth(from.getUTCMonth() - 3);
+      break;
+    case 'last_year':
+      from.setUTCFullYear(from.getUTCFullYear() - 1);
+      break;
+    default:
+      return {};
+  }
+  return { date_from: from.toISOString().slice(0, 10) };
+}
 
 export async function GET(request: NextRequest) {
   // Rate limiting
-  const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'anonymous';
+  const ip = getClientIp(request);
   if (!checkRateLimit(ip)) {
     return NextResponse.json(
       { error: 'Too many requests. Please slow down.' },
@@ -18,6 +55,9 @@ export async function GET(request: NextRequest) {
   const rawLimit = searchParams.get('limit');
   const rawPodcastId = searchParams.get('podcast_id');
   const rawPage = searchParams.get('page');
+  const rawDateRange = searchParams.get('dateRange');
+  const rawStartDate = searchParams.get('startDate');
+  const rawEndDate = searchParams.get('endDate');
 
   try {
     const validated = searchSchema.parse({
@@ -30,11 +70,15 @@ export async function GET(request: NextRequest) {
     const parsedPage = rawPage ? parseInt(rawPage, 10) : 1;
     const page = Number.isFinite(parsedPage) ? Math.min(Math.max(parsedPage, 1), 1000) : 1;
 
+    const { date_from, date_to } = computeDateBounds(rawDateRange, rawStartDate, rawEndDate);
+
     const conductorResult = await searchChunks({
       q: query,
       podcast_id: rawPodcastId || undefined,
       page,
       page_size: limit,
+      date_from,
+      date_to,
     }, ip);
 
     // Normalize to the shape page.tsx already expects

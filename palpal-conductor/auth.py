@@ -1,4 +1,5 @@
 import os
+import secrets
 from fastapi import Header, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -10,7 +11,7 @@ async def verify_admin_token(
 ) -> str:
     """FastAPI dependency: validates the Bearer token matches CONDUCTOR_ADMIN_KEY."""
     expected = os.environ["CONDUCTOR_ADMIN_KEY"]
-    if credentials.credentials != expected:
+    if not secrets.compare_digest(credentials.credentials, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key",
@@ -23,7 +24,7 @@ async def verify_worker_key(
 ) -> str:
     """FastAPI dependency: validates the X-API-Key header matches BLURB_API_KEY."""
     expected = os.environ["BLURB_API_KEY"]
-    if x_api_key != expected:
+    if not secrets.compare_digest(x_api_key, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key",

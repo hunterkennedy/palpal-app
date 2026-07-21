@@ -1,12 +1,26 @@
 'use server';
 
+import { timingSafeEqual } from 'crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createAdminToken } from '@/lib/auth';
 
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Still run a same-length comparison so a length mismatch doesn't return
+    // early faster than a full compare would (avoids a length-based timing tell).
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
+
 export async function loginAction(formData: FormData) {
   const password = formData.get('password') as string;
-  if (!password || password !== process.env.ADMIN_PASSWORD) {
+  const expected = process.env.ADMIN_PASSWORD;
+  if (!password || !expected || !safeCompare(password, expected)) {
     redirect('/admin/login?error=1');
   }
   const token = await createAdminToken();

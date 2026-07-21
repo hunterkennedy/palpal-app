@@ -14,6 +14,8 @@ export interface ConductorSearchParams {
   podcast_id?: string;
   page?: number;
   page_size?: number;
+  date_from?: string;
+  date_to?: string;
 }
 
 export interface ConductorSearchResponse {
@@ -52,6 +54,8 @@ export async function searchChunks(params: ConductorSearchParams, clientIp?: str
   if (params.podcast_id) qs.set('podcast_id', params.podcast_id);
   if (params.page != null) qs.set('page', String(params.page));
   if (params.page_size != null) qs.set('page_size', String(params.page_size));
+  if (params.date_from) qs.set('date_from', params.date_from);
+  if (params.date_to) qs.set('date_to', params.date_to);
 
   const headers: Record<string, string> = {};
   if (clientIp) headers['X-Forwarded-For'] = clientIp;
@@ -63,7 +67,13 @@ export async function searchChunks(params: ConductorSearchParams, clientIp?: str
   return res.json();
 }
 
-export async function getChunks(chunkId: string, radius: number): Promise<ConductorChunk[]> {
+export interface ConductorChunksResponse {
+  chunks: ConductorChunk[];
+  has_more_before: boolean;
+  has_more_after: boolean;
+}
+
+export async function getChunks(chunkId: string, radius: number): Promise<ConductorChunksResponse> {
   const qs = new URLSearchParams({ chunk_id: chunkId, radius: String(radius) });
   const res = await fetch(`${getConductorUrl()}/chunks?${qs.toString()}`, { next: { revalidate: 3600 } });
   if (!res.ok) {
