@@ -3,6 +3,7 @@ import base64
 import logging
 from datetime import datetime, timedelta, timezone
 
+import asyncpg
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import caches
@@ -21,6 +22,14 @@ _dispatch_wakeup = asyncio.Event()
 _dispatch_task: asyncio.Task | None = None
 _consecutive_failures = 0
 
+# Gates whether a worker can claim a 'process' job (see /worker/jobs/next).
+# Deliberately independent of the APScheduler instance below — pausing this
+# no longer stops the discovery cron or the stuck-job reclaim sweep, both of
+# which should keep running regardless of whether processing is paused.
+# In-memory source of truth; persisted to the 'processing_paused' setting
+# only so it survives a conductor restart.
+_processing_paused = False
+
 # How often the dispatcher re-sweeps for discovered episodes even without an
 # explicit wakeup — catches episodes reset by a rate-limit/backoff failure.
 _SWEEP_INTERVAL_SECONDS = 300.0
@@ -32,16 +41,16 @@ def wakeup_worker() -> None:
 
 
 async def _check_consecutive_failure(episode_id: str) -> None:
-    """Increment the failure counter and auto-pause the scheduler if threshold is hit."""
-    global _consecutive_failures
+    """Increment the failure counter and auto-pause processing if threshold is hit."""
+    global _consecutive_failures, _processing_paused
     pool = db.get_pool()
     row = await pool.fetchrow("SELECT status FROM episodes WHERE id = $1::uuid", episode_id)
     if row and row["status"] == "failed":
         _consecutive_failures += 1
         if _consecutive_failures >= 5:
-            logger.warning("Auto-pausing scheduler after %d consecutive failures", _consecutive_failures)
-            await _persist_scheduler_paused(True)
-            _scheduler.pause()
+            logger.warning("Auto-pausing processing after %d consecutive failures", _consecutive_failures)
+            _processing_paused = True
+            await _persist_processing_paused(True)
             _consecutive_failures = 0
     else:
         _consecutive_failures = 0
@@ -51,14 +60,28 @@ async def _check_consecutive_failure(episode_id: str) -> None:
 # Job creation                                                                 #
 # --------------------------------------------------------------------------- #
 
-async def _create_job(kind: str, payload: dict) -> str:
+async def _create_job(
+    kind: str, payload: dict, *, episode_id: str | None = None, source_id: str | None = None,
+) -> str:
     pool = db.get_pool()
     # payload goes through asyncpg's jsonb codec (db.py registers json.dumps/loads),
     # which encodes dicts automatically — dumping it here double-encodes it into a
     # jsonb string scalar instead of an object.
+    #
+    # episode_id/source_id are the real FK link to the job's target (exactly one
+    # is set, enforced by jobs_target_matches_kind) — payload keeps its own copy
+    # for the conductor<->blurb wire protocol, but episode_id/source_id are what
+    # every DB-side "does this already have a job" check relies on now,
+    # including the jobs_one_active_{process,discover}_per_{episode,source}
+    # unique partial indexes. A violation there means a concurrent caller won
+    # the race for the same target — callers should catch UniqueViolationError.
     row = await pool.fetchrow(
-        "INSERT INTO jobs (kind, payload) VALUES ($1, $2::jsonb) RETURNING id::text",
-        kind, payload,
+        """
+        INSERT INTO jobs (kind, payload, episode_id, source_id)
+        VALUES ($1, $2::jsonb, $3::uuid, $4::uuid)
+        RETURNING id::text
+        """,
+        kind, payload, episode_id, source_id,
     )
     return row["id"]
 
@@ -70,7 +93,7 @@ async def cancel_process_job(episode_id: str, reason: str) -> None:
         """
         UPDATE jobs SET status='failed', error=$1
         WHERE kind='process' AND status IN ('pending','claimed')
-          AND payload->>'episode_id' = $2
+          AND episode_id = $2::uuid
         """,
         reason, episode_id,
     )
@@ -79,23 +102,40 @@ async def cancel_process_job(episode_id: str, reason: str) -> None:
 async def _enqueue_process_jobs(rows) -> int:
     """Create a 'process' job for each row (episode_id/video_id/site) and flip the
     episode to 'downloading'. Shared by the auto-dispatch sweep and by admin
-    actions that force a specific episode through immediately."""
+    actions that force a specific episode through immediately.
+
+    Rows are pre-filtered by the caller's NOT EXISTS check, but that check isn't
+    atomic with this insert — the unique partial index on (episode_id) for live
+    process jobs is the real guard against a duplicate, and a concurrent winner
+    of that race is not an error, just a no-op for this row.
+    """
     if not rows:
         return 0
     pool = db.get_pool()
     min_duration = await settings.get_int("min_episode_duration_seconds")
+    created = 0
     for row in rows:
-        await _create_job("process", {
-            "episode_id": row["episode_id"],
-            "site": row["site"],
-            "video_id": row["video_id"],
-            "min_duration_seconds": min_duration,
-        })
+        try:
+            await _create_job(
+                "process",
+                {
+                    "episode_id": row["episode_id"],
+                    "site": row["site"],
+                    "video_id": row["video_id"],
+                    "min_duration_seconds": min_duration,
+                },
+                episode_id=row["episode_id"],
+            )
+        except asyncpg.exceptions.UniqueViolationError:
+            logger.info("Episode %s already has a live process job, skipping", row["episode_id"])
+            continue
         await pool.execute(
             "UPDATE episodes SET status='downloading' WHERE id=$1::uuid", row["episode_id"]
         )
-    caches.bust_episodes_cache()
-    return len(rows)
+        created += 1
+    if created:
+        caches.bust_episodes_cache()
+    return created
 
 
 async def sync_process_jobs() -> int:
@@ -125,7 +165,7 @@ async def sync_process_jobs() -> int:
           AND NOT EXISTS (
               SELECT 1 FROM jobs j
               WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
-                AND j.payload->>'episode_id' = e.id::text
+                AND j.episode_id = e.id
           )
         ORDER BY p.display_order ASC, e.created_at DESC
         """
@@ -157,7 +197,7 @@ async def queue_episodes_for_processing(episode_ids: list[str]) -> int:
           AND NOT EXISTS (
               SELECT 1 FROM jobs j
               WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
-                AND j.payload->>'episode_id' = e.id::text
+                AND j.episode_id = e.id
           )
         """,
         episode_ids,
@@ -174,8 +214,7 @@ async def dispatch_worker() -> None:
         try:
             _dispatch_wakeup.clear()
 
-            from apscheduler.schedulers.base import STATE_PAUSED
-            if _scheduler.state != STATE_PAUSED:
+            if not _processing_paused:
                 await sync_process_jobs()
 
             try:
@@ -234,14 +273,21 @@ async def run_discovery(podcast_id: str | None = None, auto_queue: bool = True) 
     queued = 0
     for site, sources in (("youtube", yt_sources), ("patreon", patreon_sources)):
         for source in sources:
-            await _create_job("discover", {
-                "source_id": source["id"],
-                "site": site,
-                "url": source["url"],
-                "podcast_id": source["podcast_id"],
-                "auto_queue": auto_queue,
-            })
-            queued += 1
+            try:
+                await _create_job(
+                    "discover",
+                    {
+                        "source_id": source["id"],
+                        "site": site,
+                        "url": source["url"],
+                        "podcast_id": source["podcast_id"],
+                        "auto_queue": auto_queue,
+                    },
+                    source_id=source["id"],
+                )
+                queued += 1
+            except asyncpg.exceptions.UniqueViolationError:
+                logger.info("Source %s already has a discover job in flight, skipping", source["id"])
 
     logger.info(f"Discovery run queued (podcast={label}): {queued} discover job(s)")
     return {"sources": queued, "discover_jobs_queued": queued}
@@ -374,7 +420,7 @@ async def recover_interrupted_downloads() -> None:
           AND NOT EXISTS (
               SELECT 1 FROM jobs j
               WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
-                AND j.payload->>'episode_id' = episodes.id::text
+                AND j.episode_id = episodes.id
           )
         """
     )
@@ -413,10 +459,10 @@ async def reclaim_stuck_jobs() -> None:
 # Scheduler                                                                    #
 # --------------------------------------------------------------------------- #
 
-async def _persist_scheduler_paused(paused: bool) -> None:
+async def _persist_processing_paused(paused: bool) -> None:
     pool = db.get_pool()
     await pool.execute(
-        """INSERT INTO settings (key, value) VALUES ('scheduler_paused', $1)
+        """INSERT INTO settings (key, value) VALUES ('processing_paused', $1)
            ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()""",
         "true" if paused else "false",
     )
@@ -441,13 +487,14 @@ async def scheduled_discovery() -> None:
 
 
 async def start_scheduler() -> None:
+    global _processing_paused
     pool = db.get_pool()
     rows = await pool.fetch(
-        "SELECT key, value FROM settings WHERE key IN ('scheduler_paused', 'last_discovery_run', 'last_reclaim_run')"
+        "SELECT key, value FROM settings WHERE key IN ('processing_paused', 'last_discovery_run', 'last_reclaim_run')"
     )
     state = {row["key"]: row["value"] for row in rows}
 
-    was_paused = state.get("scheduler_paused", "false").lower() == "true"
+    _processing_paused = state.get("processing_paused", "false").lower() == "true"
     now = datetime.now(timezone.utc)
 
     def _next_run(last_key: str, **delta_kwargs) -> datetime:
@@ -469,24 +516,30 @@ async def start_scheduler() -> None:
         reclaim_stuck_jobs, "interval", minutes=30, id="reclaim",
         next_run_time=_next_run("last_reclaim_run", minutes=30),
     )
+    # The scheduler itself always runs — the discovery cron (gated by its own
+    # auto_discover check) and the reclaim sweep are unrelated to whether
+    # processing is paused, and should never stop as a side effect of it.
     _scheduler.start()
-
-    if was_paused:
-        _scheduler.pause()
-        logger.info("Scheduler started in paused state (restored from DB)")
-    else:
-        logger.info("Scheduler started (discovery every 6h, reclaim every 30min)")
+    logger.info(
+        "Scheduler started (discovery every 6h, reclaim every 30min); processing %s",
+        "paused" if _processing_paused else "running",
+    )
 
 
 def stop_scheduler() -> None:
     _scheduler.shutdown(wait=False)
 
 
+def is_processing_paused() -> bool:
+    """Whether a 'process' job can currently be claimed — checked by
+    /worker/jobs/next. Does not affect 'discover' jobs or the scheduler."""
+    return _processing_paused
+
+
 def get_scheduler_status() -> dict:
-    """Return scheduler running/paused state, job next-run times, and conductor's
-    own dispatch-loop status (distinct from the remote blurb worker's status)."""
-    from apscheduler.schedulers.base import STATE_PAUSED
-    paused = _scheduler.state == STATE_PAUSED
+    """Return processing-paused state, scheduled-job next-run times, and
+    conductor's own dispatch-loop status (distinct from the remote blurb
+    worker's status)."""
     jobs = []
     for job in _scheduler.get_jobs():
         jobs.append({
@@ -495,22 +548,25 @@ def get_scheduler_status() -> dict:
         })
     return {
         "running": _scheduler.running,
-        "paused": paused,
+        "processing_paused": _processing_paused,
         "jobs": jobs,
         "dispatch": get_dispatch_status(),
     }
 
 
-async def pause_scheduler() -> None:
-    await _persist_scheduler_paused(True)
-    _scheduler.pause()
-    logger.info("Scheduler paused via admin")
+async def pause_processing() -> None:
+    """Stop 'process' jobs from being claimed. Does not touch the scheduler —
+    discovery and reclaim keep running; manual discovery keeps working too."""
+    global _processing_paused
+    _processing_paused = True
+    await _persist_processing_paused(True)
+    logger.info("Processing paused via admin")
 
 
-async def resume_scheduler() -> None:
-    global _consecutive_failures
+async def resume_processing() -> None:
+    global _consecutive_failures, _processing_paused
     _consecutive_failures = 0
-    await _persist_scheduler_paused(False)
-    _scheduler.resume()
+    _processing_paused = False
+    await _persist_processing_paused(False)
     wakeup_worker()
-    logger.info("Scheduler resumed via admin")
+    logger.info("Processing resumed via admin")

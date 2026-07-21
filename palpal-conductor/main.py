@@ -28,7 +28,7 @@ from models import (
 from pipeline import (
     run_discovery, wakeup_worker, cancel_process_job,
     start_scheduler, stop_scheduler, start_dispatch_worker, stop_dispatch_worker,
-    get_scheduler_status, pause_scheduler, resume_scheduler,
+    get_scheduler_status, pause_processing, resume_processing, is_processing_paused,
     recover_interrupted_downloads,
     handle_discover_complete, handle_discover_fail,
     handle_process_complete, handle_process_fail,
@@ -107,6 +107,12 @@ async def worker_next_job(
     dropped connections without waiting for the scheduled reclaim.
 
     Falls back to a 10-minute time-based reclaim for workers without an ID.
+
+    While processing is paused, 'process' jobs are skipped entirely — this is
+    the one place that gate is actually enforced, so a pending process job
+    (whether auto-dispatched, admin-queued, or left over from before the
+    pause) truly cannot start, no matter how it got created. 'discover' jobs
+    are unaffected: pausing stops the pipeline, not manual/scheduled discovery.
     """
     pool = db.get_pool()
 
@@ -139,13 +145,14 @@ async def worker_next_job(
         WHERE id = (
             SELECT id FROM jobs
             WHERE status = 'pending'
+              AND (kind != 'process' OR NOT $2)
             ORDER BY created_at
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
         RETURNING id::text, kind, payload
         """,
-        x_worker_id,
+        x_worker_id, is_processing_paused(),
     )
     await worker_status.record_heartbeat(x_worker_id)
 
@@ -292,15 +299,17 @@ async def scheduler_status():
 
 @app.post("/admin/scheduler/pause", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_pause():
-    """Pause the APScheduler (stops automatic discovery and recovery jobs)."""
-    await pause_scheduler()
+    """Pause processing — no 'process' job can be claimed by a worker while this
+    is set, regardless of how it was created. Discovery (scheduled or manual)
+    and the stuck-job reclaim sweep are unaffected."""
+    await pause_processing()
     return {"status": "paused"}
 
 
 @app.post("/admin/scheduler/resume", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_resume():
-    """Resume the APScheduler."""
-    await resume_scheduler()
+    """Resume processing — also clears the auto-pause failure streak."""
+    await resume_processing()
     return {"status": "running"}
 
 
@@ -328,43 +337,13 @@ async def process_episode(episode_id: str):
 
 @app.get("/admin/live", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_live():
-    """Lightweight real-time status for the admin tape: scheduler, active episode, queue, recent completions."""
+    """Lightweight real-time status for the admin panel: scheduler/processing
+    state, blurb connectivity, per-podcast pipeline counts. Job-level detail
+    (what's actually pending/claimed/failed right now) lives in /admin/jobs."""
     pool = db.get_pool()
 
-    active_row, queue_rows, recent_rows, counts_rows, by_podcast_rows = await asyncio.gather(
-        pool.fetchrow(
-            """
-            SELECT e.id::text, e.title, p.display_name AS podcast_name, e.status
-            FROM episodes e
-            JOIN sources s ON s.id = e.source_id
-            JOIN podcasts p ON p.id = s.podcast_id
-            WHERE e.status = 'downloading'
-            LIMIT 1
-            """
-        ),
-        pool.fetch(
-            """
-            SELECT e.id::text, e.title, p.display_name AS podcast_name, e.status
-            FROM episodes e
-            JOIN sources s ON s.id = e.source_id
-            JOIN podcasts p ON p.id = s.podcast_id
-            WHERE e.status = 'discovered' AND e.blacklisted = FALSE
-            ORDER BY p.display_order ASC, e.created_at DESC
-            LIMIT 2
-            """
-        ),
-        pool.fetch(
-            """
-            SELECT e.id::text, e.title, p.display_name AS podcast_name, e.status
-            FROM episodes e
-            JOIN sources s ON s.id = e.source_id
-            JOIN podcasts p ON p.id = s.podcast_id
-            WHERE e.status IN ('processed', 'failed')
-            ORDER BY e.updated_at DESC
-            LIMIT 2
-            """
-        ),
-        pool.fetch("SELECT status, COUNT(*) AS n FROM episodes GROUP BY status"),
+    blurb, by_podcast_rows = await asyncio.gather(
+        worker_status.get_worker_status(),
         pool.fetch(
             """
             SELECT s.podcast_id, p.display_name,
@@ -385,12 +364,88 @@ async def admin_live():
 
     return {
         "scheduler": get_scheduler_status(),
-        "blurb": await worker_status.get_worker_status(),
-        "active": dict(active_row) if active_row else None,
-        "queue": [dict(r) for r in queue_rows],
-        "recent": [dict(r) for r in recent_rows],
-        "counts": {row["status"]: row["n"] for row in counts_rows},
+        "blurb": blurb,
         "by_podcast": [dict(r) for r in by_podcast_rows],
+    }
+
+
+def _fmt_job(row: dict) -> dict:
+    d = dict(row)
+    for key in ("claimed_at", "created_at"):
+        if d.get(key) is not None:
+            d[key] = d[key].isoformat()
+    return d
+
+
+@app.get("/admin/jobs", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_list_jobs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+):
+    """The actual job queue: what's pending/claimed right now (with the target
+    episode/source resolved via the real FK columns, not payload parsing),
+    plus a short recent-history tail and per-kind/status counts. Replaces the
+    old FSM tape, which only ever showed a single guessed-at active slot.
+
+    The active list is paginated — with 100+ episodes backed up in the queue
+    (e.g. processing paused for a while) this is polled every few seconds by
+    the admin panel, so an unbounded SELECT here would mean shipping and
+    re-rendering the whole queue on every poll.
+    """
+    pool = db.get_pool()
+    offset = (page - 1) * page_size
+
+    active_rows, recent_rows, counts_rows = await asyncio.gather(
+        pool.fetch(
+            """
+            SELECT j.id::text, j.kind, j.status, j.claimed_by_worker, j.claimed_at, j.created_at,
+                   e.title AS episode_title, ep_pod.display_name AS episode_podcast,
+                   src.name AS source_name, src_pod.display_name AS source_podcast
+            FROM jobs j
+            LEFT JOIN episodes e       ON e.id = j.episode_id
+            LEFT JOIN sources  es      ON es.id = e.source_id
+            LEFT JOIN podcasts ep_pod  ON ep_pod.id = es.podcast_id
+            LEFT JOIN sources  src     ON src.id = j.source_id
+            LEFT JOIN podcasts src_pod ON src_pod.id = src.podcast_id
+            WHERE j.status IN ('pending', 'claimed')
+            ORDER BY j.created_at
+            LIMIT $1 OFFSET $2
+            """,
+            page_size, offset,
+        ),
+        pool.fetch(
+            """
+            SELECT j.id::text, j.kind, j.status, j.error, j.error_type, j.created_at,
+                   e.title AS episode_title, src.name AS source_name
+            FROM jobs j
+            LEFT JOIN episodes e ON e.id = j.episode_id
+            LEFT JOIN sources  src ON src.id = j.source_id
+            WHERE j.status IN ('completed', 'failed')
+            ORDER BY j.created_at DESC
+            LIMIT 20
+            """
+        ),
+        pool.fetch(
+            """
+            SELECT kind, status, COUNT(*) AS n FROM jobs
+            WHERE status IN ('pending', 'claimed')
+            GROUP BY kind, status
+            """
+        ),
+    )
+
+    # counts_rows already aggregates every pending/claimed job regardless of
+    # this call's page, so the active total comes from summing it rather than
+    # a second COUNT(*) query.
+    active_total = sum(r["n"] for r in counts_rows)
+
+    return {
+        "active": [_fmt_job(r) for r in active_rows],
+        "active_total": active_total,
+        "page": page,
+        "page_size": page_size,
+        "recent": [_fmt_job(r) for r in recent_rows],
+        "counts": {f"{r['kind']}_{r['status']}": r["n"] for r in counts_rows},
     }
 
 
@@ -565,12 +620,6 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
     return {"queued": queued}
 
 
-@app.post("/admin/episodes/process-downloaded", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def process_all_downloaded(podcast_id: str | None = Query(None)):
-    """Kept for backwards compatibility — audio is now ephemeral, so this always returns 0."""
-    return {"queued": 0}
-
-
 @app.post("/admin/episodes/bulk-action", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def bulk_episode_action(body: BulkActionRequest):
     """Apply an action to a list of episode IDs. Returns per-episode results."""
@@ -700,10 +749,83 @@ async def list_episodes() -> list[EpisodeInfo]:
     return data
 
 
-@app.get("/admin/episodes", tags=["admin"], response_model=list[EpisodeInfo], dependencies=[Depends(verify_admin_token)])
-async def admin_list_episodes() -> list[EpisodeInfo]:
-    """All episodes — always live from DB, no cache. For admin panel use."""
-    return await _fetch_episodes()
+@app.get("/admin/episodes", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_list_episodes(
+    status: str | None = Query(None, description="Status value, or 'blacklisted' for the blacklisted flag, or omit/'all' for no filter"),
+    podcast_id: str | None = Query(None),
+    site: str | None = Query(None),
+    q: str | None = Query(None, description="Case-insensitive title substring filter"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """
+    Paginated, server-filtered episode list for the admin panel — always live
+    from DB, no cache. Runs on the same fast poll as /admin/live and
+    /admin/jobs (unlike those, this used to be a full unpaginated table dump
+    on a slower poll, which is exactly why it visibly lagged behind them).
+
+    Status-tab counts are global (independent of podcast_id/site/q, matching
+    the existing tab UX) and returned separately in `counts` rather than
+    computed from whatever page happens to be loaded.
+    """
+    pool = db.get_pool()
+    offset = (page - 1) * page_size
+    blacklisted_only = status == "blacklisted"
+    status_filter = None if status in (None, "all", "blacklisted") else status
+    podcast_filter = None if podcast_id in (None, "all") else podcast_id
+    site_filter = None if site in (None, "all") else site
+
+    filter_sql = """
+        FROM episodes e
+        JOIN sources  s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        WHERE ($1::boolean IS NOT TRUE OR e.blacklisted = TRUE)
+          AND ($2::text IS NULL OR e.status = $2)
+          AND ($3::text IS NULL OR s.podcast_id = $3)
+          AND ($4::text IS NULL OR s.site = $4)
+          AND ($5::text IS NULL OR e.title ILIKE '%' || $5 || '%')
+    """
+    filter_args = [blacklisted_only, status_filter, podcast_filter, site_filter, q]
+
+    rows, total_row, counts_rows = await asyncio.gather(
+        pool.fetch(
+            f"""
+            SELECT
+                e.id::text, e.video_id, e.title, e.publication_date, e.status,
+                e.error_message, e.blacklisted, s.podcast_id, p.display_name AS podcast_name,
+                s.name AS source_name, s.site, e.duration_seconds, e.created_at
+            {filter_sql}
+            ORDER BY e.publication_date DESC NULLS LAST, e.created_at DESC
+            LIMIT ${len(filter_args) + 1} OFFSET ${len(filter_args) + 2}
+            """,
+            *filter_args, page_size, offset,
+        ),
+        pool.fetchrow(f"SELECT COUNT(*) {filter_sql}", *filter_args),
+        pool.fetch(
+            "SELECT status, COUNT(*) AS n, COUNT(*) FILTER (WHERE blacklisted) AS bl FROM episodes GROUP BY status"
+        ),
+    )
+
+    counts: dict[str, int] = {"all": 0, "blacklisted": 0}
+    for r in counts_rows:
+        counts[r["status"]] = r["n"]
+        counts["all"] += r["n"]
+        counts["blacklisted"] += r["bl"]
+
+    episodes = [
+        EpisodeInfo(
+            **{k: row[k] for k in row.keys()},
+            youtube_url=f"https://youtube.com/watch?v={row['video_id']}",
+        )
+        for row in rows
+    ]
+    return {
+        "episodes": episodes,
+        "total": total_row["count"],
+        "page": page,
+        "page_size": page_size,
+        "counts": counts,
+    }
 
 
 @app.post("/admin/episodes/cache/bust", tags=["admin"], dependencies=[Depends(verify_admin_token)])

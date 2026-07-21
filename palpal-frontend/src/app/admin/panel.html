@@ -214,31 +214,9 @@
     #rechunk-confirm-input { width: 100%; margin-top: 0.5rem; letter-spacing: 0.05em; }
     #rechunk-confirm-input.match { border-color: rgba(248,113,113,0.6); }
 
-    /* FSM Tape */
-    .tape-wrap { overflow-x: auto; padding: 1.8rem 0 0.5rem; }
-    .tape { display: flex; align-items: stretch; width: fit-content; margin: 0 auto; }
-    .tape-cell {
-      width: 200px; min-height: 82px; background: var(--bg3);
-      border: 1px solid var(--border); padding: 0.75rem 0.9rem;
-      position: relative; flex-shrink: 0; margin-left: -1px;
-    }
-    .tape-cell:first-child { margin-left: 0; }
-    .tape-cell.tape-past { opacity: 0.4; }
-    .tape-cell.tape-future { opacity: 0.55; }
-    .tape-cell.tape-head {
-      border: 1px solid var(--orange);
-      background: rgba(249,115,22,0.07); z-index: 1;
-    }
-    .tape-cell.tape-head::before, .tape-cell.tape-idle::before {
-      content: '▼ HEAD';
-      position: absolute; top: -1.3rem; left: 50%; transform: translateX(-50%);
-      font-size: 0.62rem; letter-spacing: 0.1em; white-space: nowrap;
-    }
-    .tape-cell.tape-head::before { color: var(--orange); }
-    .tape-cell.tape-idle { border: 1px dashed var(--border); opacity: 0.28; z-index: 1; }
-    .tape-cell.tape-idle::before { color: var(--muted); }
-    .tape-title { font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); margin: 0.3rem 0 0.22rem; }
-    .tape-pod { font-size: 0.68rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Job Queue */
+    .job-target { font-size: 0.82rem; }
+    .job-target .sub { display: block; font-size: 0.7rem; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -263,9 +241,34 @@
       <h2>⚡ scheduler &amp; pipeline</h2>
       <div id="scheduler-body"><span class="muted">loading…</span></div>
       <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
-      <div id="tape-body"></div>
-      <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
       <div id="pipeline-body"></div>
+    </div>
+
+    <!-- Job Queue -->
+    <div class="card" id="jobs-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem">
+        <h2 style="margin-bottom:0">🔧 job queue</h2>
+        <span id="jobs-summary" class="muted small"></span>
+      </div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr><th>kind</th><th>target</th><th>status</th><th>worker</th><th>age</th></tr></thead>
+          <tbody id="jobs-tbody"><tr><td colspan="5" style="text-align:center;padding:1.2rem;color:var(--muted)">loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="jobs-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:0.65rem"></div>
+      <button class="section-hdr" style="margin-top:0.85rem" onclick="toggleRecentJobs()">
+        <span class="muted small" style="text-transform:uppercase;letter-spacing:0.05em">recent</span>
+        <span id="jobs-recent-arrow" class="arrow">▸</span>
+      </button>
+      <div id="jobs-recent-body" style="display:none;margin-top:0.5rem">
+        <div class="overflow-x">
+          <table>
+            <thead><tr><th>kind</th><th>target</th><th>status</th><th>error</th><th>age</th></tr></thead>
+            <tbody id="jobs-recent-tbody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <!-- Podcast Pipeline -->
@@ -365,7 +368,7 @@
       <div id="episodes-section" style="margin-top:1rem">
         <div class="tabs" id="status-tabs"></div>
         <div class="filter-row">
-          <input type="text" id="title-filter" placeholder="Filter by title…" oninput="applyFilters()" />
+          <input type="text" id="title-filter" placeholder="Filter by title…" oninput="onTitleFilterInput()" />
           <select id="podcast-filter" onchange="applyFilters()">
             <option value="all">All podcasts</option>
           </select>
@@ -396,6 +399,7 @@
             <tbody id="ep-tbody"></tbody>
           </table>
         </div>
+        <div id="ep-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:0.65rem"></div>
       </div>
     </div>
 
@@ -495,12 +499,20 @@ const S = {
   titleFilter: '',
   podcastFilter: 'all',
   siteFilter: 'all',
+  episodesTotal: 0,
+  episodesPage: 1,
+  episodesPageSize: 50,
+  statusCounts: {},
+  jobsActiveTotal: 0,
+  jobsPage: 1,
+  jobsPageSize: 25,
   selected: new Set(),
   pending: new Set(),
   epExpanded: true,
   confirmDeleteId: null,
   confirmBulkDelete: false,
   live: null,
+  jobs: null,
   placeholders: [],
   whatsNewEntries: [],
 };
@@ -540,7 +552,7 @@ let _refreshInterval = null;
 
 function startPolling() {
   if (_liveInterval) return;
-  _liveInterval = setInterval(() => doLiveRefresh(), 1000);
+  _liveInterval = setInterval(() => doLiveRefresh(), 3000);
   _refreshInterval = setInterval(() => doRefresh(true), 30000);
 }
 
@@ -565,11 +577,14 @@ async function doLiveRefresh() {
   if (_liveRefreshing) return;
   _liveRefreshing = true;
   try {
-    const res = await api('GET', '/admin/live');
-    if (res.ok) {
-      S.live = await res.json();
+    const [liveRes] = await Promise.all([
+      api('GET', '/admin/live'),
+      fetchJobsPage(),
+      fetchEpisodesPage(),
+    ]);
+    if (liveRes.ok) {
+      S.live = await liveRes.json();
       renderScheduler();
-      renderTape();
       if (S.live.by_podcast) {
         S.podStats = S.live.by_podcast;
         renderPodcastPipeline(S.podStats);
@@ -582,6 +597,87 @@ async function doLiveRefresh() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Episodes: paginated + server-filtered, polled on the same fast loop as
+// /admin/live and /admin/jobs — this used to be a full unpaginated table
+// fetched on a slower 30s timer, which is exactly why it visibly lagged
+// behind the job queue and podcast pipeline counts.
+// ---------------------------------------------------------------------------
+let _epFetchToken = 0;
+async function fetchEpisodesPage() {
+  const token = ++_epFetchToken;
+  const qs = new URLSearchParams({
+    page: String(S.episodesPage),
+    page_size: String(S.episodesPageSize),
+  });
+  if (S.statusFilter !== 'all') qs.set('status', S.statusFilter);
+  if (S.podcastFilter !== 'all') qs.set('podcast_id', S.podcastFilter);
+  if (S.siteFilter !== 'all') qs.set('site', S.siteFilter);
+  if (S.titleFilter.trim()) qs.set('q', S.titleFilter.trim());
+
+  const res = await api('GET', `/admin/episodes?${qs}`);
+  if (token !== _epFetchToken) return; // a newer request already superseded this one
+  if (!res.ok) return;
+  const data = await res.json();
+
+  // If a bulk action emptied the current page (e.g. deleting the last items
+  // on the last page), snap back instead of showing a blank table.
+  if (data.episodes.length === 0 && data.total > 0 && S.episodesPage > 1) {
+    S.episodesPage = Math.max(1, Math.ceil(data.total / S.episodesPageSize));
+    return fetchEpisodesPage();
+  }
+
+  S.episodes = data.episodes;
+  S.episodesTotal = data.total;
+  S.statusCounts = data.counts;
+  renderEpisodesTable();
+}
+
+// ---------------------------------------------------------------------------
+// Job queue: active (pending/claimed) list is paginated the same way as
+// episodes — with processing paused for a while, 100+ episodes can back up
+// as pending 'process' jobs, and this is polled every few seconds.
+// ---------------------------------------------------------------------------
+let _jobsFetchToken = 0;
+async function fetchJobsPage() {
+  const token = ++_jobsFetchToken;
+  const qs = new URLSearchParams({
+    page: String(S.jobsPage),
+    page_size: String(S.jobsPageSize),
+  });
+
+  const res = await api('GET', `/admin/jobs?${qs}`);
+  if (token !== _jobsFetchToken) return; // a newer request already superseded this one
+  if (!res.ok) return;
+  const data = await res.json();
+
+  // If jobs on the current page finished since the last poll, snap back
+  // instead of showing a blank page.
+  if (data.active.length === 0 && data.active_total > 0 && S.jobsPage > 1) {
+    S.jobsPage = Math.max(1, Math.ceil(data.active_total / S.jobsPageSize));
+    return fetchJobsPage();
+  }
+
+  S.jobs = data;
+  S.jobsActiveTotal = data.active_total;
+  renderJobQueue();
+}
+
+function changeJobsPage(delta) {
+  S.jobsPage = Math.max(1, S.jobsPage + delta);
+  fetchJobsPage();
+}
+
+let _titleDebounce = null;
+function onTitleFilterInput() {
+  clearTimeout(_titleDebounce);
+  _titleDebounce = setTimeout(() => {
+    S.titleFilter = document.getElementById('title-filter').value;
+    S.episodesPage = 1;
+    fetchEpisodesPage();
+  }, 300);
+}
+
 let _refreshing = false;
 async function doRefresh(silent) {
   if (_refreshing) return;
@@ -590,19 +686,21 @@ async function doRefresh(silent) {
   status.textContent = silent ? '↻' : 'loading…';
   try {
     // Podcast pipeline counts come only from /admin/live's by_podcast (polled
-    // every 1s by doLiveRefresh) — this used to also fetch a second,
+    // every 3s by doLiveRefresh) — this used to also fetch a second,
     // slightly-different aggregate from /admin/status/by-podcast every 30s,
     // which caused the pipeline table to visibly flicker between two
     // disagreeing counts. Don't reintroduce a second source here.
-    const [epsRes, settingsRes, podsRes, wnRes, phRes] = await Promise.all([
-      api('GET', '/admin/episodes'),
+    // Episodes are also on the fast doLiveRefresh loop now (via
+    // fetchEpisodesPage), not fetched here — that used to be the one thing
+    // on this slow 30s timer while everything else moved every 1-3s, which
+    // is exactly why the episodes table visibly lagged behind the rest.
+    const [settingsRes, podsRes, wnRes, phRes] = await Promise.all([
       api('GET', '/admin/pipeline-settings'),
       api('GET', '/admin/podcasts'),
       fetch('/api/whats-new'),
       api('GET', '/search-placeholders'),
     ]);
     const failures = [];
-    if (epsRes.ok)       S.episodes         = await epsRes.json();      else failures.push(`episodes ${epsRes.status}`);
     if (settingsRes.ok)  S.pipelineSettings = await settingsRes.json(); else failures.push(`pipeline-settings ${settingsRes.status}`);
     if (wnRes.ok)        S.whatsNewEntries  = await wnRes.json();       else failures.push(`whats-new ${wnRes.status}`);
     if (phRes.ok)        S.placeholders     = await phRes.json();
@@ -613,7 +711,6 @@ async function doRefresh(silent) {
     if (failures.length) toast(`API error: ${failures.join(', ')}`, false);
     renderPipelineSettings();
     renderPodcastPipeline(S.podStats);
-    renderEpisodesTable();
     status.textContent = '';
   } catch (e) {
     status.textContent = 'error';
@@ -634,7 +731,7 @@ async function bustAndRefresh() {
 function renderScheduler() {
   const s = S.live?.scheduler;
   if (!s) return;
-  const badge = s.paused
+  const badge = s.processing_paused
     ? '<span class="badge badge-paused">PAUSED</span>'
     : '<span class="badge badge-running">RUNNING</span>';
   const jobs = (s.jobs || []).map(j => `
@@ -642,8 +739,8 @@ function renderScheduler() {
       <span class="muted">${esc(j.id)}</span>
       <span class="muted">⏱ ${fmtNextRun(j.next_run)}</span>
     </div>`).join('');
-  const btnCls = s.paused ? 'btn-green' : 'btn-orange';
-  const btnLbl = s.paused ? '▶ resume scheduler' : '⏸ pause scheduler';
+  const btnCls = s.processing_paused ? 'btn-green' : 'btn-orange';
+  const btnLbl = s.processing_paused ? '▶ resume processing' : '⏸ pause processing';
   const blurb = S.live?.blurb || {};
   const blurbBadge = blurb.connected
     ? `<span class="badge badge-running">connected</span>`
@@ -658,8 +755,9 @@ function renderScheduler() {
     : `<div style="font-size:0.78rem;color:var(--muted)">never seen</div>`;
   document.getElementById('scheduler-body').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
-      <span class="muted small">scheduler</span>${badge}
+      <span class="muted small">processing</span>${badge}
     </div>
+    <div class="muted small" style="margin-bottom:0.5rem">Pausing stops 'process' jobs (download+transcribe) from being claimed by blurb — no exceptions, regardless of how they were queued. Discovery and stuck-job reclaim keep running.</div>
     ${jobs}
     <div style="display:flex;justify-content:space-between;align-items:center;margin:0.6rem 0 0.35rem">
       <span class="muted small">blurb</span>${blurbBadge}
@@ -681,46 +779,87 @@ function fmtLastSeen(iso) {
 }
 
 // ---------------------------------------------------------------------------
-// FSM Tape
+// Job Queue
 // ---------------------------------------------------------------------------
-function renderTape() {
-  if (!S.live) return;
-  const { active, queue: queueRaw, recent } = S.live;
-  const past  = [recent[1] || null, recent[0] || null]; // index 0 = most recent → closest to head
-  const queue = [...queueRaw];
-  while (queue.length < 2) queue.push(null);
+function fmtAge(iso) {
+  if (!iso) return '—';
+  const diff = Math.max(0, Date.now() - new Date(iso));
+  const s = Math.round(diff / 1000);
+  if (s < 90) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 90) return `${m}m`;
+  const h = Math.round(m / 60);
+  return `${h}h`;
+}
 
-  function badge(ep) {
-    if (!ep) return '';
-    const cls = { downloading:'badge-downloading', processed:'badge-processed', failed:'badge-failed', discovered:'badge-discovered', orphaned:'badge-orphaned' }[ep.status] || '';
-    const lbl = ep.status === 'discovered' ? 'queued' : ep.status;
-    return `<span class="badge ${cls}">${lbl}</span>`;
+function jobTarget(job) {
+  if (job.kind === 'process') {
+    return `<span class="job-target">${esc(job.episode_title || '—')}<span class="sub">${esc(job.episode_podcast || '')}</span></span>`;
   }
-  function cell(ep, cls) {
-    if (!ep) return `<div class="tape-cell ${cls}" style="opacity:0.13"><div class="tape-title muted" style="margin-top:0.6rem;text-align:center">—</div></div>`;
-    return `<div class="tape-cell ${cls}">${badge(ep)}<div class="tape-title" title="${esc(ep.title)}">${esc(ep.title)}</div><div class="tape-pod">${esc(ep.podcast_name)}</div></div>`;
-  }
-  function headCell(ep) {
-    if (!ep) {
-      const sched = S.live.scheduler || {};
-      const ps = S.pipelineSettings || {};
-      let reason = 'idle';
-      if (sched.paused) reason = 'paused';
-      else if (!ps.auto_download) reason = 'downloads off';
-      else if (!S.live.blurb?.connected) reason = 'blurb offline';
-      else if ((S.live.counts?.discovered || 0) === 0) reason = 'queue empty';
-      return `<div class="tape-cell tape-idle"><div class="tape-title muted" style="margin-top:0.55rem;text-align:center">${reason}</div></div>`;
-    }
-    return `<div class="tape-cell tape-head">${badge(ep)}<div class="tape-title" title="${esc(ep.title)}">${esc(ep.title)}</div><div class="tape-pod">${esc(ep.podcast_name)}</div></div>`;
-  }
-  document.getElementById('tape-body').innerHTML = `
-    <div class="tape-wrap"><div class="tape">
-      ${cell(past[0], 'tape-past')}
-      ${cell(past[1], 'tape-past')}
-      ${headCell(active)}
-      ${cell(queue[0], 'tape-future')}
-      ${cell(queue[1], 'tape-future')}
-    </div></div>`;
+  return `<span class="job-target">${esc(job.source_name || '—')}<span class="sub">${esc(job.source_podcast || '')}</span></span>`;
+}
+
+function toggleRecentJobs() {
+  const body = document.getElementById('jobs-recent-body');
+  const arrow = document.getElementById('jobs-recent-arrow');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  arrow.textContent = open ? '▸' : '▾';
+}
+
+function renderJobQueue() {
+  const j = S.jobs;
+  if (!j) return;
+
+  const c = j.counts || {};
+  document.getElementById('jobs-summary').innerHTML =
+    `process: ${c.process_pending || 0} pending, ${c.process_claimed || 0} claimed` +
+    `<span class="sep">|</span>discover: ${c.discover_pending || 0} pending, ${c.discover_claimed || 0} claimed`;
+
+  const activeRows = (j.active || []).map(job => {
+    const cls = job.status === 'claimed' ? 'badge-downloading' : 'badge-discovered';
+    return `<tr>
+      <td><span class="badge" style="text-transform:uppercase">${esc(job.kind)}</span></td>
+      <td>${jobTarget(job)}</td>
+      <td><span class="badge ${cls}">${esc(job.status)}</span></td>
+      <td class="muted small">${esc(job.claimed_by_worker ? job.claimed_by_worker.slice(0, 8) : '—')}</td>
+      <td class="muted small">${fmtAge(job.claimed_at || job.created_at)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('jobs-tbody').innerHTML = activeRows ||
+    `<tr><td colspan="5" style="text-align:center;padding:1.2rem;color:var(--muted)">No active jobs</td></tr>`;
+  renderJobsPagination();
+
+  const recentRows = (j.recent || []).map(job => {
+    const cls = job.status === 'completed' ? 'badge-processed' : 'badge-failed';
+    const target = job.kind === 'process' ? (job.episode_title || '—') : (job.source_name || '—');
+    return `<tr>
+      <td><span class="badge" style="text-transform:uppercase">${esc(job.kind)}</span></td>
+      <td>${esc(target)}</td>
+      <td><span class="badge ${cls}">${esc(job.status)}</span></td>
+      <td class="err-text" title="${esc(job.error || '')}">${esc(job.error_type || job.error || '')}</td>
+      <td class="muted small">${fmtAge(job.created_at)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('jobs-recent-tbody').innerHTML = recentRows ||
+    `<tr><td colspan="5" style="text-align:center;padding:1rem;color:var(--muted)">Nothing recent</td></tr>`;
+}
+
+function renderJobsPagination() {
+  const el = document.getElementById('jobs-pagination');
+  if (!el) return;
+  const total = S.jobsActiveTotal;
+  if (total <= S.jobsPageSize) { el.innerHTML = ''; return; }
+  const totalPages = Math.max(1, Math.ceil(total / S.jobsPageSize));
+  const from = total === 0 ? 0 : (S.jobsPage - 1) * S.jobsPageSize + 1;
+  const to = Math.min(S.jobsPage * S.jobsPageSize, total);
+  el.innerHTML = `
+    <span class="muted small">${from}–${to} of ${total}</span>
+    <div style="display:flex;align-items:center;gap:0.6rem">
+      <button class="btn btn-ghost small" ${S.jobsPage <= 1 ? 'disabled' : ''} onclick="changeJobsPage(-1)">‹ prev</button>
+      <span class="muted small">page ${S.jobsPage} / ${totalPages}</span>
+      <button class="btn btn-ghost small" ${S.jobsPage >= totalPages ? 'disabled' : ''} onclick="changeJobsPage(1)">next ›</button>
+    </div>`;
 }
 
 async function toggleScheduler() {
@@ -729,10 +868,10 @@ async function toggleScheduler() {
   const btn = document.getElementById('sched-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
   try {
-    const action = S.live?.scheduler?.paused ? 'resume' : 'pause';
+    const action = S.live?.scheduler?.processing_paused ? 'resume' : 'pause';
     const res = await api('POST', `/admin/scheduler/${action}`);
     if (!res.ok) throw new Error(await res.text());
-    toast(`Scheduler ${action}d`);
+    toast(`Processing ${action}d`);
     await bustAndRefresh();
   } catch (e) {
     toast(`Failed: ${e}`, false);
@@ -860,8 +999,9 @@ async function savePodOrder() {
 function filterEpisodes(podcastId, status) {
   S.podcastFilter = podcastId;
   S.statusFilter = status;
+  S.episodesPage = 1;
   document.getElementById('podcast-filter').value = podcastId;
-  renderEpisodesTable();
+  fetchEpisodesPage();
   document.getElementById('episodes-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -886,51 +1026,11 @@ async function triggerDiscover(podcastId) {
   }
 }
 
-async function triggerDownload(podcastId) {
-  const key = `pp-dl-${podcastId ?? 'all'}`;
-  if (S.pending.has(key)) return;
-  S.pending.add(key);
-  const btn = document.getElementById(`pp-dl-${podcastId ?? 'all'}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
-  try {
-    const qs = podcastId ? `?podcast_id=${encodeURIComponent(podcastId)}` : '';
-    const res = await api('POST', `/admin/episodes/process-discovered${qs}`);
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    toast(`${data.queued} episode(s) queued for download`);
-  } catch (e) {
-    toast(`Failed: ${e}`, false);
-  } finally {
-    S.pending.delete(key);
-    await bustAndRefresh();
-  }
-}
-
-async function triggerTranscribe(podcastId) {
-  const key = `pp-tx-${podcastId ?? 'all'}`;
-  if (S.pending.has(key)) return;
-  S.pending.add(key);
-  const btn = document.getElementById(`pp-tx-${podcastId ?? 'all'}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
-  try {
-    const qs = podcastId ? `?podcast_id=${encodeURIComponent(podcastId)}` : '';
-    const res = await api('POST', `/admin/episodes/process-downloaded${qs}`);
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    toast(`${data.queued} episode(s) queued for transcription`);
-  } catch (e) {
-    toast(`Failed: ${e}`, false);
-  } finally {
-    S.pending.delete(key);
-    await bustAndRefresh();
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Pipeline settings
 // ---------------------------------------------------------------------------
 const SETTINGS_META = [
-  { key: 'auto_discover',   label: 'Auto Discover',   desc: 'Scheduled discovery runs every 24h' },
+  { key: 'auto_discover',   label: 'Auto Discover',   desc: 'Scheduled discovery runs every 6h' },
   { key: 'auto_download',   label: 'Auto Download',   desc: 'Newly discovered episodes are downloaded and transcribed automatically' },
 ];
 
@@ -1220,27 +1320,24 @@ const RETRYABLE   = new Set(['failed', 'downloading']);
 const PROCESSABLE = new Set(['discovered']);
 const STATUS_TABS = ['all', 'discovered', 'downloading', 'failed', 'processed', 'orphaned', 'blacklisted'];
 
+// Filtering (status/podcast/site/title) now happens server-side in
+// /admin/episodes — S.episodes is already just the current page matching the
+// current filters, so this is just an alias kept for the call sites below.
 function getFiltered() {
-  let r = S.episodes;
-  if (S.statusFilter === 'blacklisted') r = r.filter(e => e.blacklisted);
-  else if (S.statusFilter !== 'all')    r = r.filter(e => e.status === S.statusFilter);
-  if (S.podcastFilter !== 'all')        r = r.filter(e => e.podcast_id === S.podcastFilter);
-  if (S.siteFilter !== 'all')           r = r.filter(e => e.site === S.siteFilter);
-  const q = S.titleFilter.trim().toLowerCase();
-  if (q) r = r.filter(e => e.title.toLowerCase().includes(q));
-  return r;
+  return S.episodes;
 }
 
 function setStatusFilter(s) {
   S.statusFilter = S.statusFilter === s ? 'all' : s;
-  renderEpisodesTable();
+  S.episodesPage = 1;
+  fetchEpisodesPage();
 }
 
 function applyFilters() {
-  S.titleFilter   = document.getElementById('title-filter').value;
   S.podcastFilter = document.getElementById('podcast-filter').value;
   S.siteFilter    = document.getElementById('site-filter').value;
-  renderEpisodesTable();
+  S.episodesPage = 1;
+  fetchEpisodesPage();
 }
 
 function renderPodcastFilter() {
@@ -1252,11 +1349,9 @@ function renderPodcastFilter() {
 }
 
 function renderStatusTabs() {
-  const blCount = S.episodes.filter(e => e.blacklisted).length;
+  const counts = S.statusCounts || {};
   document.getElementById('status-tabs').innerHTML = STATUS_TABS.map(tab => {
-    const count = tab === 'all' ? S.episodes.length
-      : tab === 'blacklisted' ? blCount
-      : S.episodes.filter(e => e.status === tab).length;
+    const count = counts[tab] ?? 0;
     const active = S.statusFilter === tab;
     const cls = active ? (tab === 'blacklisted' ? 'active-bl' : 'active') : '';
     return `<button class="tab ${cls}" onclick="setStatusFilter('${tab}')">${tab === 'blacklisted' ? '⊘ ' : ''}${tab} (${count})</button>`;
@@ -1271,11 +1366,8 @@ function toggleEpisodesSection() {
 
 function renderEpisodesTable() {
   renderStatusTabs();
-  const sites = new Set(S.episodes.map(e => e.site));
-  const siteEl = document.getElementById('site-filter');
-  if (siteEl) siteEl.disabled = sites.size <= 1;
-  const filtered = getFiltered();
-  document.getElementById('ep-count').textContent = filtered.length;
+  const filtered = S.episodes;
+  document.getElementById('ep-count').textContent = S.episodesTotal;
   document.getElementById('ep-filter-label').textContent = S.statusFilter !== 'all' ? `(${S.statusFilter})` : '';
 
   const allSel  = filtered.length > 0 && filtered.every(e => S.selected.has(e.id));
@@ -1288,6 +1380,27 @@ function renderEpisodesTable() {
     : filtered.map(renderEpRow).join('');
 
   renderBulkBar(filtered);
+  renderPagination();
+}
+
+function renderPagination() {
+  const el = document.getElementById('ep-pagination');
+  if (!el) return;
+  const totalPages = Math.max(1, Math.ceil(S.episodesTotal / S.episodesPageSize));
+  const from = S.episodesTotal === 0 ? 0 : (S.episodesPage - 1) * S.episodesPageSize + 1;
+  const to = Math.min(S.episodesPage * S.episodesPageSize, S.episodesTotal);
+  el.innerHTML = `
+    <span class="muted small">${from}–${to} of ${S.episodesTotal}</span>
+    <div style="display:flex;align-items:center;gap:0.6rem">
+      <button class="btn btn-ghost small" ${S.episodesPage <= 1 ? 'disabled' : ''} onclick="changeEpisodesPage(-1)">‹ prev</button>
+      <span class="muted small">page ${S.episodesPage} / ${totalPages}</span>
+      <button class="btn btn-ghost small" ${S.episodesPage >= totalPages ? 'disabled' : ''} onclick="changeEpisodesPage(1)">next ›</button>
+    </div>`;
+}
+
+function changeEpisodesPage(delta) {
+  S.episodesPage = Math.max(1, S.episodesPage + delta);
+  fetchEpisodesPage();
 }
 
 function renderEpRow(ep) {
@@ -1455,25 +1568,6 @@ function renderBulkBar(filtered) {
     btns += `<button class="btn btn-red"   style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="S.confirmBulkDelete=true;renderBulkBar(getFiltered())">🗑 delete</button>`;
   }
   document.getElementById('bulk-actions').innerHTML = btns;
-}
-
-async function processDiscovered() {
-  const btn = document.getElementById('process-discovered-btn');
-  if (btn.disabled) return;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>';
-  try {
-    const res = await api('POST', '/admin/episodes/process-discovered');
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    toast(`${data.queued} episode(s) queued`);
-    setTimeout(() => bustAndRefresh(), 1500);
-  } catch (e) {
-    toast(`Failed: ${e}`, false);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '▶ run';
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -179,7 +179,7 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
                 WHERE source_id     = $1::uuid
                   AND video_id      = ANY($2)
                   AND blacklisted   = FALSE
-                  AND status NOT IN ('processed', 'downloading', 'transcribing')
+                  AND status NOT IN ('processed', 'downloading')
                 """,
                 source_id, short_video_ids,
             )
@@ -196,7 +196,7 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
             SET status = 'orphaned', updated_at = NOW()
             WHERE source_id = $1::uuid
               AND video_id != ALL($2)
-              AND status NOT IN ('downloading', 'downloaded', 'transcribing', 'orphaned')
+              AND status NOT IN ('downloading', 'orphaned')
               AND blacklisted = FALSE
             """,
             source_id, all_seen_video_ids,
