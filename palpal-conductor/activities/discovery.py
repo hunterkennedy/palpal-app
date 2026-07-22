@@ -34,39 +34,20 @@ def _coerce_filters(f) -> dict:
     return {}
 
 
-async def get_enabled_youtube_sources(podcast_id: str | None = None) -> list[SourceRow]:
-    """Return enabled YouTube sources, optionally filtered to one podcast."""
+async def get_enabled_sources_by_site(site: str, podcast_id: str | None = None) -> list[SourceRow]:
+    """Return enabled sources for one site ('youtube', 'patreon', 'rss'), optionally filtered to one podcast."""
     pool = db.get_pool()
     if podcast_id:
         rows = await pool.fetch(
             "SELECT id::text, url, filters, podcast_id FROM sources "
-            "WHERE site = 'youtube' AND enabled = TRUE AND podcast_id = $1",
-            podcast_id,
+            "WHERE site = $1 AND enabled = TRUE AND podcast_id = $2",
+            site, podcast_id,
         )
     else:
         rows = await pool.fetch(
             "SELECT id::text, url, filters, podcast_id FROM sources "
-            "WHERE site = 'youtube' AND enabled = TRUE"
-        )
-    return [
-        SourceRow(id=str(row["id"]), url=row["url"], filters=_coerce_filters(row["filters"]), podcast_id=row["podcast_id"])
-        for row in rows
-    ]
-
-
-async def get_enabled_patreon_sources(podcast_id: str | None = None) -> list[SourceRow]:
-    """Return enabled Patreon sources, optionally filtered to one podcast."""
-    pool = db.get_pool()
-    if podcast_id:
-        rows = await pool.fetch(
-            "SELECT id::text, url, filters, podcast_id FROM sources "
-            "WHERE site = 'patreon' AND enabled = TRUE AND podcast_id = $1",
-            podcast_id,
-        )
-    else:
-        rows = await pool.fetch(
-            "SELECT id::text, url, filters, podcast_id FROM sources "
-            "WHERE site = 'patreon' AND enabled = TRUE"
+            "WHERE site = $1 AND enabled = TRUE",
+            site,
         )
     return [
         SourceRow(id=str(row["id"]), url=row["url"], filters=_coerce_filters(row["filters"]), podcast_id=row["podcast_id"])

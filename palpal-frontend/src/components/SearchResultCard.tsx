@@ -210,8 +210,9 @@ export default function SearchResultCard({
           id={`result-${groupKey}-${index}-meta`}
           className="flex flex-wrap gap-4 text-sm text-gray-400"
         >
+          {getWatchUrl(hit) && (
           <a
-            href={getWatchUrl(hit)}
+            href={getWatchUrl(hit)!}
             target="_blank"
             rel="noopener noreferrer"
             className={`flex items-center gap-1 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 rounded-md p-1 -m-1 ${
@@ -225,6 +226,7 @@ export default function SearchResultCard({
             <Play className="w-4 h-4" aria-hidden="true" />
             <span>{getWatchText(hit)}</span>
           </a>
+          )}
 
           <div className="flex items-center gap-1" aria-label={`Timestamp: ${hit.start_formatted}`}>
             <Clock className="w-4 h-4" aria-hidden="true" />

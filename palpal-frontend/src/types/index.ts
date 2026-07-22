@@ -10,6 +10,7 @@ export interface TranscriptDocument {
   podcast_id: string;
   podcast_name: string;
   source_name: string;
+  site: string;
 
   // Episode metadata
   episode_id: string;

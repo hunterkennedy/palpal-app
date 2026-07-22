@@ -32,7 +32,8 @@ from pipeline import (
     recover_interrupted_downloads,
     handle_discover_complete, handle_discover_fail,
     handle_process_complete, handle_process_fail,
-    queue_episodes_for_processing,
+    queue_episodes_for_processing, backfill_patreon_durations,
+    cancel_jobs_for_source, cancel_jobs_for_podcast,
 )
 from activities.b2 import delete_transcript as b2_delete_transcript
 from activities.process import process_transcript
@@ -291,6 +292,15 @@ async def trigger_discovery(
     return {"status": "started", "podcast_id": podcast_id, "auto_queue": auto_queue}
 
 
+@app.post("/admin/episodes/backfill-patreon-duration", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def backfill_patreon_duration():
+    """Queue a metadata-only duration probe for every Patreon episode missing
+    duration_seconds (episodes discovered before duration capture existed).
+    No re-download or re-transcribe — just fills in the one column."""
+    n = await backfill_patreon_durations()
+    return {"status": "queued", "jobs_created": n}
+
+
 @app.get("/admin/scheduler/status", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_status():
     """Current scheduler state and job next-run times."""
@@ -320,7 +330,7 @@ async def process_episode(episode_id: str):
     pause state rather than silently no-op'ing when either is off."""
     pool = db.get_pool()
     row = await pool.fetchrow(
-        "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
+        "SELECT status, title FROM episodes WHERE id = $1::uuid", episode_id
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
@@ -328,6 +338,11 @@ async def process_episode(episode_id: str):
         raise HTTPException(
             status_code=409,
             detail=f"Episode is '{row['status']}' — only discovered episodes can be queued this way",
+        )
+    if not row["title"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Episode has no title — the source lists it as private/unfetchable, so it can never download",
         )
     queued = await queue_episodes_for_processing([episode_id])
     if not queued:
@@ -456,7 +471,7 @@ async def retry_episode(episode_id: str):
     episode shouldn't silently undo a deliberate (or auto-triggered) pause."""
     pool = db.get_pool()
     row = await pool.fetchrow(
-        "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
+        "SELECT status, title FROM episodes WHERE id = $1::uuid", episode_id
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
@@ -464,6 +479,11 @@ async def retry_episode(episode_id: str):
         raise HTTPException(
             status_code=409,
             detail=f"Episode is '{row['status']}' — only failed or stuck episodes can be retried",
+        )
+    if not row["title"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Episode has no title — the source lists it as private/unfetchable, so it can never download. Delete or blacklist it instead.",
         )
     await cancel_process_job(episode_id, "Cancelled by admin retry")
     await pool.execute(
@@ -490,10 +510,23 @@ async def delete_episode(episode_id: str):
 
 @app.post("/admin/episodes/{episode_id}/blacklist", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def blacklist_episode(episode_id: str):
-    """Mark an episode as blacklisted — kept in DB to prevent re-discovery, but skipped by automatic processing."""
+    """Mark an episode as blacklisted — kept in DB to prevent re-discovery, but
+    skipped by automatic processing. Cancels any in-flight process job first —
+    without this, a download/transcribe already underway keeps running and its
+    eventual result flips status to 'processed' behind the blacklist's back.
+    A 'downloading' episode has no job driving it anymore once cancelled, so
+    it's moved to 'blacklisted' rather than left stuck; any other status is
+    left as-is (e.g. an already-processed episode keeps its transcript)."""
     pool = db.get_pool()
+    await cancel_process_job(episode_id, "Cancelled by admin blacklist")
     result = await pool.execute(
-        "UPDATE episodes SET blacklisted = TRUE WHERE id = $1::uuid", episode_id
+        """
+        UPDATE episodes
+        SET blacklisted = TRUE,
+            status = CASE WHEN status = 'downloading' THEN 'blacklisted' ELSE status END
+        WHERE id = $1::uuid
+        """,
+        episode_id,
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Episode not found")
@@ -532,7 +565,7 @@ async def retranscribe_episode(episode_id: str):
     """Delete existing transcript/chunks and re-run the full pipeline from download."""
     pool = db.get_pool()
     row = await pool.fetchrow(
-        "SELECT id, status FROM episodes WHERE id = $1::uuid", episode_id
+        "SELECT id, status, title FROM episodes WHERE id = $1::uuid", episode_id
     )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
@@ -540,6 +573,11 @@ async def retranscribe_episode(episode_id: str):
         raise HTTPException(
             status_code=409,
             detail="Episode is currently downloading — wait for it to complete before retranscribing",
+        )
+    if not row["title"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Episode has no title — the source lists it as private/unfetchable, so it can never download. Delete or blacklist it instead.",
         )
     await cancel_process_job(episode_id, "Cancelled by retranscribe")
 
@@ -636,7 +674,7 @@ async def bulk_episode_action(body: BulkActionRequest):
     for episode_id in body.episode_ids:
         try:
             row = await pool.fetchrow(
-                "SELECT status FROM episodes WHERE id = $1::uuid", episode_id
+                "SELECT status, title FROM episodes WHERE id = $1::uuid", episode_id
             )
             if not row:
                 results.append({"id": episode_id, "ok": False, "detail": "not found"})
@@ -645,6 +683,9 @@ async def bulk_episode_action(body: BulkActionRequest):
             if body.action == "retry":
                 if row["status"] not in ("failed", "downloading"):
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot retry '{row['status']}'"})
+                    continue
+                if not row["title"]:
+                    results.append({"id": episode_id, "ok": False, "detail": "no title — private/unfetchable, can never download"})
                     continue
                 await cancel_process_job(episode_id, "Cancelled by admin retry")
                 await pool.execute(
@@ -656,6 +697,9 @@ async def bulk_episode_action(body: BulkActionRequest):
                 if row["status"] != "discovered":
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot process '{row['status']}'"})
                     continue
+                if not row["title"]:
+                    results.append({"id": episode_id, "ok": False, "detail": "no title — private/unfetchable, can never download"})
+                    continue
                 to_queue.append(episode_id)
 
             elif body.action == "delete":
@@ -664,7 +708,16 @@ async def bulk_episode_action(body: BulkActionRequest):
                 await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
 
             elif body.action == "blacklist":
-                await pool.execute("UPDATE episodes SET blacklisted = TRUE WHERE id = $1::uuid", episode_id)
+                await cancel_process_job(episode_id, "Cancelled by admin blacklist")
+                await pool.execute(
+                    """
+                    UPDATE episodes
+                    SET blacklisted = TRUE,
+                        status = CASE WHEN status = 'downloading' THEN 'blacklisted' ELSE status END
+                    WHERE id = $1::uuid
+                    """,
+                    episode_id,
+                )
 
             elif body.action == "unblacklist":
                 await pool.execute(
@@ -682,6 +735,9 @@ async def bulk_episode_action(body: BulkActionRequest):
             elif body.action == "retranscribe":
                 if row["status"] == "downloading":
                     results.append({"id": episode_id, "ok": False, "detail": f"cannot retranscribe '{row['status']}'"})
+                    continue
+                if not row["title"]:
+                    results.append({"id": episode_id, "ok": False, "detail": "no title — private/unfetchable, can never download"})
                     continue
                 await cancel_process_job(episode_id, "Cancelled by retranscribe")
                 await pool.execute(
@@ -904,8 +960,11 @@ async def update_podcast(podcast_id: str, body: dict):
 
 @app.delete("/admin/podcasts/{podcast_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_delete_podcast(podcast_id: str):
-    """Delete a podcast and all its sources and episodes (cascade)."""
+    """Delete a podcast and all its sources and episodes (cascade). Cancels
+    any live discover/process jobs underneath it first — see
+    cancel_jobs_for_podcast for why a bare cascade delete isn't enough."""
     pool = db.get_pool()
+    await cancel_jobs_for_podcast(podcast_id, "Cancelled: podcast deleted")
     result = await pool.execute("DELETE FROM podcasts WHERE id = $1", podcast_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Podcast not found")
@@ -932,11 +991,12 @@ async def create_source(podcast_id: str, body: dict):
     """Add a source to a podcast."""
     pool = db.get_pool()
     filters = body.get("filters", {})
-    url = _normalize_youtube_url(body.get("url", ""))
+    site = body.get("site", "youtube")
+    url = _normalize_youtube_url(body.get("url", "")) if site == "youtube" else body.get("url", "")
     enabled = bool(body.get("enabled", True))
     row = await pool.fetchrow(
         "INSERT INTO sources (podcast_id, name, site, url, enabled, filters) VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING id::text",
-        podcast_id, body.get("name", ""), body.get("site", "youtube"),
+        podcast_id, body.get("name", ""), site,
         url, enabled, json.dumps(filters),
     )
     caches.bust_podcasts_cache()
@@ -948,9 +1008,9 @@ async def update_source(source_id: str, body: dict):
     """Update a source."""
     pool = db.get_pool()
     filters = body.get("filters", {})
-    url = _normalize_youtube_url(body.get("url", ""))
-    enabled = bool(body.get("enabled", True))
     site = body.get("site", "youtube")
+    url = _normalize_youtube_url(body.get("url", "")) if site == "youtube" else body.get("url", "")
+    enabled = bool(body.get("enabled", True))
     row = await pool.fetchrow(
         "UPDATE sources SET name=$1, site=$2, url=$3, enabled=$4, filters=$5::jsonb WHERE id=$6::uuid RETURNING podcast_id",
         body.get("name", ""), site, url, enabled, json.dumps(filters), source_id,
@@ -963,8 +1023,11 @@ async def update_source(source_id: str, body: dict):
 
 @app.delete("/admin/sources/{source_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_delete_source(source_id: str):
-    """Delete a source (cascades to its episodes)."""
+    """Delete a source (cascades to its episodes). Cancels any live discover
+    job for it and process jobs for its episodes first — see
+    cancel_jobs_for_source for why a bare cascade delete isn't enough."""
     pool = db.get_pool()
+    await cancel_jobs_for_source(source_id, "Cancelled: source deleted")
     result = await pool.execute("DELETE FROM sources WHERE id = $1::uuid", source_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Source not found")
@@ -1060,7 +1123,7 @@ async def search(
             tc.id::text, tc.episode_id::text, tc.chunk_index, tc.text,
             tc.start_time, tc.end_time, tc.duration, tc.start_formatted,
             tc.start_minutes, tc.word_count, tc.podcast_id, tc.podcast_name,
-            tc.source_name, tc.episode_title, tc.video_id, tc.publication_date,
+            tc.source_name, tc.site, tc.episode_title, tc.video_id, tc.publication_date,
             ts_rank_cd(tc.search_vector, query, 1) AS rank,
             ts_headline('english', tc.text, query,
                 'StartSel=<mark>, StopSel=</mark>, HighlightAll=true'
@@ -1105,7 +1168,7 @@ async def search(
 _CHUNK_FIELDS = (
     "id", "episode_id", "chunk_index", "text", "start_time", "end_time", "duration",
     "start_formatted", "start_minutes", "word_count", "podcast_id", "podcast_name",
-    "source_name", "episode_title", "video_id", "publication_date",
+    "source_name", "site", "episode_title", "video_id", "publication_date",
 )
 
 
@@ -1128,7 +1191,7 @@ async def chunks(
         SELECT tc.id::text, tc.episode_id::text, tc.chunk_index, tc.text,
                tc.start_time, tc.end_time, tc.duration, tc.start_formatted,
                tc.start_minutes, tc.word_count, tc.podcast_id, tc.podcast_name,
-               tc.source_name, tc.episode_title, tc.video_id, tc.publication_date,
+               tc.source_name, tc.site, tc.episode_title, tc.video_id, tc.publication_date,
                bounds.max_index
         FROM transcript_chunks tc, center, bounds
         WHERE tc.episode_id = center.episode_id

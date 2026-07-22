@@ -10,7 +10,7 @@ import caches
 import db
 import pipeline_settings as settings
 from activities.discovery import (
-    get_enabled_youtube_sources, get_enabled_patreon_sources, get_source,
+    get_enabled_sources_by_site, get_source,
     apply_discovery_results, apply_channel_icon,
 )
 from activities.process import process_transcript
@@ -99,9 +99,64 @@ async def cancel_process_job(episode_id: str, reason: str) -> None:
     )
 
 
+async def cancel_jobs_for_source(source_id: str, reason: str) -> None:
+    """
+    Cancel any live discover job for a source and any live process job for
+    its episodes. Call this *before* deleting the source (or its parent
+    podcast) — jobs.source_id/episode_id are ON DELETE SET NULL, not CASCADE
+    (see migration 037), so a bare cascade delete leaves those jobs sitting in
+    the queue with a payload that points at ids which no longer resolve to
+    anything. blurb still does the work and the result gets discarded on
+    completion, but that's a wasted download/transcribe and a confusing
+    failed-job entry for an episode that no longer exists.
+    """
+    pool = db.get_pool()
+    await pool.execute(
+        """
+        UPDATE jobs SET status='failed', error=$1
+        WHERE kind='discover' AND status IN ('pending','claimed')
+          AND source_id = $2::uuid
+        """,
+        reason, source_id,
+    )
+    await pool.execute(
+        """
+        UPDATE jobs SET status='failed', error=$1
+        WHERE kind='process' AND status IN ('pending','claimed')
+          AND episode_id IN (SELECT id FROM episodes WHERE source_id = $2::uuid)
+        """,
+        reason, source_id,
+    )
+
+
+async def cancel_jobs_for_podcast(podcast_id: str, reason: str) -> None:
+    """Same as cancel_jobs_for_source but for every source under a podcast —
+    call before a podcast delete cascades through its sources and episodes."""
+    pool = db.get_pool()
+    await pool.execute(
+        """
+        UPDATE jobs SET status='failed', error=$1
+        WHERE kind='discover' AND status IN ('pending','claimed')
+          AND source_id IN (SELECT id FROM sources WHERE podcast_id = $2)
+        """,
+        reason, podcast_id,
+    )
+    await pool.execute(
+        """
+        UPDATE jobs SET status='failed', error=$1
+        WHERE kind='process' AND status IN ('pending','claimed')
+          AND episode_id IN (
+              SELECT e.id FROM episodes e JOIN sources s ON s.id = e.source_id
+              WHERE s.podcast_id = $2
+          )
+        """,
+        reason, podcast_id,
+    )
+
+
 async def _enqueue_process_jobs(rows) -> int:
-    """Create a 'process' job for each row (episode_id/video_id/site) and flip the
-    episode to 'downloading'. Shared by the auto-dispatch sweep and by admin
+    """Create a 'process' job for each row (episode_id/video_id/site/source_url) and
+    flip the episode to 'downloading'. Shared by the auto-dispatch sweep and by admin
     actions that force a specific episode through immediately.
 
     Rows are pre-filtered by the caller's NOT EXISTS check, but that check isn't
@@ -123,6 +178,9 @@ async def _enqueue_process_jobs(rows) -> int:
                     "site": row["site"],
                     "video_id": row["video_id"],
                     "min_duration_seconds": min_duration,
+                    # Only meaningful for RSS (blurb re-resolves the enclosure URL
+                    # from this at download time); harmless no-op for other sites.
+                    "url": row["source_url"],
                 },
                 episode_id=row["episode_id"],
             )
@@ -145,6 +203,14 @@ async def sync_process_jobs() -> int:
     completes, after an admin action, or from the periodic sweep. Returns the
     number of jobs created.
 
+    Excludes blank-title episodes — a title-less entry means the source
+    listed it as private/unfetchable (see apply_discovery_results), so it can
+    never actually download; dispatching it just burns a doomed job and, if
+    it keeps happening, chips away at the consecutive-failure auto-pause.
+    Discovery stopped inserting these going forward, but leftover rows from
+    before that fix (anything not already swept by migration 038) can still
+    be sitting in 'discovered'.
+
     This is the *automatic* dispatch path, so it respects the auto_download
     toggle. Admin actions that target a specific episode (process/retry/
     retranscribe) use queue_episodes_for_processing() instead, which bypasses
@@ -157,11 +223,11 @@ async def sync_process_jobs() -> int:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
-        SELECT e.id::text AS episode_id, e.video_id, s.site
+        SELECT e.id::text AS episode_id, e.video_id, s.site, s.url AS source_url
         FROM episodes e
         JOIN sources s ON s.id = e.source_id
         JOIN podcasts p ON s.podcast_id = p.id
-        WHERE e.status = 'discovered' AND e.blacklisted = FALSE
+        WHERE e.status = 'discovered' AND e.blacklisted = FALSE AND e.title != ''
           AND NOT EXISTS (
               SELECT 1 FROM jobs j
               WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
@@ -190,10 +256,10 @@ async def queue_episodes_for_processing(episode_ids: list[str]) -> int:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
-        SELECT e.id::text AS episode_id, e.video_id, s.site
+        SELECT e.id::text AS episode_id, e.video_id, s.site, s.url AS source_url
         FROM episodes e
         JOIN sources s ON s.id = e.source_id
-        WHERE e.id = ANY($1::uuid[]) AND e.status = 'discovered' AND e.blacklisted = FALSE
+        WHERE e.id = ANY($1::uuid[]) AND e.status = 'discovered' AND e.blacklisted = FALSE AND e.title != ''
           AND NOT EXISTS (
               SELECT 1 FROM jobs j
               WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
@@ -206,6 +272,51 @@ async def queue_episodes_for_processing(episode_ids: list[str]) -> int:
     if n:
         logger.info(f"Force-queued {n} process job(s) via admin action")
     return n
+
+
+async def backfill_patreon_durations() -> int:
+    """
+    One-off admin action: queue a duration-probe job for every Patreon episode
+    missing duration_seconds (episodes discovered before duration capture
+    existed). Reuses the 'process' job kind with duration_only=True so blurb
+    does a metadata-only yt-dlp probe — no re-download, no re-transcribe —
+    and existing episodes are left untouched aside from that one column.
+    Safe to call repeatedly; already-queued/duration-known episodes are
+    skipped. Returns the number of jobs created.
+    """
+    pool = db.get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT e.id::text AS episode_id, e.video_id
+        FROM episodes e
+        JOIN sources s ON s.id = e.source_id
+        WHERE s.site = 'patreon' AND e.duration_seconds IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM jobs j
+              WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
+                AND j.episode_id = e.id
+          )
+        """
+    )
+    created = 0
+    for row in rows:
+        try:
+            await _create_job(
+                "process",
+                {
+                    "episode_id": row["episode_id"],
+                    "site": "patreon",
+                    "video_id": row["video_id"],
+                    "duration_only": True,
+                },
+                episode_id=row["episode_id"],
+            )
+            created += 1
+        except asyncpg.exceptions.UniqueViolationError:
+            continue
+    if created:
+        logger.info(f"Queued {created} Patreon duration-probe job(s)")
+    return created
 
 
 async def dispatch_worker() -> None:
@@ -258,20 +369,22 @@ async def run_discovery(podcast_id: str | None = None, auto_queue: bool = True) 
     """
     Enqueue a 'discover' job for every enabled source (or one podcast's).
     Discovery itself now runs on blurb, using its local YouTube/Patreon
-    cookies — conductor never touches those credentials. This returns as
-    soon as the jobs are queued; results land asynchronously via
-    handle_discover_complete as blurb works through them.
+    cookies (RSS sources need no local credential at all — any auth is
+    embedded in the feed URL) — conductor never touches YouTube/Patreon
+    credentials. This returns as soon as the jobs are queued; results land
+    asynchronously via handle_discover_complete as blurb works through them.
 
     auto_queue=False tags the jobs so their results are written to the DB
     without auto-dispatching process jobs afterward — useful for reviewing
     a backlog before committing to processing it.
     """
     label = podcast_id or "all"
-    yt_sources = await get_enabled_youtube_sources(podcast_id=podcast_id)
-    patreon_sources = await get_enabled_patreon_sources(podcast_id=podcast_id)
+    yt_sources = await get_enabled_sources_by_site("youtube", podcast_id=podcast_id)
+    patreon_sources = await get_enabled_sources_by_site("patreon", podcast_id=podcast_id)
+    rss_sources = await get_enabled_sources_by_site("rss", podcast_id=podcast_id)
 
     queued = 0
-    for site, sources in (("youtube", yt_sources), ("patreon", patreon_sources)):
+    for site, sources in (("youtube", yt_sources), ("patreon", patreon_sources), ("rss", rss_sources)):
         for source in sources:
             try:
                 await _create_job(
@@ -331,8 +444,24 @@ async def handle_discover_fail(job_id: str, payload: dict, error: str) -> None:
 async def handle_process_complete(job_id: str, payload: dict, result: dict) -> None:
     episode_id = payload["episode_id"]
     pool = db.get_pool()
+
+    # Lightweight duration-only backfill job (see backfill_patreon_durations) —
+    # just record the probed duration, don't touch transcript/status.
+    if payload.get("duration_only"):
+        duration_seconds = result.get("duration_seconds")
+        if duration_seconds is not None:
+            await pool.execute(
+                "UPDATE episodes SET duration_seconds = $1 WHERE id = $2::uuid",
+                duration_seconds, episode_id,
+            )
+            caches.bust_episodes_cache()
+        else:
+            logger.warning(f"Job {job_id}: duration probe for episode {episode_id} returned no duration")
+        return
+
     transcript = result.get("transcript")
     publication_date = result.get("publication_date")
+    duration_seconds = result.get("duration_seconds")
 
     if publication_date:
         try:
@@ -343,6 +472,12 @@ async def handle_process_complete(job_id: str, payload: dict, result: dict) -> N
             )
         except Exception as exc:
             logger.warning(f"Job {job_id}: failed to set publication_date {publication_date!r} for {episode_id}: {exc}")
+
+    if duration_seconds is not None:
+        await pool.execute(
+            "UPDATE episodes SET duration_seconds = COALESCE(duration_seconds, $1) WHERE id = $2::uuid",
+            duration_seconds, episode_id,
+        )
 
     try:
         target_words = await settings.get_int("chunk_target_words") or 50
@@ -373,6 +508,15 @@ _PROCESS_ERROR_OUTCOME = {
 
 async def handle_process_fail(job_id: str, payload: dict, error: str, error_type: str | None) -> None:
     episode_id = payload["episode_id"]
+
+    # Duration-only backfill jobs target episodes that are already processed —
+    # a failed probe (post removed, transient network error) must not flip
+    # their status. Just log it; the episode is picked up again by the next
+    # backfill sweep since duration_seconds is still NULL.
+    if payload.get("duration_only"):
+        logger.warning(f"Duration probe job {job_id} failed for episode {episode_id}: {error}")
+        return
+
     pool = db.get_pool()
     outcome = _PROCESS_ERROR_OUTCOME.get(error_type or "other", "failed")
 

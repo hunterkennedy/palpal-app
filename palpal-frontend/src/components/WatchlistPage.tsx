@@ -8,7 +8,7 @@ import { PodcastConfig } from '@/types/podcast';
 import { EpisodeInfo } from '@/lib/conductor';
 
 type FilterOption = 'all' | 'unwatched' | 'watched';
-type SiteFilter = 'all' | 'youtube' | 'patreon';
+type SiteFilter = 'all' | 'youtube' | 'patreon' | 'rss';
 type SortColumn = 'date' | 'title' | 'duration';
 type SortDir = 'asc' | 'desc';
 
@@ -30,9 +30,14 @@ function formatDuration(seconds: number | null): string {
   return `${m}m`;
 }
 
-function getEpisodeUrl(episode: EpisodeInfo): string {
+function getEpisodeUrl(episode: EpisodeInfo): string | null {
   if (episode.site === 'patreon') {
     return `https://www.patreon.com/posts/${episode.video_id}`;
+  }
+  // RSS episodes have no public watch page — the feed URL itself carries a
+  // private auth token, so we never expose it client-side.
+  if (episode.site === 'rss') {
+    return null;
   }
   return episode.youtube_url;
 }
@@ -147,9 +152,8 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
       if (filter === 'unwatched') return !watched.has(e.video_id);
       return true;
     }).filter(e => {
-      if (siteFilter === 'youtube') return e.site === 'youtube';
-      if (siteFilter === 'patreon') return e.site === 'patreon';
-      return true;
+      if (siteFilter === 'all') return true;
+      return e.site === siteFilter;
     });
 
     list = [...list].sort((a, b) => {
@@ -305,7 +309,9 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                   {podcastSites.size > 1 && (
                     <>
                       <span className="self-center mx-1" style={{ color: 'var(--border-primary)' }}>|</span>
-                      {(['all', 'youtube', 'patreon'] as SiteFilter[]).map(s => (
+                      {(['all', 'youtube', 'patreon', 'rss'] as SiteFilter[])
+                        .filter(s => s === 'all' || podcastSites.has(s))
+                        .map(s => (
                         <button
                           key={s}
                           onClick={() => setSiteFilter(s)}
@@ -313,7 +319,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                             siteFilter === s ? 'pill-selected' : 'pill-enhanced'
                           }`}
                         >
-                          {s === 'all' ? 'All sources' : s === 'youtube' ? 'YouTube' : 'Patreon'}
+                          {s === 'all' ? 'All sources' : s === 'youtube' ? 'YouTube' : s === 'patreon' ? 'Patreon' : 'RSS'}
                         </button>
                       ))}
                     </>
@@ -434,8 +440,9 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
 
                                 {/* Watch */}
                                 <td className="px-2 sm:px-4 py-3">
+                                  {getEpisodeUrl(ep) && (
                                   <a
-                                    href={getEpisodeUrl(ep)}
+                                    href={getEpisodeUrl(ep)!}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className={`flex items-center gap-1.5 text-sm transition-colors whitespace-nowrap ${
@@ -448,6 +455,7 @@ export default function WatchlistPage({ initialEpisodes, initialPodcasts }: Watc
                                     <Play className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
                                     <span className="hidden sm:inline">Watch</span>
                                   </a>
+                                  )}
                                 </td>
                               </tr>
                             );

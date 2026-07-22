@@ -9,6 +9,7 @@ export interface ChunkLike {
   start_time?: number;
   podcast_name?: string;
   source_name?: string;
+  site?: string;
 }
 
 export interface ProcessedChunk extends SearchHit {
@@ -35,8 +36,16 @@ export function getYouTubeUrl(videoId: string, startTime: number): string {
  * Checks if a search hit is from a Patreon source
  */
 export function isPatreonSource(hit: SearchHit | ChunkLike): boolean {
-  // Check if source_name contains "patreon" (case-insensitive)
-  return hit.source_name?.toLowerCase().includes('patreon') ?? false;
+  return hit.site === 'patreon';
+}
+
+/**
+ * Checks if a search hit is from a generic RSS source. These have no public
+ * watch page — the feed URL carries a private auth token, so it's never sent
+ * to the browser — see getWatchUrl.
+ */
+export function isRssSource(hit: SearchHit | ChunkLike): boolean {
+  return hit.site === 'rss';
 }
 
 /**
@@ -47,9 +56,13 @@ export function getPatreonUrl(episodeId: string): string {
 }
 
 /**
- * Gets the appropriate watch URL for a search hit
+ * Gets the appropriate watch URL for a search hit, or null if there isn't
+ * one to offer (RSS sources).
  */
-export function getWatchUrl(hit: SearchHit | ChunkLike): string {
+export function getWatchUrl(hit: SearchHit | ChunkLike): string | null {
+  if (isRssSource(hit)) {
+    return null;
+  }
   if (isPatreonSource(hit)) {
     return getPatreonUrl(hit.video_id);
   }
@@ -62,6 +75,9 @@ export function getWatchUrl(hit: SearchHit | ChunkLike): string {
 export function getWatchText(hit: SearchHit | ChunkLike): string {
   if (isPatreonSource(hit)) {
     return 'Watch on Patreon';
+  }
+  if (isRssSource(hit)) {
+    return '';
   }
   return 'Watch on YouTube';
 }

@@ -27,6 +27,7 @@ class ChunkResult(BaseModel):
     podcast_id: str
     podcast_name: str
     source_name: str
+    site: str
     episode_title: str
     video_id: str
     publication_date: Optional[Date]

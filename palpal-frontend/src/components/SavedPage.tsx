@@ -202,8 +202,9 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
                   {/* Chunk Actions */}
                   <div className="flex items-center justify-between flex-wrap gap-4">
                     <div className="flex flex-wrap gap-4">
+                      {getWatchUrl(chunk) && (
                       <a
-                        href={getWatchUrl(chunk)}
+                        href={getWatchUrl(chunk)!}
                         target="_blank"
                         rel="noopener noreferrer"
                         className={`flex items-center gap-2 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 rounded-md p-1 -m-1 font-medium text-sm group ${
@@ -216,6 +217,7 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
                         <Play className="w-4 h-4 " aria-hidden="true" />
                         <span>{getWatchText(chunk)}</span>
                       </a>
+                      )}
 
                       <div className="flex items-center gap-2 text-meta p-1 -m-1">
                         <Clock className="w-4 h-4" aria-hidden="true" />

@@ -73,6 +73,7 @@ async def process_transcript(episode_id: str, transcript: dict, target_words: in
             e.title       AS episode_title,
             e.publication_date,
             s.name        AS source_name,
+            s.site,
             s.podcast_id,
             p.display_name AS podcast_name
         FROM episodes e
@@ -89,6 +90,7 @@ async def process_transcript(episode_id: str, transcript: dict, target_words: in
     episode_title: str = row["episode_title"]
     publication_date = row["publication_date"]
     source_name: str = row["source_name"]
+    site: str = row["site"]
     podcast_id: str = row["podcast_id"]
     podcast_name: str = row["podcast_name"]
 
@@ -126,22 +128,22 @@ async def process_transcript(episode_id: str, transcript: dict, target_words: in
                         text, word_count,
                         start_time, end_time, duration,
                         start_formatted, start_minutes,
-                        podcast_id, podcast_name, source_name,
+                        podcast_id, podcast_name, source_name, site,
                         episode_title, video_id, publication_date
                     ) VALUES (
                         $1::uuid, $2,
                         $3, $4,
                         $5, $6, $7,
                         $8, $9,
-                        $10, $11, $12,
-                        $13, $14, $15::date
+                        $10, $11, $12, $13,
+                        $14, $15, $16::date
                     )
                     """,
                     episode_id, chunk_index,
                     text, word_count,
                     start_time, end_time, duration,
                     start_formatted, start_minutes,
-                    podcast_id, podcast_name, source_name,
+                    podcast_id, podcast_name, source_name, site,
                     episode_title, video_id, publication_date,
                 )
 

@@ -66,8 +66,9 @@ export default function ChunkContextView({
             >
               <div className="flex items-start justify-between gap-3">
                 <p className="flex-1">{chunk.text}</p>
+                {getWatchUrl(chunk) && (
                 <a
-                  href={getWatchUrl(chunk)}
+                  href={getWatchUrl(chunk)!}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex-shrink-0 flex items-center gap-1 text-xs mt-0.5 transition-opacity hover:opacity-80"
@@ -79,6 +80,7 @@ export default function ChunkContextView({
                   <Clock className="w-3 h-3" />
                   <span>{chunk.start_formatted}</span>
                 </a>
+                )}
               </div>
             </div>
           );

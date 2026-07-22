@@ -376,6 +376,7 @@
             <option value="all">All sources</option>
             <option value="youtube">YouTube</option>
             <option value="patreon">Patreon</option>
+            <option value="rss">RSS</option>
           </select>
         </div>
         <div id="bulk-bar">
@@ -449,14 +450,18 @@
             <label>Name</label>
             <input type="text" id="sf-name" placeholder="e.g. Main Channel" />
           </div>
-          <div class="form-row" style="flex:0 0 90px">
+          <div class="form-row" style="flex:0 0 110px">
             <label>Site</label>
-            <input type="text" id="sf-site" value="youtube" />
+            <select id="sf-site">
+              <option value="youtube">YouTube</option>
+              <option value="patreon">Patreon</option>
+              <option value="rss">RSS</option>
+            </select>
           </div>
         </div>
         <div class="form-row">
           <label>URL</label>
-          <input type="text" id="sf-url" placeholder="https://www.youtube.com/@channel" />
+          <input type="text" id="sf-url" placeholder="Channel/collection URL, or RSS feed URL (auth token included, if any)" />
         </div>
         <div class="form-row">
           <label>Exclude titles <span class="muted">(comma-separated)</span></label>
@@ -757,7 +762,7 @@ function renderScheduler() {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
       <span class="muted small">processing</span>${badge}
     </div>
-    <div class="muted small" style="margin-bottom:0.5rem">Pausing stops 'process' jobs (download+transcribe) from being claimed by blurb — no exceptions, regardless of how they were queued. Discovery and stuck-job reclaim keep running.</div>
+    <div class="muted small" style="margin-bottom:0.5rem">Pausing stops download/transcribe jobs. Discovery keeps running.</div>
     ${jobs}
     <div style="display:flex;justify-content:space-between;align-items:center;margin:0.6rem 0 0.35rem">
       <span class="muted small">blurb</span>${blurbBadge}
@@ -1067,7 +1072,7 @@ function renderPipelineSettings() {
     <div class="setting-row" style="align-items:flex-start">
       <div>
         <div style="font-size:0.875rem;font-weight:500">YouTube / Patreon Cookies</div>
-        <div class="muted small">Session cookies now live only on blurb's machine (local .env / cookie files) and are never sent to or stored by conductor — see blurb's README.</div>
+        <div class="muted small">Managed locally on blurb's machine, not by conductor.</div>
       </div>
     </div>`;
 
@@ -1431,6 +1436,8 @@ function renderEpRow(ep) {
 
   const siteBadge = ep.site === 'patreon'
     ? `<span class="badge" style="color:#f97316;background:rgba(249,115,22,0.1);border-color:rgba(249,115,22,0.25);margin-left:0.3rem">patreon</span>`
+    : ep.site === 'rss'
+    ? `<span class="badge" style="color:#a78bfa;background:rgba(167,139,250,0.1);border-color:rgba(167,139,250,0.25);margin-left:0.3rem">rss</span>`
     : `<span class="badge" style="color:#f87171;background:rgba(248,113,113,0.1);border-color:rgba(248,113,113,0.25);margin-left:0.3rem">yt</span>`;
 
   return `<tr class="${sel ? 'row-selected' : ''} ${ep.blacklisted ? 'row-blacklisted' : ''}">
