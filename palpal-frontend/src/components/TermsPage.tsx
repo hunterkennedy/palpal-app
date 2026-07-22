@@ -15,7 +15,7 @@ export default function TermsPage() {
         <section>
           <h2 className="section-title">What palpal Is</h2>
           <p className="section-text">
-            palpal is a free, personally-maintained search engine for podcast transcripts. It's a side project —
+            palpal is a free, personally-maintained search engine for podcast transcripts. It's a side project,
             not a commercial service. Use it as a helpful tool, but don't rely on it for anything critical. I make
             no guarantees about uptime, transcript accuracy, or completeness of the index.
           </p>
@@ -26,7 +26,7 @@ export default function TermsPage() {
         <section>
           <h2 className="section-title">Content</h2>
           <p className="section-text">
-            palpal indexes podcast content for search purposes only. I don't own any of it — all rights remain
+            palpal indexes podcast content for search purposes only. I don't own any of it; all rights remain
             with the original creators. Search results are meant to help you find moments in episodes, not
             replace listening to them. Please support the creators whose work you enjoy.
           </p>
@@ -37,7 +37,7 @@ export default function TermsPage() {
         <section>
           <h2 className="section-title">Fair Use</h2>
           <p className="section-text">
-            Please don't use palpal in ways that would degrade the experience for others — automated scraping,
+            Please don't use palpal in ways that would degrade the experience for others: automated scraping,
             bulk queries, or anything that puts unusual load on the service. The code is open source and available
             on GitHub if you want to run your own instance.
           </p>
@@ -67,7 +67,7 @@ export default function TermsPage() {
         <section className="text-center pt-2">
           <h2 className="section-title">Questions?</h2>
           <p className="section-text mb-6">
-            If you have any questions about these terms, feel free to reach out.
+            If you have any questions about these terms, please contact me.
           </p>
           <a href={`mailto:${CONTACT_EMAIL}`} className="btn-primary">
             Contact Me

@@ -48,8 +48,8 @@ export default function PrivacyPage() {
         <section>
           <h2 className="section-title">Podcast Content</h2>
           <p className="section-text">
-            palpal indexes podcast content for search purposes only. I don't claim ownership of any of it — all
-            rights remain with the original creators. If you'd like your content removed from the index, get in touch.
+            palpal indexes podcast content for search purposes only. I don't claim ownership of any of it; all
+            rights remain with the original creators. If you'd like your content removed from the index, please contact me.
           </p>
         </section>
 
@@ -67,7 +67,7 @@ export default function PrivacyPage() {
         <section className="text-center pt-2">
           <h2 className="section-title">Questions?</h2>
           <p className="section-text mb-6">
-            If you have any questions about this policy or your data, feel free to reach out.
+            If you have any questions about this policy or your data, please contact me.
           </p>
           <a href={`mailto:${CONTACT_EMAIL}`} className="btn-primary">
             Contact Me
