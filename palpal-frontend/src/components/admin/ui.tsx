@@ -402,7 +402,8 @@ export function fmtDateTime(iso: string | null | undefined): string {
 }
 
 export function fmtDuration(seconds: number | null | undefined): string {
-  if (!seconds) return '—';
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '—';
+  if (seconds < 1) return '0:00';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);

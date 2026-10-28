@@ -1928,9 +1928,71 @@ async def admin_episode_detail(episode_id: str):
         episode_id,
     )
 
+    chunk_meta = await pool.fetch(
+        """
+        SELECT chunk_index, start_time, end_time, word_count,
+               LENGTH(text) AS chars
+        FROM transcript_chunks
+        WHERE episode_id = $1::uuid
+        ORDER BY chunk_index
+        """,
+        episode_id,
+    )
+    chunk_preview = await pool.fetch(
+        """
+        SELECT chunk_index, start_time, end_time, word_count, text
+        FROM transcript_chunks
+        WHERE episode_id = $1::uuid
+        ORDER BY chunk_index
+        LIMIT 80
+        """,
+        episode_id,
+    )
+
+    empty_chunks = sum(1 for c in chunk_meta if (c["word_count"] or 0) <= 0 or (c["chars"] or 0) <= 0)
+    max_gap = 0.0
+    previous_end = None
+    for chunk in chunk_meta:
+        start = float(chunk["start_time"] or 0)
+        end = float(chunk["end_time"] or 0)
+        if previous_end is not None:
+            max_gap = max(max_gap, max(0.0, start - previous_end))
+        previous_end = end
+    first_start = float(chunk_meta[0]["start_time"]) if chunk_meta else 0.0
+    last_end = float(chunk_meta[-1]["end_time"]) if chunk_meta else 0.0
+    expected_duration = float(row["duration_seconds"]) if row["duration_seconds"] else None
+    short_transcript = bool(
+        expected_duration
+        and expected_duration > 60
+        and last_end > 0
+        and last_end < expected_duration * 0.65
+    )
+
+    index = {
+        "chunk_count": len(chunk_meta),
+        "word_count": sum(int(c["word_count"] or 0) for c in chunk_meta),
+        "coverage_seconds": max(0.0, last_end - first_start),
+        "first_chunk_at": first_start,
+        "last_chunk_at": last_end,
+        "max_gap_seconds": round(max_gap, 1),
+        "empty_chunks": empty_chunks,
+        "short_transcript": short_transcript,
+        "expected_duration_seconds": expected_duration,
+        "chunks": [
+            {
+                "chunk_index": c["chunk_index"],
+                "start_time": float(c["start_time"] or 0),
+                "end_time": float(c["end_time"] or 0),
+                "word_count": int(c["word_count"] or 0),
+                "text": c["text"],
+            }
+            for c in chunk_preview
+        ],
+    }
+
     episode = dict(row)
     episode["youtube_url"] = f"https://youtube.com/watch?v={row['video_id']}"
-    return {"episode": episode, "jobs": [_job_payload(j) for j in jobs]}
+    return {"episode": episode, "jobs": [_job_payload(j) for j in jobs], "index": index}
 
 
 @app.post("/admin/episodes/cache/bust", tags=["admin"], dependencies=[Depends(verify_admin_token)])

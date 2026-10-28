@@ -101,6 +101,26 @@ export interface EpisodeDetail {
     last_chunk_at?: number | null;
   };
   jobs: Job[];
+  index: EpisodeIndex;
+}
+
+export interface EpisodeIndex {
+  chunk_count: number;
+  word_count: number;
+  coverage_seconds: number;
+  first_chunk_at: number;
+  last_chunk_at: number;
+  max_gap_seconds: number;
+  empty_chunks: number;
+  short_transcript: boolean;
+  expected_duration_seconds?: number | null;
+  chunks: Array<{
+    chunk_index: number;
+    start_time: number;
+    end_time: number;
+    word_count: number;
+    text: string;
+  }>;
 }
 
 export interface Worker {

@@ -268,6 +268,66 @@ export default function EpisodeDrawer({
                 )}
               </section>
 
+              {detail?.index ? (
+                <section>
+                  <div className="ac-card-header" style={{ marginBottom: 8 }}>
+                    <h2>Transcript index</h2>
+                    <div className="ac-card-actions">
+                      {detail.index.short_transcript ? <Badge tone="red">short transcript</Badge> : null}
+                      {detail.index.empty_chunks > 0 ? (
+                        <Badge tone="orange">{detail.index.empty_chunks} empty chunks</Badge>
+                      ) : null}
+                      {detail.index.max_gap_seconds > 60 ? (
+                        <Badge tone="yellow">gap {fmtDuration(detail.index.max_gap_seconds)}</Badge>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="ac-grid ac-grid-3" style={{ marginBottom: 10 }}>
+                    <Meta label="Chunks" value={fmtNumber(detail.index.chunk_count)} />
+                    <Meta label="Words" value={fmtNumber(detail.index.word_count)} />
+                    <Meta label="Coverage" value={fmtDuration(detail.index.coverage_seconds)} />
+                    <Meta label="Max gap" value={fmtDuration(detail.index.max_gap_seconds)} />
+                    <Meta label="Empty chunks" value={fmtNumber(detail.index.empty_chunks)} />
+                    <Meta
+                      label="Episode length"
+                      value={fmtDuration(detail.index.expected_duration_seconds)}
+                    />
+                  </div>
+
+                  {detail.index.chunks.length ? (
+                    <div className="ac-table-wrap" style={{ maxHeight: 260 }}>
+                      <table className="ac-table">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>start</th>
+                            <th>words</th>
+                            <th>text</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.index.chunks.slice(0, 40).map((chunk) => (
+                            <tr key={chunk.chunk_index}>
+                              <td className="ac-cell-muted">{chunk.chunk_index}</td>
+                              <td className="ac-cell-muted">{fmtDuration(chunk.start_time)}</td>
+                              <td className="ac-cell-muted">{fmtNumber(chunk.word_count)}</td>
+                              <td title={chunk.text}>
+                                <span className="ac-row-sub" style={{ maxWidth: 420 }}>
+                                  {chunk.text}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="ac-callout">No chunks stored for this episode.</div>
+                  )}
+                </section>
+              ) : null}
+
               {detail && detail.episode.first_chunk_at !== null && detail.episode.first_chunk_at !== undefined ? (
                 <div className="ac-callout">
                   Transcript spans {fmtDuration(Number(detail.episode.first_chunk_at))} –{' '}
