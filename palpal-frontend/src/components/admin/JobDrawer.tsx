@@ -220,6 +220,36 @@ export default function JobDrawer({
 
               <section>
                 <div className="ac-card-header" style={{ marginBottom: 8 }}>
+                  <h2>Timeline</h2>
+                  <div className="ac-card-actions ac-tiny ac-subtle">
+                    {job.events?.length ?? 0} events
+                  </div>
+                </div>
+                {job.events?.length ? (
+                  <div className="ac-timeline">
+                    {job.events.map((event) => (
+                      <div className={`ac-timeline-item is-${event.level}`} key={event.id}>
+                        <span className="ac-timeline-dot" />
+                        <div className="ac-timeline-main">
+                          <div className="ac-timeline-message">{event.message}</div>
+                          <div className="ac-timeline-meta">
+                            {fmtDateTime(event.created_at)}
+                            {event.stage ? ` · ${event.stage}` : ''}
+                            {event.percent !== null && event.percent !== undefined
+                              ? ` · ${event.percent.toFixed(0)}%`
+                              : ''}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="ac-callout">No events recorded yet.</div>
+                )}
+              </section>
+
+              <section>
+                <div className="ac-card-header" style={{ marginBottom: 8 }}>
                   <h2>Payload</h2>
                   <div className="ac-card-actions">
                     <CopyText

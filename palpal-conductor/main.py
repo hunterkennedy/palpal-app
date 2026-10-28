@@ -164,6 +164,13 @@ async def worker_next_job(
 
     if not row:
         return Response(status_code=204)
+
+    worker_label = (x_worker_id or "unknown worker")[:8]
+    await _add_job_event(
+        pool, row["id"],
+        f"Claimed by worker {worker_label}",
+        stage="claimed",
+    )
     return {"id": row["id"], "kind": row["kind"], "payload": row["payload"]}
 
 
@@ -204,6 +211,10 @@ async def worker_complete(
     payload = row["payload"]
     result = await asyncio.to_thread(json.loads, result_json)
 
+    await _add_job_event(
+        pool, job_id, f"{kind.title()} job completed", stage="completed",
+    )
+
     if kind == "discover":
         await handle_discover_complete(job_id, payload, result)
     else:
@@ -239,6 +250,13 @@ async def worker_fail(
 
     kind = row["kind"]
     payload = row["payload"]
+
+    await _add_job_event(
+        pool, job_id,
+        error,
+        level="error",
+        stage="failed",
+    )
 
     if kind == "discover":
         await handle_discover_fail(job_id, payload, error)
@@ -288,6 +306,20 @@ async def worker_progress(
     )
     if not row:
         return {"status": "stale"}
+    await _record_progress_event(
+        pool,
+        job_id,
+        progress["stage"],
+        percent,
+        detail or progress["stage"],
+    )
+    event_message = (body.get("event") or "")[:2000]
+    if event_message:
+        await _add_job_event(
+            pool, job_id, event_message,
+            stage=progress["stage"],
+            percent=percent,
+        )
     await worker_status.record_heartbeat(x_worker_id)
     return {"status": "ok", "kind": row["kind"]}
 
@@ -458,6 +490,46 @@ def _job_payload(row: dict) -> dict:
             d[key] = _iso(d.get(key))
     d["progress"] = d.get("progress") or {}
     return d
+
+
+async def _add_job_event(
+    pool,
+    job_id: str,
+    message: str,
+    *,
+    level: str = "info",
+    stage: str | None = None,
+    percent: float | None = None,
+) -> None:
+    await pool.execute(
+        """
+        INSERT INTO job_events (job_id, level, stage, percent, message)
+        VALUES ($1::uuid, $2, $3, $4, $5)
+        """,
+        job_id, level, stage, percent, message[:2000],
+    )
+
+
+async def _record_progress_event(
+    pool,
+    job_id: str,
+    stage: str,
+    percent: float | None,
+    message: str,
+) -> None:
+    """Keep exactly one rolling progress row per (job, stage)."""
+    await pool.execute(
+        """
+        INSERT INTO job_events (job_id, level, stage, percent, message)
+        VALUES ($1::uuid, 'progress', $2, $3, $4)
+        ON CONFLICT (job_id, stage) WHERE level = 'progress'
+        DO UPDATE SET
+            percent = EXCLUDED.percent,
+            message = EXCLUDED.message,
+            created_at = now()
+        """,
+        job_id, stage, percent, message[:2000],
+    )
 
 
 @app.get("/admin/overview", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -795,7 +867,33 @@ async def admin_job_detail(job_id: str):
     )
     if not row:
         raise HTTPException(status_code=404, detail="Job not found")
-    return _job_payload(row)
+
+    event_rows = await pool.fetch(
+        """
+        SELECT * FROM (
+            SELECT id, created_at, level, stage, percent, message
+            FROM job_events
+            WHERE job_id = $1::uuid
+            ORDER BY created_at DESC, id DESC
+            LIMIT 120
+        ) recent
+        ORDER BY created_at ASC, id ASC
+        """,
+        job_id,
+    )
+    payload = _job_payload(row)
+    payload["events"] = [
+        {
+            "id": e["id"],
+            "created_at": _iso(e["created_at"]),
+            "level": e["level"],
+            "stage": e["stage"],
+            "percent": float(e["percent"]) if e["percent"] is not None else None,
+            "message": e["message"],
+        }
+        for e in event_rows
+    ]
+    return payload
 
 
 @app.post("/admin/jobs/{job_id}/cancel", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -822,6 +920,10 @@ async def admin_cancel_job(job_id: str):
     if not row:
         raise HTTPException(status_code=409, detail="Job is not pending or claimed")
 
+    await _add_job_event(
+        pool, job_id, "Cancelled by admin", level="warning", stage="cancelled",
+    )
+
     if row["kind"] == "process" and row["episode_id"] and not (row["payload"] or {}).get("duration_only"):
         await pool.execute(
             """
@@ -845,6 +947,7 @@ async def admin_prioritize_job(job_id: str):
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=409, detail="Only pending jobs can be prioritized")
+    await _add_job_event(pool, job_id, "Prioritized by admin", stage="prioritized")
     return {"status": "prioritized", "job_id": job_id}
 
 
@@ -900,6 +1003,7 @@ async def admin_retry_job(job_id: str):
         )
     caches.bust_episodes_cache()
     wakeup_worker()
+    await _add_job_event(pool, job_id, "Re-queued by admin", stage="retried")
     return {"status": "queued", "job_id": job_id}
 
 

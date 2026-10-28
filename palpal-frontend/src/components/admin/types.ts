@@ -12,6 +12,15 @@ export interface JobProgress {
   detail?: string;
 }
 
+export interface JobEvent {
+  id: number;
+  created_at: string;
+  level: 'info' | 'progress' | 'warning' | 'error';
+  stage?: string | null;
+  percent?: number | null;
+  message: string;
+}
+
 export interface Job {
   id: string;
   kind: 'discover' | 'process';
@@ -34,6 +43,7 @@ export interface Job {
   source_podcast?: string | null;
   payload?: Record<string, unknown>;
   has_result?: boolean;
+  events?: JobEvent[];
 }
 
 export interface Episode {

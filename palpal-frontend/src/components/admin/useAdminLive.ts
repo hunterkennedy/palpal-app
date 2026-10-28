@@ -15,6 +15,7 @@ const EMPTY_BUMPS: Bumps = {
 const TABLE_BUMPS: Record<string, Array<keyof Bumps>> = {
   episodes: ['episodes', 'overview'],
   jobs: ['jobs', 'overview', 'episodes'],
+  job_events: ['jobs'],
   podcasts: ['podcasts', 'overview', 'episodes'],
   sources: ['podcasts', 'overview', 'episodes'],
   settings: ['settings', 'overview', 'content'],
