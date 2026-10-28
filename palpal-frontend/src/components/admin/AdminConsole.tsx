@@ -26,6 +26,7 @@ import { AdminContext, type AdminApi } from './AdminContext';
 import { api, qs } from './api';
 import type {
   ActionResult,
+  AttentionData,
   Episode,
   EpisodeFilters,
   EpisodePage,
@@ -49,6 +50,7 @@ import {
   type ToastItem,
 } from './ui';
 import OverviewView from './OverviewView';
+import AttentionView from './AttentionView';
 import EpisodesView from './EpisodesView';
 import JobsView from './JobsView';
 import PodcastsView from './PodcastsView';
@@ -60,6 +62,7 @@ import CommandPalette, { type CommandItem } from './CommandPalette';
 
 const VIEW_META: Record<ViewKey, { title: string; subtitle: string }> = {
   overview: { title: 'Overview', subtitle: 'Live pipeline control and recent activity' },
+  attention: { title: 'Attention', subtitle: 'Grouped failures and orphaned episodes' },
   episodes: { title: 'Episodes', subtitle: 'Search, inspect, and act on every episode' },
   jobs: { title: 'Jobs', subtitle: 'The worker queue and complete job history' },
   podcasts: { title: 'Podcasts', subtitle: 'Sources, ordering, and per-podcast controls' },
@@ -98,6 +101,9 @@ export default function AdminConsole() {
   const [jobHistory, setJobHistory] = useState<JobHistoryPage | null>(null);
   const [updates, setUpdates] = useState<WhatsNewEntry[] | null>(null);
   const [placeholders, setPlaceholders] = useState<string[] | null>(null);
+  const [attentionData, setAttentionData] = useState<AttentionData | null>(null);
+  const [attentionLoading, setAttentionLoading] = useState(false);
+  const [showIgnoredAttention, setShowIgnoredAttention] = useState(false);
 
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [podcastsLoading, setPodcastsLoading] = useState(true);
@@ -249,6 +255,25 @@ export default function AdminConsole() {
       cancelled = true;
     };
   }, [live.bumps.overview, toast]);
+
+  useEffect(() => {
+    if (view !== 'attention') return;
+    let cancelled = false;
+    setAttentionLoading(true);
+    api<AttentionData>(`/admin/attention${showIgnoredAttention ? '?include_ignored=true' : ''}`)
+      .then((data) => {
+        if (!cancelled) setAttentionData(data);
+      })
+      .catch((error: Error) => {
+        if (!cancelled) toast('Could not load attention inbox', 'error', { detail: error.message });
+      })
+      .finally(() => {
+        if (!cancelled) setAttentionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live.bumps.episodes, live.bumps.overview, view, showIgnoredAttention, toast]);
 
   useEffect(() => {
     if (view !== 'episodes' && view !== 'podcasts') return;
@@ -582,6 +607,7 @@ export default function AdminConsole() {
       if (gRef.current) {
         const map: Record<string, ViewKey> = {
           o: 'overview',
+          a: 'attention',
           e: 'episodes',
           j: 'jobs',
           p: 'podcasts',
@@ -602,6 +628,7 @@ export default function AdminConsole() {
 
   const commandItems: CommandItem[] = [
     { id: 'nav-overview', label: 'Go to Overview', group: 'Navigate', hint: 'g o', run: () => setView('overview') },
+    { id: 'nav-attention', label: 'Go to Attention', group: 'Navigate', hint: 'g a', run: () => setView('attention') },
     { id: 'nav-episodes', label: 'Go to Episodes', group: 'Navigate', hint: 'g e', run: () => setView('episodes') },
     { id: 'nav-jobs', label: 'Go to Jobs', group: 'Navigate', hint: 'g j', run: () => setView('jobs') },
     { id: 'nav-podcasts', label: 'Go to Podcasts', group: 'Navigate', hint: 'g p', run: () => setView('podcasts') },
@@ -687,6 +714,13 @@ export default function AdminConsole() {
           <nav className="ac-nav">
             <div className="ac-nav-section">Monitor</div>
             <NavItem icon={<LayoutDashboard size={15} />} label="Overview" active={view === 'overview'} onClick={() => setView('overview')} />
+            <NavItem
+              icon={<AlertTriangle size={15} />}
+              label="Attention"
+              active={view === 'attention'}
+              badge={attention > 0 ? attention : undefined}
+              onClick={() => setView('attention')}
+            />
             <NavItem
               icon={<Mic2 size={15} />}
               label="Episodes"
@@ -784,17 +818,7 @@ export default function AdminConsole() {
             <button
               type="button"
               className={`ac-status-pill ${attention > 0 ? 'is-bad' : ''}`}
-              onClick={() =>
-                navigate('episodes', {
-                  episodeFilters: {
-                    status: 'attention',
-                    podcastId: 'all',
-                    site: 'all',
-                    q: '',
-                    page: 1,
-                  },
-                })
-              }
+              onClick={() => setView('attention')}
             >
               <AlertTriangle size={12} />
               {attention > 0 ? `${attention} need attention` : 'No episode failures'}
@@ -823,6 +847,17 @@ export default function AdminConsole() {
                 loading={overviewLoading}
                 onOpenJobs={() => setView('jobs')}
                 onOpenJob={setDrawerJobId}
+              />
+            ) : null}
+
+            {view === 'attention' ? (
+              <AttentionView
+                data={attentionData}
+                loading={attentionLoading}
+                includeIgnored={showIgnoredAttention}
+                onToggleIgnored={setShowIgnoredAttention}
+                onOpenEpisode={(episode) => openEpisode(episode.id)}
+                onOpenEpisodes={() => setView('episodes')}
               />
             ) : null}
 
@@ -877,7 +912,7 @@ export default function AdminConsole() {
 
             <div className="ac-shortcuts-hint">
               <span><KeyHint>⌘K</KeyHint> jump</span>
-              <span><KeyHint>g</KeyHint> then <KeyHint>o</KeyHint><KeyHint>e</KeyHint><KeyHint>j</KeyHint><KeyHint>p</KeyHint><KeyHint>c</KeyHint><KeyHint>s</KeyHint></span>
+              <span><KeyHint>g</KeyHint> then <KeyHint>o</KeyHint><KeyHint>a</KeyHint><KeyHint>e</KeyHint><KeyHint>j</KeyHint><KeyHint>p</KeyHint><KeyHint>c</KeyHint><KeyHint>s</KeyHint></span>
               <span className="ac-subtle">Filters and the current page are kept in the URL</span>
             </div>
           </div>

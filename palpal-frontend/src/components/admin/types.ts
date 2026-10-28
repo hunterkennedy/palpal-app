@@ -1,5 +1,6 @@
 export type ViewKey =
   | 'overview'
+  | 'attention'
   | 'episodes'
   | 'jobs'
   | 'podcasts'
@@ -198,6 +199,37 @@ export interface WhatsNewEntry {
   id: number;
   content: string;
   posted_at: string;
+}
+
+export interface AttentionEpisode {
+  id: string;
+  title: string;
+  status: string;
+  error_message?: string | null;
+  site: string;
+  podcast_id: string;
+  podcast_name: string;
+  source_name: string;
+  updated_at?: string | null;
+  blacklisted: boolean;
+}
+
+export interface AttentionGroup {
+  key: string;
+  label: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+  ignored: boolean;
+  count: number;
+  episode_ids: string[];
+  episodes: AttentionEpisode[];
+}
+
+export interface AttentionData {
+  groups: AttentionGroup[];
+  ignored_keys: string[];
+  total: number;
+  total_all: number;
 }
 
 export interface EpisodeFilters {

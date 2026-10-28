@@ -463,6 +463,177 @@ async def admin_stream():
     )
 
 
+_ATTENTION_META = {
+    "orphaned": {
+        "label": "Missing from source",
+        "description": "Previously discovered episodes that disappeared from the feed/channel.",
+        "severity": "medium",
+    },
+    "rate_limited": {
+        "label": "Rate limited",
+        "description": "The source or downloader was throttled. Retrying later usually works.",
+        "severity": "medium",
+    },
+    "age_restricted": {
+        "label": "Age restricted",
+        "description": "The source requires a logged-in/age-verified session.",
+        "severity": "high",
+    },
+    "unavailable": {
+        "label": "Private or unavailable",
+        "description": "The episode is gone, private, or no longer fetchable.",
+        "severity": "high",
+    },
+    "too_short": {
+        "label": "Too short",
+        "description": "Below the configured duration floor.",
+        "severity": "low",
+    },
+    "network": {
+        "label": "Network or timeout",
+        "description": "Transient connectivity/DNS/timeout failures.",
+        "severity": "medium",
+    },
+    "missing_title": {
+        "label": "Missing metadata",
+        "description": "The source listed the item without a usable title.",
+        "severity": "medium",
+    },
+    "transcript": {
+        "label": "Transcript or chunk failure",
+        "description": "Download succeeded but transcript/chunk processing failed.",
+        "severity": "high",
+    },
+    "other": {
+        "label": "Other failures",
+        "description": "Uncategorised failures that need a closer look.",
+        "severity": "medium",
+    },
+}
+
+
+def _attention_category(status: str, error: str | None) -> str:
+    text = (error or "").lower()
+    if status == "orphaned":
+        return "orphaned"
+    if "rate limit" in text or "429" in text or "too many requests" in text:
+        return "rate_limited"
+    if "age" in text and ("restrict" in text or "confirm" in text):
+        return "age_restricted"
+    if any(word in text for word in ("private", "unavailable", "removed", "not found", "404", "410")):
+        return "unavailable"
+    if "too short" in text or "shorter than" in text or "duration" in text:
+        return "too_short"
+    if any(word in text for word in ("timeout", "timed out", "connection", "network", "dns", "getaddrinfo")):
+        return "network"
+    if "title" in text:
+        return "missing_title"
+    if any(word in text for word in ("transcript", "chunk", "whisper", "ffmpeg")):
+        return "transcript"
+    return "other"
+
+
+async def _get_ignored_attention(pool) -> set[str]:
+    row = await pool.fetchrow("SELECT value FROM settings WHERE key = 'attention_ignored'")
+    if not row:
+        return set()
+    try:
+        value = json.loads(row["value"])
+        return {str(v) for v in value} if isinstance(value, list) else set()
+    except Exception:
+        return set()
+
+
+@app.get("/admin/attention", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_attention(include_ignored: bool = Query(False)):
+    """Grouped failed/orphaned episodes for triage.
+
+    Instead of one flat table, the console can reason about a whole failure
+    class ("age restricted", "rate limited") and act on it at once. Ignored
+    categories are an explicit setting so a known-benign failure class does not
+    keep demanding attention.
+    """
+    pool = db.get_pool()
+    ignored = await _get_ignored_attention(pool)
+    rows = await pool.fetch(
+        """
+        SELECT e.id::text, e.title, e.status, e.error_message, e.updated_at,
+               e.blacklisted, s.site, s.name AS source_name,
+               p.id AS podcast_id, p.display_name AS podcast_name
+        FROM episodes e
+        JOIN sources  s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        WHERE e.status IN ('failed', 'orphaned')
+        ORDER BY e.updated_at DESC NULLS LAST
+        LIMIT 2000
+        """
+    )
+
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        category = _attention_category(row["status"], row["error_message"])
+        group = grouped.setdefault(category, {
+            "key": category,
+            "label": _ATTENTION_META[category]["label"],
+            "description": _ATTENTION_META[category]["description"],
+            "severity": _ATTENTION_META[category]["severity"],
+            "ignored": category in ignored,
+            "count": 0,
+            "episode_ids": [],
+            "episodes": [],
+        })
+        group["count"] += 1
+        group["episode_ids"].append(row["id"])
+        if len(group["episodes"]) < 12:
+            group["episodes"].append({
+                "id": row["id"],
+                "title": row["title"],
+                "status": row["status"],
+                "error_message": row["error_message"],
+                "site": row["site"],
+                "podcast_id": row["podcast_id"],
+                "podcast_name": row["podcast_name"],
+                "source_name": row["source_name"],
+                "updated_at": _iso(row["updated_at"]),
+                "blacklisted": row["blacklisted"],
+            })
+
+    groups = sorted(
+        grouped.values(),
+        key=lambda g: (g["ignored"], -g["count"], g["label"]),
+    )
+    visible = [g for g in groups if include_ignored or not g["ignored"]]
+    return {
+        "groups": visible,
+        "ignored_keys": sorted(ignored),
+        "total": sum(g["count"] for g in visible),
+        "total_all": sum(g["count"] for g in groups),
+    }
+
+
+@app.post("/admin/attention/ignore", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_attention_ignore(body: dict):
+    """Ignore/restore an attention category globally."""
+    category = str(body.get("category", "")).strip()
+    if category not in _ATTENTION_META:
+        raise HTTPException(status_code=400, detail="Unknown attention category")
+    ignored = bool(body.get("ignored", True))
+    pool = db.get_pool()
+    current = await _get_ignored_attention(pool)
+    if ignored:
+        current.add(category)
+    else:
+        current.discard(category)
+    await pool.execute(
+        """
+        INSERT INTO settings (key, value) VALUES ('attention_ignored', $1)
+        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+        """,
+        json.dumps(sorted(current)),
+    )
+    return {"status": "ok", "ignored": sorted(current)}
+
+
 def _iso(value):
     return value.isoformat() if value is not None else None
 
