@@ -298,6 +298,29 @@ export interface AttentionData {
   total_all: number;
 }
 
+export interface AdminSearchResults {
+  episodes: Array<{
+    id: string;
+    title: string;
+    status: string;
+    site: string;
+    podcast_name: string;
+  }>;
+  podcasts: Array<{
+    id: string;
+    display_name: string;
+    enabled: boolean;
+  }>;
+  jobs: Array<{
+    id: string;
+    kind: string;
+    status: string;
+    error?: string | null;
+    episode_title?: string | null;
+    source_name?: string | null;
+  }>;
+}
+
 export interface EpisodeFilters {
   status: string;
   q: string;

@@ -2,6 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
+import { api } from './api';
+import type { AdminSearchResults } from './types';
 import { KeyHint } from './ui';
 
 export interface CommandItem {
@@ -16,31 +18,93 @@ export default function CommandPalette({
   open,
   items,
   onClose,
+  onOpenEpisode,
+  onOpenPodcast,
+  onOpenJob,
 }: {
   open: boolean;
   items: CommandItem[];
   onClose: () => void;
+  onOpenEpisode: (episodeId: string) => void;
+  onOpenPodcast: (podcastId: string) => void;
+  onOpenJob: (jobId: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  const [remoteItems, setRemoteItems] = useState<CommandItem[]>([]);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     if (open) {
       setQuery('');
       setActive(0);
+      setRemoteItems([]);
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const q = query.trim();
+    if (q.length < 2) {
+      setRemoteItems([]);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const results = await api<AdminSearchResults>(
+          `/admin/search?q=${encodeURIComponent(q)}&limit=6`,
+        );
+        if (cancelled) return;
+        setRemoteItems([
+          ...results.episodes.map((episode) => ({
+            id: `episode:${episode.id}`,
+            label: episode.title || '(untitled)',
+            group: 'Episodes',
+            hint: `${episode.podcast_name} · ${episode.status}`,
+            run: () => onOpenEpisode(episode.id),
+          })),
+          ...results.podcasts.map((podcast) => ({
+            id: `podcast:${podcast.id}`,
+            label: podcast.display_name,
+            group: 'Podcasts',
+            hint: podcast.enabled ? 'enabled' : 'disabled',
+            run: () => onOpenPodcast(podcast.id),
+          })),
+          ...results.jobs.map((job) => ({
+            id: `job:${job.id}`,
+            label: job.episode_title || job.source_name || job.id.slice(0, 8),
+            group: 'Jobs',
+            hint: `${job.kind} · ${job.status}`,
+            run: () => onOpenJob(job.id),
+          })),
+        ]);
+      } catch {
+        if (!cancelled) setRemoteItems([]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, query, onOpenEpisode, onOpenPodcast, onOpenJob]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (item) =>
-        item.label.toLowerCase().includes(q) ||
-        item.group.toLowerCase().includes(q) ||
-        (item.hint ?? '').toLowerCase().includes(q),
-    );
-  }, [items, query]);
+    const local = q
+      ? items.filter(
+          (item) =>
+            item.label.toLowerCase().includes(q) ||
+            item.group.toLowerCase().includes(q) ||
+            (item.hint ?? '').toLowerCase().includes(q),
+        )
+      : items;
+    return q ? [...local, ...remoteItems] : local;
+  }, [items, remoteItems, query]);
 
   useEffect(() => {
     setActive(0);
@@ -84,9 +148,9 @@ export default function CommandPalette({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Jump to a page or run an action…"
+            placeholder="Jump to a page, episode, podcast, or job…"
           />
-          <KeyHint>esc</KeyHint>
+          {searching ? <span className="ac-tiny ac-subtle">searching…</span> : <KeyHint>esc</KeyHint>}
         </div>
         <div className="ac-command-list">
           {filtered.length === 0 ? (

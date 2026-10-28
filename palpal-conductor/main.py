@@ -638,6 +638,74 @@ async def admin_attention(include_ignored: bool = Query(False)):
     }
 
 
+@app.get("/admin/search", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_search(q: str = Query(..., min_length=2, max_length=200), limit: int = Query(8, ge=1, le=20)):
+    """Small cross-entity search used by the command palette.
+
+    Episode title/podcast/source hits, podcast names, and job targets/errors.
+    Intentionally capped: this is a jump-to tool, not a reporting endpoint.
+    """
+    pool = db.get_pool()
+    like = f"%{q}%"
+    episode_rows, podcast_rows, job_rows = await asyncio.gather(
+        pool.fetch(
+            """
+            SELECT e.id::text, e.title, e.status, s.site,
+                   p.display_name AS podcast_name
+            FROM episodes e
+            JOIN sources  s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            WHERE e.title ILIKE $1 OR p.display_name ILIKE $1 OR s.name ILIKE $1
+            ORDER BY e.publication_date DESC NULLS LAST, e.created_at DESC
+            LIMIT $2
+            """,
+            like, limit,
+        ),
+        pool.fetch(
+            """
+            SELECT id, display_name, enabled
+            FROM podcasts
+            WHERE display_name ILIKE $1 OR id ILIKE $1
+            ORDER BY display_order, display_name
+            LIMIT $2
+            """,
+            like, limit,
+        ),
+        pool.fetch(
+            """
+            SELECT j.id::text, j.kind, j.status, j.error,
+                   e.title AS episode_title, src.name AS source_name
+            FROM jobs j
+            LEFT JOIN episodes e ON e.id = j.episode_id
+            LEFT JOIN sources  src ON src.id = j.source_id
+            WHERE COALESCE(e.title, '') ILIKE $1
+               OR COALESCE(src.name, '') ILIKE $1
+               OR COALESCE(j.error, '') ILIKE $1
+            ORDER BY j.created_at DESC
+            LIMIT $2
+            """,
+            like, limit,
+        ),
+    )
+    return {
+        "episodes": [
+            {
+                "id": r["id"], "title": r["title"], "status": r["status"],
+                "site": r["site"], "podcast_name": r["podcast_name"],
+            }
+            for r in episode_rows
+        ],
+        "podcasts": [dict(r) for r in podcast_rows],
+        "jobs": [
+            {
+                "id": r["id"], "kind": r["kind"], "status": r["status"], "error": r["error"],
+                "episode_title": r["episode_title"], "source_name": r["source_name"],
+            }
+            for r in job_rows
+        ],
+    }
+
+
 @app.post("/admin/attention/ignore", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_attention_ignore(body: dict):
     """Ignore/restore an attention category globally."""

@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Ban,
+  Bookmark,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -49,6 +50,14 @@ const STATUS_TABS: Array<{ key: string; label: string }> = [
   { key: 'blacklisted', label: 'Blacklisted' },
 ];
 
+interface SavedView {
+  id: string;
+  name: string;
+  filters: Partial<EpisodeFilters>;
+}
+
+const SAVED_VIEWS_KEY = 'palpal_admin_saved_views';
+
 function siteBadge(site: string) {
   if (site === 'patreon') return <Badge tone="orange">patreon</Badge>;
   if (site === 'rss') return <Badge tone="purple">rss</Badge>;
@@ -90,6 +99,45 @@ export default function EpisodesView({
   const admin = useAdmin();
   const [qInput, setQInput] = useState(filters.q);
   const [allMatching, setAllMatching] = useState(false);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [viewsOpen, setViewsOpen] = useState(false);
+  const [viewName, setViewName] = useState('');
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SAVED_VIEWS_KEY);
+      if (raw) setSavedViews(JSON.parse(raw) as SavedView[]);
+    } catch {
+      // ignore malformed local state
+    }
+  }, []);
+
+  const persistViews = (next: SavedView[]) => {
+    setSavedViews(next);
+    try {
+      window.localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(next));
+    } catch {
+      // storage can be unavailable; feature simply won't persist
+    }
+  };
+
+  const saveCurrentView = () => {
+    const name = viewName.trim();
+    if (!name) return;
+    const view: SavedView = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      filters: {
+        status: filters.status,
+        q: filters.q,
+        podcastId: filters.podcastId,
+        site: filters.site,
+        sort: filters.sort,
+      },
+    };
+    persistViews([...savedViews.filter((v) => v.name !== name), view]);
+    setViewName('');
+  };
 
   useEffect(() => {
     setQInput(filters.q);
@@ -234,6 +282,73 @@ export default function EpisodesView({
             <option value="title">Title</option>
             <option value="duration">Duration</option>
           </select>
+
+          <div className="ac-menu-wrap">
+            <Button
+              size="sm"
+              variant={viewsOpen ? 'secondary' : 'ghost'}
+              icon={<Bookmark size={12} />}
+              onClick={() => setViewsOpen((open) => !open)}
+            >
+              Views
+            </Button>
+            {viewsOpen ? (
+              <div className="ac-menu-panel" style={{ right: 0, left: 'auto', width: 280 }}>
+                <div className="ac-menu-heading">Saved views</div>
+                {savedViews.length === 0 ? (
+                  <div className="ac-menu-empty">No saved views yet.</div>
+                ) : (
+                  savedViews.map((view) => (
+                    <div className="ac-menu-row" key={view.id}>
+                      <button
+                        type="button"
+                        className="ac-menu-item"
+                        onClick={() => {
+                          onPatchFilters({ ...view.filters, page: 1 });
+                          setViewsOpen(false);
+                        }}
+                      >
+                        <span className="ac-truncate">{view.name}</span>
+                        <span className="ac-tiny ac-subtle">
+                          {view.filters.status ?? 'all'}
+                          {view.filters.podcastId && view.filters.podcastId !== 'all' ? ' · filtered' : ''}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="ac-icon-btn is-danger"
+                        title="Delete view"
+                        onClick={() => persistViews(savedViews.filter((v) => v.id !== view.id))}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))
+                )}
+                <div className="ac-menu-divider" />
+                <div className="ac-row" style={{ gap: 5 }}>
+                  <input
+                    className="ac-input is-small"
+                    placeholder="Name current view…"
+                    value={viewName}
+                    onChange={(e) => setViewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') saveCurrentView();
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={!viewName.trim()}
+                    onClick={saveCurrentView}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <div className="ac-row-end ac-tiny ac-subtle">
             {loading ? <Spinner /> : null}

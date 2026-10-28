@@ -948,7 +948,17 @@ export default function AdminConsole() {
           }}
         />
 
-        <CommandPalette open={commandOpen} items={commandItems} onClose={() => setCommandOpen(false)} />
+        <CommandPalette
+          open={commandOpen}
+          items={commandItems}
+          onClose={() => setCommandOpen(false)}
+          onOpenEpisode={(episodeId) => openEpisode(episodeId)}
+          onOpenPodcast={(podcastId) => {
+            setSelectedPodcastId(podcastId);
+            setView('podcasts');
+          }}
+          onOpenJob={setDrawerJobId}
+        />
         <ConfirmDialog request={confirmRequest} onClose={() => setConfirmRequest(null)} />
         <ToastViewport toasts={toasts} dismiss={dismissToast} />
       </div>
