@@ -40,7 +40,11 @@ from pipeline import (
     queue_episodes_for_processing, backfill_patreon_durations,
     cancel_jobs_for_source, cancel_jobs_for_podcast,
 )
-from activities.b2 import delete_transcript as b2_delete_transcript
+from activities.b2 import (
+    delete_transcript as b2_delete_transcript,
+    download_transcript as b2_download_transcript,
+    upload_transcript as b2_upload_transcript,
+)
 from activities.process import process_transcript
 
 logging.basicConfig(
@@ -1606,6 +1610,132 @@ async def admin_purge_jobs(body: dict = Body(default={})):
         detail={"older_than_days": days, "deleted": deleted},
     )
     return {"status": "purged", "deleted": deleted}
+
+
+@app.post("/admin/episodes/{episode_id}/update", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def update_episode_metadata(episode_id: str, body: dict):
+    """Correct episode metadata without re-running the pipeline."""
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        "SELECT title, publication_date, duration_seconds FROM episodes WHERE id = $1::uuid",
+        episode_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    title = str(body.get("title", row["title"])).strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title cannot be empty")
+    publication_date = body.get("publication_date", row["publication_date"])
+    duration = body.get("duration_seconds", row["duration_seconds"])
+    try:
+        duration = float(duration) if duration not in (None, "") else None
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="duration_seconds must be a number")
+
+    await pool.execute(
+        """
+        UPDATE episodes
+        SET title = $1, publication_date = $2, duration_seconds = $3
+        WHERE id = $4::uuid
+        """,
+        title, publication_date or None, duration, episode_id,
+    )
+    await pool.execute(
+        """
+        UPDATE transcript_chunks
+        SET episode_title = $1, publication_date = $2
+        WHERE episode_id = $3::uuid
+        """,
+        title, publication_date or None, episode_id,
+    )
+    caches.bust_episodes_cache()
+    audit_id = await _audit(
+        "episode.update", target_type="episode", target_id=episode_id,
+        detail={
+            "title": title,
+            "publication_date": str(publication_date or ""),
+            "duration_seconds": duration,
+        },
+    )
+    return {"status": "updated", "audit_id": audit_id}
+
+
+@app.post("/admin/episodes/{episode_id}/merge", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def merge_duplicate_episode(episode_id: str, body: dict):
+    """Merge a duplicate episode into this one.
+
+    Requires both rows to belong to the same source. Chunks are moved only when
+    the target has none and the duplicate does; if both already have chunks the
+    merge is refused rather than silently discarding a transcript.
+    """
+    duplicate_id = str(body.get("duplicate_id", "")).strip()
+    if not duplicate_id or duplicate_id == episode_id:
+        raise HTTPException(status_code=400, detail="A different duplicate_id is required")
+
+    pool = db.get_pool()
+    target, duplicate = await asyncio.gather(
+        pool.fetchrow(
+            "SELECT id, source_id, title, publication_date, duration_seconds FROM episodes WHERE id = $1::uuid",
+            episode_id,
+        ),
+        pool.fetchrow(
+            "SELECT id, source_id, title, publication_date, duration_seconds FROM episodes WHERE id = $1::uuid",
+            duplicate_id,
+        ),
+    )
+    if not target or not duplicate:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    if target["source_id"] != duplicate["source_id"]:
+        raise HTTPException(status_code=409, detail="Episodes belong to different sources")
+
+    target_chunks = await pool.fetchval(
+        "SELECT COUNT(*) FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id
+    )
+    duplicate_chunks = await pool.fetchval(
+        "SELECT COUNT(*) FROM transcript_chunks WHERE episode_id = $1::uuid", duplicate_id
+    )
+    if target_chunks and duplicate_chunks:
+        raise HTTPException(
+            status_code=409,
+            detail="Both episodes already have transcripts; delete the unwanted copy manually",
+        )
+
+    await pool.execute(
+        """
+        UPDATE episodes
+        SET publication_date = COALESCE(publication_date, $1),
+            duration_seconds = COALESCE(duration_seconds, $2),
+            title = CASE WHEN title = '' THEN $3 ELSE title END
+        WHERE id = $4::uuid
+        """,
+        duplicate["publication_date"], duplicate["duration_seconds"],
+        duplicate["title"], episode_id,
+    )
+    if duplicate_chunks:
+        await pool.execute(
+            "UPDATE transcript_chunks SET episode_id = $1::uuid WHERE episode_id = $2::uuid",
+            episode_id, duplicate_id,
+        )
+
+    await cancel_process_job(duplicate_id, "Cancelled: duplicate merged")
+    if duplicate_chunks:
+        # Preserve the raw transcript under the target id so a future re-chunk
+        # of the merged episode still works.
+        try:
+            transcript = await b2_download_transcript(duplicate_id)
+            if transcript:
+                await b2_upload_transcript(episode_id, transcript)
+            await b2_delete_transcript(duplicate_id)
+        except Exception as exc:
+            logger.warning("Merge: transcript copy from %s to %s failed: %s", duplicate_id, episode_id, exc)
+    await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", duplicate_id)
+    caches.bust_episodes_cache()
+    audit_id = await _audit(
+        "episode.merge", target_type="episode", target_id=episode_id,
+        detail={"duplicate_id": duplicate_id, "moved_chunks": bool(duplicate_chunks)},
+    )
+    return {"status": "merged", "audit_id": audit_id}
 
 
 @app.post("/admin/episodes/{episode_id}/retry", tags=["admin"], dependencies=[Depends(verify_admin_token)])

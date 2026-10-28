@@ -19,6 +19,7 @@ import {
   Button,
   CopyText,
   EmptyState,
+  Modal,
   ProgressBar,
   Spinner,
   fmtDateTime,
@@ -46,6 +47,12 @@ export default function EpisodeDrawer({
   const [detail, setDetail] = useState<EpisodeDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editDuration, setEditDuration] = useState('');
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeId, setMergeId] = useState('');
 
   useEffect(() => {
     if (!episodeId) {
@@ -176,6 +183,32 @@ export default function EpisodeDrawer({
                   }}
                 >
                   Open source
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setEditTitle(episode.title);
+                    setEditDate(episode.publication_date ?? '');
+                    setEditDuration(
+                      episode.duration_seconds !== null && episode.duration_seconds !== undefined
+                        ? String(episode.duration_seconds)
+                        : '',
+                    );
+                    setEditOpen(true);
+                  }}
+                >
+                  Edit metadata
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setMergeId('');
+                    setMergeOpen(true);
+                  }}
+                >
+                  Merge duplicate
                 </Button>
                 <Button
                   variant="danger"
@@ -340,6 +373,113 @@ export default function EpisodeDrawer({
           )}
         </div>
       </aside>
+
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit episode metadata"
+        subtitle="Corrects the episode row and its search chunks without re-running transcription."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={admin.isPending(`episode-update:${episodeId}`)}
+              onClick={() =>
+                admin.run(`episode-update:${episodeId}`, async () => {
+                  await api(`/admin/episodes/${episodeId}/update`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      title: editTitle.trim(),
+                      publication_date: editDate || null,
+                      duration_seconds: editDuration ? Number(editDuration) : null,
+                    }),
+                  });
+                  admin.toast('Episode metadata updated');
+                  setEditOpen(false);
+                  admin.refreshAll();
+                })
+              }
+            >
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        <div className="ac-form-grid">
+          <label className="ac-field is-wide">
+            <span>Title</span>
+            <input className="ac-input" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+          </label>
+          <label className="ac-field">
+            <span>Publication date</span>
+            <input
+              className="ac-input"
+              type="date"
+              value={editDate}
+              onChange={(e) => setEditDate(e.target.value)}
+            />
+          </label>
+          <label className="ac-field">
+            <span>Duration (seconds)</span>
+            <input
+              className="ac-input"
+              type="number"
+              min={0}
+              value={editDuration}
+              onChange={(e) => setEditDuration(e.target.value)}
+            />
+          </label>
+        </div>
+      </Modal>
+
+      <Modal
+        open={mergeOpen}
+        onClose={() => setMergeOpen(false)}
+        title="Merge duplicate episode"
+        subtitle="The duplicate row will be deleted; its transcript chunks move here if this episode has none."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setMergeOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!mergeId.trim()}
+              loading={admin.isPending(`episode-merge:${episodeId}`)}
+              onClick={() =>
+                admin.run(`episode-merge:${episodeId}`, async () => {
+                  await api(`/admin/episodes/${episodeId}/merge`, {
+                    method: 'POST',
+                    body: JSON.stringify({ duplicate_id: mergeId.trim() }),
+                  });
+                  admin.toast('Duplicate merged');
+                  setMergeOpen(false);
+                  admin.refreshAll();
+                })
+              }
+            >
+              Merge and delete duplicate
+            </Button>
+          </>
+        }
+      >
+        <div className="ac-callout is-danger" style={{ marginBottom: 12 }}>
+          Only merge episodes from the same source. If both rows already have transcripts,
+          the merge is refused so no transcript is silently discarded.
+        </div>
+        <label className="ac-field">
+          <span>Duplicate episode ID</span>
+          <input
+            className="ac-input ac-mono"
+            value={mergeId}
+            onChange={(e) => setMergeId(e.target.value)}
+            placeholder="00000000-0000-0000-0000-000000000000"
+          />
+        </label>
+      </Modal>
     </div>
   );
 }
