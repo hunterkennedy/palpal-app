@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ChevronRight,
   Edit3,
+  ExternalLink,
   FlaskConical,
   Plus,
   RefreshCw,
@@ -358,6 +359,15 @@ export default function PodcastsView({
                 </div>
               </div>
               <div className="ac-card-actions">
+                <a
+                  className="ac-btn ac-btn-secondary ac-btn-sm"
+                  href={`/?podcasts=${encodeURIComponent(selected.id)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open this podcast in the public app"
+                >
+                  <ExternalLink size={12} /> Public
+                </a>
                 <label className="ac-priority-control" title="Higher priority podcasts are dispatched first">
                   <span>queue priority</span>
                   <input

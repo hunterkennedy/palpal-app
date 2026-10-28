@@ -187,6 +187,20 @@ export default function EpisodeDrawer({
                 <Button
                   variant="secondary"
                   size="sm"
+                  icon={<ExternalLink size={12} />}
+                  onClick={() =>
+                    window.open(
+                      `/?q=${encodeURIComponent(episode.title)}&podcasts=${encodeURIComponent(episode.podcast_id)}`,
+                      '_blank',
+                      'noopener,noreferrer',
+                    )
+                  }
+                >
+                  Open in app
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => {
                     setEditTitle(episode.title);
                     setEditDate(episode.publication_date ?? '');

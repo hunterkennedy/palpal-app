@@ -827,6 +827,7 @@ export default function AdminConsole() {
         </aside>
 
         <main className="ac-main">
+          <div className="ac-sticky-header">
           <header className="ac-topbar">
             <div className="ac-topbar-title">
               <h1>{meta.title}</h1>
@@ -902,6 +903,7 @@ export default function AdminConsole() {
                     : 'waiting for updates'}
               </span>
             </div>
+          </div>
           </div>
 
           <div className="ac-content">

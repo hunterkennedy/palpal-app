@@ -8,10 +8,12 @@ import {
   ChevronRight,
   Download,
   Eye,
+  HelpCircle,
   Play,
   RefreshCw,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -22,6 +24,7 @@ import {
   Badge,
   Button,
   EmptyState,
+  Modal,
   ProgressBar,
   Spinner,
   fmtDuration,
@@ -106,15 +109,42 @@ export default function EpisodesView({
   const [viewName, setViewName] = useState('');
   const [activeRow, setActiveRow] = useState(0);
   const searchRef = React.useRef<HTMLInputElement | null>(null);
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
+    () => new Set(['podcast', 'status', 'published', 'length']),
+  );
 
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(SAVED_VIEWS_KEY);
       if (raw) setSavedViews(JSON.parse(raw) as SavedView[]);
+      const display = window.localStorage.getItem('palpal_admin_episode_display');
+      if (display) {
+        const parsed = JSON.parse(display) as { density?: string; columns?: string[] };
+        if (parsed.density === 'compact' || parsed.density === 'comfortable') {
+          setDensity(parsed.density);
+        }
+        if (Array.isArray(parsed.columns)) setVisibleColumns(new Set(parsed.columns));
+      }
     } catch {
       // ignore malformed local state
     }
   }, []);
+
+  const updateDisplay = (nextDensity: 'comfortable' | 'compact', nextColumns: Set<string>) => {
+    setDensity(nextDensity);
+    setVisibleColumns(nextColumns);
+    try {
+      window.localStorage.setItem(
+        'palpal_admin_episode_display',
+        JSON.stringify({ density: nextDensity, columns: [...nextColumns] }),
+      );
+    } catch {
+      // ignore
+    }
+  };
 
   const persistViews = (next: SavedView[]) => {
     setSavedViews(next);
@@ -172,6 +202,7 @@ export default function EpisodesView({
   const allOnPageSelected = episodes.length > 0 && episodes.every((ep) => selected.has(ep.id));
   const someOnPageSelected = episodes.some((ep) => selected.has(ep.id));
   const effectiveSelected = allMatching ? total : selected.size;
+  const columnCount = 3 + visibleColumns.size;
 
   const runBulk = (action: string) => {
     const ids = allMatching ? [] : [...selected];
@@ -421,6 +452,69 @@ export default function EpisodesView({
             ) : null}
           </div>
 
+          <div className="ac-menu-wrap">
+            <Button
+              size="sm"
+              variant={displayOpen ? 'secondary' : 'ghost'}
+              icon={<SlidersHorizontal size={12} />}
+              onClick={() => setDisplayOpen((open) => !open)}
+            >
+              Display
+            </Button>
+            {displayOpen ? (
+              <div className="ac-menu-panel" style={{ right: 0, left: 'auto', width: 230 }}>
+                <div className="ac-menu-heading">Density</div>
+                <div className="ac-row" style={{ padding: '0 5px 6px' }}>
+                  <Button
+                    size="sm"
+                    variant={density === 'comfortable' ? 'primary' : 'ghost'}
+                    onClick={() => updateDisplay('comfortable', visibleColumns)}
+                  >
+                    Comfortable
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={density === 'compact' ? 'primary' : 'ghost'}
+                    onClick={() => updateDisplay('compact', visibleColumns)}
+                  >
+                    Compact
+                  </Button>
+                </div>
+                <div className="ac-menu-divider" />
+                <div className="ac-menu-heading">Columns</div>
+                {[
+                  ['podcast', 'Podcast'],
+                  ['status', 'Status'],
+                  ['published', 'Published'],
+                  ['length', 'Length'],
+                ].map(([key, label]) => (
+                  <label className="ac-menu-check" key={key}>
+                    <input
+                      type="checkbox"
+                      className="ac-check"
+                      checked={visibleColumns.has(key)}
+                      onChange={(e) => {
+                        const next = new Set(visibleColumns);
+                        if (e.target.checked) next.add(key);
+                        else next.delete(key);
+                        updateDisplay(density, next);
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<HelpCircle size={12} />}
+            onClick={() => setGlossaryOpen(true)}
+            title="What the episode statuses mean"
+          />
+
           <Button
             size="sm"
             variant="ghost"
@@ -563,7 +657,7 @@ export default function EpisodesView({
         ) : null}
 
         <div className="ac-table-wrap">
-          <table className="ac-table">
+          <table className={`ac-table ac-episodes-table ${density === 'compact' ? 'is-compact' : ''}`}>
             <thead>
               <tr>
                 <th className="is-check">
@@ -592,17 +686,17 @@ export default function EpisodesView({
                   />
                 </th>
                 <th>episode</th>
-                <th>podcast</th>
-                <th>status</th>
-                <th>published</th>
-                <th>length</th>
+                {visibleColumns.has('podcast') ? <th>podcast</th> : null}
+                {visibleColumns.has('status') ? <th>status</th> : null}
+                {visibleColumns.has('published') ? <th>published</th> : null}
+                {visibleColumns.has('length') ? <th>length</th> : null}
                 <th />
               </tr>
             </thead>
             <tbody>
               {loading && episodes.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={columnCount}>
                     <div style={{ padding: 30, textAlign: 'center' }}>
                       <Spinner size={18} />
                     </div>
@@ -610,7 +704,7 @@ export default function EpisodesView({
                 </tr>
               ) : episodes.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={columnCount}>
                     <EmptyState
                       title="No episodes match"
                       detail="Try a different status, podcast, source, or search term."
@@ -701,35 +795,47 @@ export default function EpisodesView({
                           </div>
                         ) : null}
                       </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="ac-linklike"
-                          title={`Filter to ${ep.podcast_name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onPatchFilters({ podcastId: ep.podcast_id, page: 1 });
-                          }}
-                        >
-                          {ep.podcast_name}
-                        </button>
-                        <div className="ac-row" style={{ gap: 4, marginTop: 2 }}>
-                          {siteBadge(ep.site)}
-                        </div>
-                      </td>
-                      <td>
-                        <Badge>{ep.status}</Badge>
-                        {ep.blacklisted ? (
-                          <span style={{ marginLeft: 4 }}>
-                            <Badge tone="orange" title="Blacklisted">
-                              ⊘
-                            </Badge>
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="ac-cell-muted">{ep.publication_date ?? '—'}</td>
-                      <td className="ac-cell-muted">{fmtDuration(ep.duration_seconds)}</td>
-                      <td className="is-actions" onClick={(e) => e.stopPropagation()}>
+                      {visibleColumns.has('podcast') ? (
+                        <td data-label="Podcast">
+                          <button
+                            type="button"
+                            className="ac-linklike"
+                            title={`Filter to ${ep.podcast_name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onPatchFilters({ podcastId: ep.podcast_id, page: 1 });
+                            }}
+                          >
+                            {ep.podcast_name}
+                          </button>
+                          <div className="ac-row" style={{ gap: 4, marginTop: 2 }}>
+                            {siteBadge(ep.site)}
+                          </div>
+                        </td>
+                      ) : null}
+                      {visibleColumns.has('status') ? (
+                        <td data-label="Status">
+                          <Badge>{ep.status}</Badge>
+                          {ep.blacklisted ? (
+                            <span style={{ marginLeft: 4 }}>
+                              <Badge tone="orange" title="Blacklisted">
+                                ⊘
+                              </Badge>
+                            </span>
+                          ) : null}
+                        </td>
+                      ) : null}
+                      {visibleColumns.has('published') ? (
+                        <td className="ac-cell-muted" data-label="Published">
+                          {ep.publication_date ?? '—'}
+                        </td>
+                      ) : null}
+                      {visibleColumns.has('length') ? (
+                        <td className="ac-cell-muted" data-label="Length">
+                          {fmtDuration(ep.duration_seconds)}
+                        </td>
+                      ) : null}
+                      <td className="is-actions" data-label="Actions" onClick={(e) => e.stopPropagation()}>
                         <div className="ac-row-actions">
                           {ep.status === 'discovered' ? (
                             <button
@@ -829,6 +935,31 @@ export default function EpisodesView({
           </div>
         </div>
       </div>
+
+      <Modal
+        open={glossaryOpen}
+        onClose={() => setGlossaryOpen(false)}
+        title="Episode status guide"
+        subtitle="How the pipeline moves an episode from discovery to search."
+        width={560}
+      >
+        <div className="ac-glossary">
+          {[
+            ['discovered', 'The source listed the episode; it has not been downloaded yet.'],
+            ['downloading', 'Blurb has claimed a process job and is downloading or transcribing.'],
+            ['processed', 'Transcript chunks are stored and searchable.'],
+            ['failed', 'The last process attempt failed. Check the job history for the error.'],
+            ['orphaned', 'The episode disappeared from the source on a later discovery run.'],
+            ['blacklisted', 'Kept in the database to prevent re-discovery, but skipped by the pipeline.'],
+            ['attention', 'Inbox grouping for failed + orphaned episodes, not a stored status.'],
+          ].map(([status, description]) => (
+            <div className="ac-glossary-row" key={status}>
+              <Badge>{status}</Badge>
+              <span>{description}</span>
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }
