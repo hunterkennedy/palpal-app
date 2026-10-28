@@ -43,7 +43,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           />
           <button type="submit">Sign in</button>
           {error && (
-            <p className="login-err">Incorrect password</p>
+            <p className="login-err">
+              {error === 'rate'
+                ? 'Too many attempts. Try again in a few minutes.'
+                : 'Incorrect password'}
+            </p>
           )}
         </form>
       </div>
