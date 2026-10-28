@@ -410,6 +410,17 @@ export function fmtDuration(seconds: number | null | undefined): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+export function fmtEta(seconds: number | null | undefined): string {
+  if (!seconds || seconds <= 0) return '—';
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours < 48) return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
 export function titleCase(value: string | null | undefined): string {
   if (!value) return '—';
   return value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

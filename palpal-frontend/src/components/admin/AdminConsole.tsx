@@ -45,6 +45,7 @@ import {
   KeyHint,
   Spinner,
   ToastViewport,
+  fmtEta,
   fmtRelative,
   type ConfirmRequest,
   type ToastItem,
@@ -814,6 +815,9 @@ export default function AdminConsole() {
             <button type="button" className="ac-status-pill" onClick={() => setView('jobs')}>
               <ListChecks size={12} />
               {activeJobs} active {activeJobs === 1 ? 'job' : 'jobs'}
+              {overview?.throughput.queue_eta_seconds
+                ? ` · ETA ${fmtEta(overview.throughput.queue_eta_seconds)}`
+                : ''}
             </button>
             <button
               type="button"

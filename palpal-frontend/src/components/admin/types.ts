@@ -193,6 +193,16 @@ export interface Overview {
     recent_failures: Job[];
     failed_24h: number;
   };
+  throughput: {
+    completed_24h: number;
+    process_completed_7d: number;
+    avg_process_seconds?: number | null;
+    avg_discover_seconds?: number | null;
+    jobs_per_hour: number;
+    workers_online: number;
+    queue_eta_seconds?: number | null;
+    by_site: Array<{ site: string; count: number; avg_seconds?: number | null }>;
+  };
   last_runs: { discovery?: string | null; reclaim?: string | null };
   generated_at: string;
 }

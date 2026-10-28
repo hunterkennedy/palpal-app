@@ -32,6 +32,7 @@ import {
   Spinner,
   Stat,
   fmtDateTime,
+  fmtEta,
   fmtNumber,
   fmtRelative,
   jobLabel,
@@ -109,7 +110,11 @@ export default function OverviewView({
         <Stat
           label="queue"
           value={fmtNumber(queue)}
-          hint={`${fmtNumber(overview.jobs.failed_24h)} failed in 24h`}
+          hint={
+            overview.throughput.queue_eta_seconds
+              ? `ETA ${fmtEta(overview.throughput.queue_eta_seconds)}`
+              : `${fmtNumber(overview.jobs.failed_24h)} failed in 24h`
+          }
           tone={queue > 0 ? 'blue' : ''}
           onClick={onOpenJobs}
         />
@@ -193,6 +198,41 @@ export default function OverviewView({
               <div className="ac-tiny ac-subtle">NEXT RECLAIM SWEEP</div>
               <div style={{ color: 'var(--ac-text)', fontSize: 12.5 }}>{fmtRelative(reclaimNext)}</div>
               <div className="ac-tiny ac-subtle">last run {fmtRelative(overview.last_runs.reclaim)}</div>
+            </div>
+          </div>
+
+          <div className="ac-grid ac-grid-3" style={{ marginTop: 12 }}>
+            <div>
+              <div className="ac-tiny ac-subtle">QUEUE ETA</div>
+              <div style={{ color: 'var(--ac-text)', fontSize: 12.5 }}>
+                {fmtEta(overview.throughput.queue_eta_seconds)}
+              </div>
+              <div className="ac-tiny ac-subtle">
+                {overview.throughput.workers_online} worker
+                {overview.throughput.workers_online === 1 ? '' : 's'} online
+              </div>
+            </div>
+            <div>
+              <div className="ac-tiny ac-subtle">THROUGHPUT</div>
+              <div style={{ color: 'var(--ac-text)', fontSize: 12.5 }}>
+                {overview.throughput.jobs_per_hour.toFixed(1)}/hr
+              </div>
+              <div className="ac-tiny ac-subtle">
+                {fmtNumber(overview.throughput.completed_24h)} completed in 24h
+              </div>
+            </div>
+            <div>
+              <div className="ac-tiny ac-subtle">AVG PROCESS TIME</div>
+              <div style={{ color: 'var(--ac-text)', fontSize: 12.5 }}>
+                {fmtEta(overview.throughput.avg_process_seconds)}
+              </div>
+              <div className="ac-tiny ac-subtle">
+                {overview.throughput.by_site.length
+                  ? overview.throughput.by_site
+                      .map((site) => `${site.site} ${fmtEta(site.avg_seconds)}`)
+                      .join(' · ')
+                  : 'no completed history yet'}
+              </div>
             </div>
           </div>
 

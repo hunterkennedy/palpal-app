@@ -820,6 +820,47 @@ async def admin_overview():
             """
         )
 
+    async def _throughput():
+        return await pool.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE status = 'completed'
+                      AND COALESCE(finished_at, created_at) > now() - interval '24 hours'
+                ) AS completed_24h,
+                COUNT(*) FILTER (
+                    WHERE kind = 'process' AND status = 'completed'
+                      AND COALESCE(finished_at, created_at) > now() - interval '7 days'
+                ) AS process_completed_7d,
+                AVG(EXTRACT(EPOCH FROM (finished_at - claimed_at))) FILTER (
+                    WHERE kind = 'process' AND status = 'completed'
+                      AND claimed_at IS NOT NULL AND finished_at IS NOT NULL
+                      AND finished_at > now() - interval '7 days'
+                ) AS avg_process_seconds,
+                AVG(EXTRACT(EPOCH FROM (finished_at - claimed_at))) FILTER (
+                    WHERE kind = 'discover' AND status = 'completed'
+                      AND claimed_at IS NOT NULL AND finished_at IS NOT NULL
+                      AND finished_at > now() - interval '7 days'
+                ) AS avg_discover_seconds
+            FROM jobs
+            """
+        )
+
+    async def _throughput_by_site():
+        return await pool.fetch(
+            """
+            SELECT COALESCE(payload->>'site', 'unknown') AS site,
+                   COUNT(*) AS n,
+                   AVG(EXTRACT(EPOCH FROM (finished_at - claimed_at))) AS avg_seconds
+            FROM jobs
+            WHERE kind = 'process' AND status = 'completed'
+              AND claimed_at IS NOT NULL AND finished_at IS NOT NULL
+              AND finished_at > now() - interval '7 days'
+            GROUP BY 1
+            ORDER BY 1
+            """
+        )
+
     (
         settings,
         pods,
@@ -829,6 +870,8 @@ async def admin_overview():
         recent_failures,
         run_rows,
         blurb,
+        throughput,
+        throughput_sites,
     ) = await asyncio.gather(
         pipeline_settings.get_all(),
         _by_podcast(),
@@ -838,10 +881,16 @@ async def admin_overview():
         _recent_failures(),
         _runs(),
         worker_status.get_worker_status(),
+        _throughput(),
+        _throughput_by_site(),
     )
 
     job_count_map = {f"{r['kind']}_{r['status']}": r["n"] for r in job_counts}
     runs = {r["key"]: r["value"] for r in run_rows}
+    workers_online = sum(1 for w in blurb.get("workers", []) if w.get("online"))
+    process_active = job_count_map.get("process_pending", 0) + job_count_map.get("process_claimed", 0)
+    avg_process = float(throughput["avg_process_seconds"] or 0)
+    queue_eta = (process_active * avg_process / max(1, workers_online)) if avg_process else None
 
     return {
         "scheduler": get_scheduler_status(),
@@ -858,6 +907,27 @@ async def admin_overview():
                 "SELECT COUNT(*) FROM jobs WHERE status = 'failed' "
                 "AND COALESCE(finished_at, created_at) > now() - interval '24 hours'"
             ),
+        },
+        "throughput": {
+            "completed_24h": throughput["completed_24h"],
+            "process_completed_7d": throughput["process_completed_7d"],
+            "avg_process_seconds": avg_process or None,
+            "avg_discover_seconds": (
+                float(throughput["avg_discover_seconds"])
+                if throughput["avg_discover_seconds"] is not None
+                else None
+            ),
+            "jobs_per_hour": round((throughput["completed_24h"] or 0) / 24, 2),
+            "workers_online": workers_online,
+            "queue_eta_seconds": queue_eta,
+            "by_site": [
+                {
+                    "site": r["site"],
+                    "count": r["n"],
+                    "avg_seconds": float(r["avg_seconds"]) if r["avg_seconds"] is not None else None,
+                }
+                for r in throughput_sites
+            ],
         },
         "last_runs": {
             "discovery": runs.get("last_discovery_run"),
