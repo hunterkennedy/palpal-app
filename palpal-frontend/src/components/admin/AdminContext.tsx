@@ -25,7 +25,7 @@ export interface AdminApi {
   jobAction: (action: 'cancel' | 'prioritize' | 'retry', id: string) => Promise<void>;
   schedulerAction: (action: 'pause' | 'resume') => Promise<void>;
   discover: (options: { podcast_id?: string; source_id?: string; auto_queue: boolean }) => Promise<void>;
-  saveSettings: (patch: Record<string, boolean | number>) => Promise<void>;
+  saveSettings: (patch: Record<string, boolean | number | string>) => Promise<void>;
 }
 
 export const AdminContext = createContext<AdminApi | null>(null);

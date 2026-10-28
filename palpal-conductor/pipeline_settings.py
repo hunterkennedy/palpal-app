@@ -13,8 +13,8 @@ import db
 logger = logging.getLogger(__name__)
 
 KNOWN_KEYS = {"auto_discover", "auto_download"}
-KNOWN_INT_KEYS = {"min_episode_duration_seconds", "chunk_target_words"}
-KNOWN_STRING_KEYS: set[str] = set()
+KNOWN_INT_KEYS = {"min_episode_duration_seconds", "chunk_target_words", "job_history_retention_days"}
+KNOWN_STRING_KEYS = {"discovery_schedule"}
 
 _cache: dict[str, bool] | None = None
 _int_cache: dict[str, int] | None = None

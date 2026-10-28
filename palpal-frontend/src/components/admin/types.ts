@@ -207,6 +207,8 @@ export interface PipelineSettings {
   auto_download: boolean;
   min_episode_duration_seconds: number;
   chunk_target_words: number;
+  job_history_retention_days: number;
+  discovery_schedule: string;
   [key: string]: unknown;
 }
 

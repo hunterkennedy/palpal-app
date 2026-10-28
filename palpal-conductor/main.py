@@ -39,6 +39,7 @@ from pipeline import (
     handle_process_complete, handle_process_fail,
     queue_episodes_for_processing, backfill_patreon_durations,
     cancel_jobs_for_source, cancel_jobs_for_podcast,
+    reschedule_discovery, purge_job_history,
 )
 from activities.b2 import (
     delete_transcript as b2_delete_transcript,
@@ -378,6 +379,8 @@ async def update_pipeline_settings(body: dict):
         if key in pipeline_settings.KNOWN_INT_KEYS:
             await pipeline_settings.set_int(key, int(value))
         elif key in pipeline_settings.KNOWN_STRING_KEYS:
+            if key == "discovery_schedule":
+                value = await reschedule_discovery(str(value))
             await pipeline_settings.set_string(key, str(value))
         else:
             await pipeline_settings.set(key, bool(value))

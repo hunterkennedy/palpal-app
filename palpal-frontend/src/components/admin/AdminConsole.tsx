@@ -624,7 +624,7 @@ export default function AdminConsole() {
   );
 
   const saveSettings = useCallback(
-    async (patch: Record<string, boolean | number>) => {
+    async (patch: Record<string, boolean | number | string>) => {
       const keys = Object.keys(patch);
       const key = `setting:${keys[0] === 'min_episode_duration_seconds' ? 'min-duration' : keys[0] === 'chunk_target_words' ? 'chunk-words' : keys[0]}`;
       await run(key, async () => {

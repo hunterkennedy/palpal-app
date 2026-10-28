@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 import caches
 import db
@@ -34,6 +35,9 @@ _processing_paused = False
 # How often the dispatcher re-sweeps for discovered episodes even without an
 # explicit wakeup — catches episodes reset by a rate-limit/backoff failure.
 _SWEEP_INTERVAL_SECONDS = 300.0
+
+DEFAULT_DISCOVERY_CRON = "0 */6 * * *"
+_SCHEDULER_TIMEZONE = "America/Los_Angeles"
 
 
 def wakeup_worker() -> None:
@@ -736,11 +740,59 @@ async def scheduled_discovery() -> None:
     await _record_job_run("last_discovery_run")
 
 
+async def purge_job_history() -> int:
+    """Delete finished jobs older than the configured retention window."""
+    days = await settings.get_int("job_history_retention_days", default=0)
+    if days <= 0:
+        return 0
+    pool = db.get_pool()
+    result = await pool.execute(
+        """
+        DELETE FROM jobs
+        WHERE status IN ('completed', 'failed')
+          AND COALESCE(finished_at, created_at) < now() - ($1::int * interval '1 day')
+        """,
+        days,
+    )
+    deleted = int(result.split()[-1])
+    if deleted:
+        logger.info("Retention: purged %d job(s) older than %d days", deleted, days)
+        await _record_job_run("last_history_purge")
+    return deleted
+
+
+def _discovery_trigger(cron: str) -> CronTrigger:
+    return CronTrigger.from_crontab(cron, timezone=_SCHEDULER_TIMEZONE)
+
+
+async def reschedule_discovery(cron: str | None) -> str:
+    """Apply a cron expression to the live discovery job.
+
+    Returns the expression actually applied (falls back to the default if the
+    stored value is invalid).
+    """
+    expression = (cron or "").strip() or DEFAULT_DISCOVERY_CRON
+    try:
+        trigger = _discovery_trigger(expression)
+    except Exception as exc:
+        logger.warning("Invalid discovery schedule %r (%s); using default", expression, exc)
+        expression = DEFAULT_DISCOVERY_CRON
+        trigger = _discovery_trigger(expression)
+
+    if _scheduler.get_job("discovery"):
+        _scheduler.reschedule_job("discovery", trigger=trigger)
+    else:
+        _scheduler.add_job(scheduled_discovery, trigger=trigger, id="discovery")
+    logger.info("Discovery schedule set to %s (%s)", expression, _SCHEDULER_TIMEZONE)
+    return expression
+
+
 async def start_scheduler() -> None:
     global _processing_paused
     pool = db.get_pool()
     rows = await pool.fetch(
-        "SELECT key, value FROM settings WHERE key IN ('processing_paused', 'last_discovery_run', 'last_reclaim_run')"
+        "SELECT key, value FROM settings WHERE key IN "
+        "('processing_paused', 'last_discovery_run', 'last_reclaim_run', 'discovery_schedule')"
     )
     state = {row["key"]: row["value"] for row in rows}
 
@@ -759,19 +811,21 @@ async def start_scheduler() -> None:
                 pass
         return now + timedelta(**delta_kwargs)
 
-    _scheduler.add_job(
-        scheduled_discovery, "cron", hour="0,6,12,18", minute=0, id="discovery", timezone="America/Los_Angeles",
-    )
+    await reschedule_discovery(state.get("discovery_schedule"))
     _scheduler.add_job(
         reclaim_stuck_jobs, "interval", minutes=30, id="reclaim",
         next_run_time=_next_run("last_reclaim_run", minutes=30),
+    )
+    _scheduler.add_job(
+        purge_job_history, "interval", hours=6, id="history-purge",
     )
     # The scheduler itself always runs — the discovery cron (gated by its own
     # auto_discover check) and the reclaim sweep are unrelated to whether
     # processing is paused, and should never stop as a side effect of it.
     _scheduler.start()
     logger.info(
-        "Scheduler started (discovery every 6h, reclaim every 30min); processing %s",
+        "Scheduler started (discovery=%s, reclaim every 30min); processing %s",
+        state.get("discovery_schedule") or DEFAULT_DISCOVERY_CRON,
         "paused" if _processing_paused else "running",
     )
 

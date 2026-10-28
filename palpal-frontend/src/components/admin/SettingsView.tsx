@@ -34,18 +34,24 @@ export default function SettingsView({
   const admin = useAdmin();
   const [minDur, setMinDur] = useState('0');
   const [chunkWords, setChunkWords] = useState('50');
+  const [retentionDays, setRetentionDays] = useState('0');
+  const [schedule, setSchedule] = useState('0 */6 * * *');
   const [rechunkOpen, setRechunkOpen] = useState(false);
   const [rechunkInfo, setRechunkInfo] = useState<{ queued: number; target_words: number } | null>(null);
   const [rechunkText, setRechunkText] = useState('');
 
   const minDurSetting = overview?.settings.min_episode_duration_seconds;
   const chunkWordsSetting = overview?.settings.chunk_target_words;
+  const retentionSetting = overview?.settings.job_history_retention_days;
+  const scheduleSetting = overview?.settings.discovery_schedule;
 
   useEffect(() => {
     if (minDurSetting === undefined && chunkWordsSetting === undefined) return;
     setMinDur(String(minDurSetting ?? 0));
     setChunkWords(String(chunkWordsSetting ?? 50));
-  }, [minDurSetting, chunkWordsSetting]);
+    setRetentionDays(String(retentionSetting ?? 0));
+    setSchedule(scheduleSetting || '0 */6 * * *');
+  }, [minDurSetting, chunkWordsSetting, retentionSetting, scheduleSetting]);
 
   if (!overview) {
     return (
@@ -152,6 +158,64 @@ export default function SettingsView({
               </Button>
             </div>
             <span className="ac-tiny">Applies to new transcriptions and re-chunking.</span>
+          </div>
+        </div>
+
+        <div className="ac-grid ac-grid-2" style={{ marginTop: 18 }}>
+          <div className="ac-field">
+            <span>Job history retention (days)</span>
+            <div className="ac-row">
+              <input
+                className="ac-input"
+                type="number"
+                min={0}
+                step={1}
+                value={retentionDays}
+                onChange={(e) => setRetentionDays(e.target.value)}
+                style={{ width: 130 }}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Save size={12} />}
+                loading={admin.isPending('setting:job_history_retention_days')}
+                onClick={() =>
+                  admin.saveSettings({
+                    job_history_retention_days: Math.max(0, parseInt(retentionDays, 10) || 0),
+                  })
+                }
+              >
+                Save
+              </Button>
+            </div>
+            <span className="ac-tiny">
+              Finished jobs older than this are purged every 6 hours. 0 disables automatic cleanup.
+            </span>
+          </div>
+
+          <div className="ac-field">
+            <span>Discovery schedule (cron)</span>
+            <div className="ac-row">
+              <input
+                className="ac-input ac-mono"
+                value={schedule}
+                onChange={(e) => setSchedule(e.target.value)}
+                placeholder="0 */6 * * *"
+                style={{ flex: 1 }}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Save size={12} />}
+                loading={admin.isPending('setting:discovery_schedule')}
+                onClick={() => admin.saveSettings({ discovery_schedule: schedule.trim() || '0 */6 * * *' })}
+              >
+                Save
+              </Button>
+            </div>
+            <span className="ac-tiny">
+              Five-field cron, evaluated in America/Los_Angeles. Invalid expressions fall back to every six hours.
+            </span>
           </div>
         </div>
       </section>
