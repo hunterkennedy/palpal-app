@@ -104,6 +104,8 @@ export default function EpisodesView({
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [viewsOpen, setViewsOpen] = useState(false);
   const [viewName, setViewName] = useState('');
+  const [activeRow, setActiveRow] = useState(0);
+  const searchRef = React.useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     try {
@@ -214,6 +216,72 @@ export default function EpisodesView({
     }
   };
 
+  useEffect(() => {
+    setActiveRow(0);
+  }, [filters.page, filters.status, filters.podcastId, filters.site, filters.q]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.tagName === 'BUTTON' ||
+          target.tagName === 'A' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (document.querySelector('.ac-drawer, .ac-modal-overlay, .ac-command-overlay')) return;
+
+      if (event.key === '/') {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (!episodes.length) return;
+      if (event.key === 'j' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        setActiveRow((prev) => Math.min(episodes.length - 1, prev + 1));
+      } else if (event.key === 'k' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        setActiveRow((prev) => Math.max(0, prev - 1));
+      } else if (event.key === 'x' || event.key === ' ') {
+        event.preventDefault();
+        const episode = episodes[activeRow];
+        if (!episode) return;
+        if (allMatching) {
+          setAllMatching(false);
+          onClearSelection();
+          onToggleSelect(episode.id, true);
+        } else {
+          onToggleSelect(episode.id, !selected.has(episode.id));
+        }
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const episode = episodes[activeRow];
+        if (episode) onOpenEpisode(episode);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [
+    episodes,
+    activeRow,
+    allMatching,
+    selected,
+    onClearSelection,
+    onToggleSelect,
+    onOpenEpisode,
+  ]);
+
+  useEffect(() => {
+    const row = document.querySelector(`#ep-tbody tr[data-row-index="${activeRow}"]`);
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [activeRow, episodes.length]);
+
   return (
     <div className="ac-stack">
       <div className="ac-card" style={{ paddingBottom: 12 }}>
@@ -241,6 +309,7 @@ export default function EpisodesView({
           <div className="ac-search">
             <Search size={14} />
             <input
+              ref={searchRef}
               className="ac-input"
               placeholder="Filter by title, podcast, or source…"
               value={qInput}
@@ -566,14 +635,15 @@ export default function EpisodesView({
                   </td>
                 </tr>
               ) : (
-                episodes.map((ep) => {
+                episodes.map((ep, rowIndex) => {
                   const isSelected = allMatching || selected.has(ep.id);
                   const stage = stageFor(ep);
                   const url = episodeUrl(ep);
                   return (
                     <tr
                       key={ep.id}
-                      className={`${isSelected ? 'is-selected' : ''} ${ep.blacklisted ? 'is-dim' : ''} is-clickable`}
+                      data-row-index={rowIndex}
+                      className={`${isSelected ? 'is-selected' : ''} ${ep.blacklisted ? 'is-dim' : ''} ${rowIndex === activeRow ? 'is-active-row' : ''} is-clickable`}
                       onClick={() => onOpenEpisode(ep)}
                     >
                       <td className="is-check" onClick={(e) => e.stopPropagation()}>

@@ -980,6 +980,12 @@ export default function AdminConsole() {
             <div className="ac-shortcuts-hint">
               <span><KeyHint>⌘K</KeyHint> jump</span>
               <span><KeyHint>g</KeyHint> then <KeyHint>o</KeyHint><KeyHint>a</KeyHint><KeyHint>e</KeyHint><KeyHint>j</KeyHint><KeyHint>p</KeyHint><KeyHint>c</KeyHint><KeyHint>l</KeyHint><KeyHint>s</KeyHint></span>
+              {view === 'episodes' ? (
+                <span>
+                  <KeyHint>j</KeyHint>/<KeyHint>k</KeyHint> rows · <KeyHint>x</KeyHint> select ·{' '}
+                  <KeyHint>↵</KeyHint> open · <KeyHint>/</KeyHint> search
+                </span>
+              ) : null}
               <span className="ac-subtle">Filters and the current page are kept in the URL</span>
             </div>
           </div>

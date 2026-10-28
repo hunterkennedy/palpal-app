@@ -513,6 +513,8 @@
 .ac-table tbody tr:last-child td { border-bottom: none; }
 .ac-table tbody tr:hover td { background: rgba(255, 248, 240, 0.022); }
 .ac-table tr.is-selected td { background: rgba(254, 133, 0, 0.055); }
+.ac-table tr.is-active-row td { background: rgba(254, 133, 0, 0.075); }
+.ac-table tr.is-active-row td:first-child { box-shadow: inset 2px 0 0 var(--ac-accent); }
 .ac-table tr.is-dim td { opacity: 0.55; }
 .ac-table tr.is-clickable { cursor: pointer; }
 
