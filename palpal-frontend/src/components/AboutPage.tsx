@@ -1,7 +1,7 @@
 'use client';
 
-import { Github } from 'lucide-react';
 import Image from 'next/image';
+import { GithubIcon } from '@/components/GithubIcon';
 
 const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? 'contact@palpal.app';
 
@@ -142,7 +142,7 @@ export default function AboutPage() {
                 className="card-secondary cursor-pointer"
               >
                 <h3 className="heading-tertiary mb-2 flex items-center gap-2">
-                  <Github size={16} className="text-orange-400" />
+                  <GithubIcon size={16} className="text-orange-400" />
                   <span className="text-orange-400">palpal-app</span>
                 </h3>
                 <p className="text-meta">Frontend, conductor pipeline, and infrastructure</p>
@@ -154,7 +154,7 @@ export default function AboutPage() {
                 className="card-secondary cursor-pointer"
               >
                 <h3 className="heading-tertiary mb-2 flex items-center gap-2">
-                  <Github size={16} className="text-orange-400" />
+                  <GithubIcon size={16} className="text-orange-400" />
                   <span className="text-orange-400">blurb</span>
                 </h3>
                 <p className="text-meta">GPU-accelerated transcription service</p>

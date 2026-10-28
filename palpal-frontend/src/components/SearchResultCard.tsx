@@ -12,16 +12,19 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import Image from 'next/image';
-// Strip all tags except <mark> (data is from our own ts_headline, no external input)
-function sanitizeHighlight(html: string): string {
-  return html.replace(/<(?!\/?mark\s*>)[^>]*>/gi, '');
-}
+import sanitizeHtml from 'sanitize-html';
 import { SearchHit } from '@/types';
 import { PodcastConfig } from '@/types/podcast';
 import { getWatchUrl, getWatchText, isPatreonSource } from '@/lib/chunk-utils';
 import ChunkNotes from '@/components/ChunkNotes';
 import ChunkContextView from '@/components/ChunkContextView';
 import { ConductorChunk } from '@/lib/conductor';
+
+// Postgres ts_headline only inserts <mark>; allow exactly that tag and no
+// attributes rather than relying on a regex to strip everything else.
+function sanitizeHighlight(html: string): string {
+  return sanitizeHtml(html, { allowedTags: ['mark'], allowedAttributes: {} });
+}
 
 const formatPublicationDate = (dateString?: string): string => {
   if (!dateString) return '';

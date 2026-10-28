@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const SESSION_COOKIE = 'palpal_admin_session';
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname === '/admin/login' || pathname === '/admin/logout') {

@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // The repo has an empty lockfile at palpal-app/ for tooling; keep Next's
+  // tracing rooted at the actual frontend package so the standalone bundle
+  // doesn't pick up unrelated parent-directory files.
+  outputFileTracingRoot: process.cwd(),
   compress: true,
   poweredByHeader: false,
 

@@ -35,7 +35,7 @@ Everything that needs your YouTube/Patreon login — discovery and audio downloa
   palpal-frontend           search UI, served on your chosen port
 ```
 
-Everything in the pipeline is automatic once configured. Conductor enqueues a `discover` job per source on a schedule (every 6h) and a `process` job for every newly-discovered episode; blurb polls, claims one job at a time, and does the work — audio never touches conductor's disk.
+Everything in the pipeline is automatic once configured. Conductor enqueues a `discover` job per YouTube, Patreon, or RSS/Atom source on a schedule (every 6h) and a `process` job for every newly-discovered episode; blurb polls, claims one job at a time, and does the work — audio never touches conductor's disk.
 
 ---
 
@@ -96,7 +96,7 @@ Open `http://localhost:$APP_PORT/admin` and log in with `ADMIN_PASSWORD`.
 
 This is the control room for the pipeline. From here you can:
 
-- **Trigger discovery** — scan YouTube playlists/channels for new episodes (runs automatically every 24h, or kick it off manually here)
+- **Trigger discovery** — scan YouTube channels/playlists, Patreon collections, and RSS/Atom feeds for new episodes (runs automatically every 6h, or kick it off manually here). RSS sources are added under a podcast's Sources with `site = rss` and the full feed URL (including any auth token).
 - **Start the download queue** — the download worker runs automatically on startup; the `▶ dl` button wakes it immediately if you want to kick off processing now
 - **Monitor status** — counts per pipeline stage, download worker state (active/idle), recent failures, episodes stuck in transcription
 - **Retry failures** — re-queue a failed episode; it goes back to `discovered` and the worker picks it up
@@ -114,7 +114,7 @@ Open `http://localhost:$APP_PORT`. Type something a podcast host said. Get back 
 - **Sort** by relevance, publish date, or clip duration
 - **Date range** — narrow down to recent episodes or a specific window
 - **Expand context** — see the chunks before and after a result for more of the conversation
-- **Jump to timestamp** — every result links directly to the right moment on YouTube
+- **Jump to timestamp** — YouTube and Patreon results link directly to the right moment; RSS results are searchable but intentionally have no external watch link, since the feed URL carries a private token
 
 ---
 

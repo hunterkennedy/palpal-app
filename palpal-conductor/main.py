@@ -1093,7 +1093,7 @@ _ISO_DATE = r"^\d{4}-\d{2}-\d{2}$"
 @app.get("/search", tags=["search"], response_model=SearchResponse)
 async def search(
     request: Request,
-    q: str = Query(..., description="Full-text search query"),
+    q: str = Query(..., min_length=1, max_length=500, description="Full-text search query"),
     podcast_id: str | None = Query(None, description="Filter to a single podcast ID"),
     page: int = Query(1, ge=1, le=1000, description="Page number (1-based)"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
@@ -1250,10 +1250,18 @@ async def get_podcast_image(podcast_id: str) -> Response:
     )
     if not row or not row["icon"]:
         raise HTTPException(status_code=404, detail="No icon available")
+    # Icons come from remote sources (e.g. an RSS feed's artwork). Never serve
+    # a scriptable type such as image/svg+xml from this origin.
+    icon_type = (row["icon_content_type"] or "image/jpeg").split(";")[0].strip().lower()
+    if icon_type not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+        raise HTTPException(status_code=404, detail="Unsupported icon type")
     return Response(
         content=bytes(row["icon"]),
-        media_type=row["icon_content_type"] or "image/jpeg",
-        headers={"Cache-Control": "public, max-age=86400"},
+        media_type=icon_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

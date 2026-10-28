@@ -1,7 +1,7 @@
-fastapi==0.135.1
-uvicorn[standard]==0.42.0
-apscheduler==3.11.2
-asyncpg==0.31.0
-python-dotenv==1.2.2
-pydantic==2.12.5
-boto3==1.37.14
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+apscheduler==3.11.3
+asyncpg==0.32.0
+python-dotenv==1.2.4
+pydantic==2.14.1
+boto3==1.43.119
