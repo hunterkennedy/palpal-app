@@ -143,10 +143,30 @@ docker logs -f palpal-conductor
 
 ## Updating
 
+Local/build-from-source stack:
+
 ```bash
 git pull
 docker compose up -d --build
 ```
+
+Production stack using the prebuilt GHCR images: add your GitHub username and a
+classic PAT with `read:packages` to `.env`, then run the deploy wrapper:
+
+```env
+GHCR_USER=hunterkennedy
+GHCR_TOKEN=ghp_...
+```
+
+```bash
+git pull
+chmod 600 .env
+./scripts/deploy.sh
+# prefix with sudo if the stack runs as root
+```
+
+Compose cannot read registry credentials from environment variables itself;
+`scripts/deploy.sh` does the `docker login` before pulling.
 
 ---
 
