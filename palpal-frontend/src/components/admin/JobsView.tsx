@@ -5,6 +5,7 @@ import {
   Ban,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   ListChecks,
   RotateCcw,
@@ -14,7 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAdmin } from './AdminContext';
-import { api } from './api';
+import { api, qs } from './api';
 import type { Job, JobHistoryFilters, JobHistoryPage, JobsPage } from './types';
 import {
   Badge,
@@ -348,6 +349,23 @@ export default function JobsView({
                 <option value="process">Process</option>
                 <option value="discover">Discover</option>
               </select>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Download size={12} />}
+                onClick={() =>
+                  window.open(
+                    `/api/admin/jobs/export${qs({
+                      status: historyFilters.status,
+                      kind: historyFilters.kind,
+                      q: historyFilters.q,
+                    })}`,
+                    '_blank',
+                  )
+                }
+              >
+                CSV
+              </Button>
               <div className="ac-row-end ac-tiny ac-subtle">
                 {loadingHistory ? <Spinner /> : null}
                 {history?.counts ? (

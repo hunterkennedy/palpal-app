@@ -6,6 +6,7 @@ import {
   Bookmark,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   Play,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAdmin } from './AdminContext';
+import { qs } from './api';
 import type { Episode, EpisodeFilters, EpisodePage, Podcast } from './types';
 import {
   Badge,
@@ -349,6 +351,26 @@ export default function EpisodesView({
               </div>
             ) : null}
           </div>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Download size={12} />}
+            onClick={() =>
+              window.open(
+                `/api/admin/episodes/export${qs({
+                  status: filters.status,
+                  podcast_id: filters.podcastId,
+                  site: filters.site,
+                  q: filters.q,
+                  sort: filters.sort,
+                })}`,
+                '_blank',
+              )
+            }
+          >
+            CSV
+          </Button>
 
           <div className="ac-row-end ac-tiny ac-subtle">
             {loading ? <Spinner /> : null}

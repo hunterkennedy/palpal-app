@@ -29,9 +29,13 @@ async function proxy(request: NextRequest, path: string[]) {
   });
 
   const text = await res.text();
+  const disposition = res.headers.get('Content-Disposition');
   return new NextResponse(text, {
     status: res.status,
-    headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' },
+    headers: {
+      'Content-Type': res.headers.get('Content-Type') ?? 'application/json',
+      ...(disposition ? { 'Content-Disposition': disposition } : {}),
+    },
   });
 }
 

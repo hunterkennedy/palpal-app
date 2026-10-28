@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import json
 import logging
 import os
@@ -856,6 +858,21 @@ def _iso(value):
     return value.isoformat() if value is not None else None
 
 
+def _csv_response(filename: str, headers: list[str], rows: list[list]) -> Response:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 _ACTIVE_JOB_SELECT = """
     SELECT j.id::text, j.kind, j.status, j.claimed_by_worker, j.claimed_at,
            j.created_at, j.priority, j.attempts, j.progress, j.progress_at,
@@ -1322,6 +1339,54 @@ async def admin_job_history(
         "page_size": page_size,
         "counts": {r["status"]: r["n"] for r in counts_rows},
     }
+
+
+@app.get("/admin/jobs/export", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_export_jobs(
+    status: str | None = Query(None),
+    kind: str | None = Query(None),
+    q: str | None = Query(None),
+):
+    """CSV export of finished job history, using the same filters as the UI."""
+    pool = db.get_pool()
+    status_filter = None if status in (None, "all") else status
+    kind_filter = None if kind in (None, "all") else kind
+    rows = await pool.fetch(
+        """
+        SELECT j.kind, j.status, j.error_type, j.error, j.attempts, j.priority,
+               j.created_at, j.claimed_at, j.finished_at, j.claimed_by_worker,
+               e.title AS episode_title, src.name AS source_name
+        FROM jobs j
+        LEFT JOIN episodes e ON e.id = j.episode_id
+        LEFT JOIN sources  src ON src.id = j.source_id
+        WHERE j.status IN ('completed', 'failed')
+          AND ($1::text IS NULL OR j.status = $1)
+          AND ($2::text IS NULL OR j.kind = $2)
+          AND ($3::text IS NULL OR
+               COALESCE(e.title, '') ILIKE '%' || $3 || '%' OR
+               COALESCE(src.name, '') ILIKE '%' || $3 || '%' OR
+               COALESCE(j.error, '') ILIKE '%' || $3 || '%')
+        ORDER BY COALESCE(j.finished_at, j.created_at) DESC
+        LIMIT 50000
+        """,
+        status_filter, kind_filter, q,
+    )
+    return _csv_response(
+        "palpal-jobs.csv",
+        [
+            "kind", "status", "target", "error_type", "error", "attempts", "priority",
+            "worker", "created_at", "claimed_at", "finished_at",
+        ],
+        [
+            [
+                r["kind"], r["status"], r["episode_title"] or r["source_name"] or "",
+                r["error_type"], r["error"], r["attempts"], r["priority"],
+                r["claimed_by_worker"], _iso(r["created_at"]),
+                _iso(r["claimed_at"]), _iso(r["finished_at"]),
+            ]
+            for r in rows
+        ],
+    )
 
 
 @app.get("/admin/jobs/{job_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -2206,6 +2271,49 @@ async def admin_list_episodes(
         "page_size": page_size,
         "counts": counts,
     }
+
+
+@app.get("/admin/episodes/export", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_export_episodes(
+    status: str | None = Query(None),
+    podcast_id: str | None = Query(None),
+    site: str | None = Query(None),
+    q: str | None = Query(None),
+    sort: str = Query("newest"),
+):
+    """CSV export of the current episode filter (up to 50k rows)."""
+    pool = db.get_pool()
+    args = _episode_filter_args(status, podcast_id, site, q)
+    order_sql = _EPISODE_SORTS.get(sort, _EPISODE_SORTS["newest"])
+    rows = await pool.fetch(
+        f"""
+        SELECT e.title, p.display_name AS podcast_name, s.name AS source_name, s.site,
+               e.status, e.publication_date, e.duration_seconds, e.blacklisted,
+               e.error_message, e.video_id, e.created_at, e.updated_at
+        FROM episodes e
+        JOIN sources  s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        {_episode_filter_sql()}
+        ORDER BY {order_sql}
+        LIMIT 50000
+        """,
+        *args,
+    )
+    return _csv_response(
+        "palpal-episodes.csv",
+        [
+            "title", "podcast", "source", "site", "status", "published", "duration_seconds",
+            "blacklisted", "error_message", "video_id", "created_at", "updated_at",
+        ],
+        [
+            [
+                r["title"], r["podcast_name"], r["source_name"], r["site"], r["status"],
+                r["publication_date"], r["duration_seconds"], r["blacklisted"],
+                r["error_message"], r["video_id"], _iso(r["created_at"]), _iso(r["updated_at"]),
+            ]
+            for r in rows
+        ],
+    )
 
 
 @app.get("/admin/episodes/{episode_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
