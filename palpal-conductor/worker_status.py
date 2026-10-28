@@ -47,6 +47,7 @@ async def record_state(
     job_id: str | None = None,
     detail: str | None = None,
     progress: dict | None = None,
+    health: dict | None = None,
 ) -> None:
     """Full heartbeat: liveness plus what the worker is doing right now.
 
@@ -59,15 +60,17 @@ async def record_state(
     await pool.execute(
         """
         INSERT INTO worker_heartbeats
-            (worker_id, last_seen_at, state, stage, job_id, detail, progress)
-        VALUES ($1, now(), $2, $3, $4, $5, COALESCE($6::jsonb, '{}'::jsonb))
+            (worker_id, last_seen_at, state, stage, job_id, detail, progress, health)
+        VALUES ($1, now(), $2, $3, $4, $5, COALESCE($6::jsonb, '{}'::jsonb),
+                COALESCE($7::jsonb, '{}'::jsonb))
         ON CONFLICT (worker_id) DO UPDATE SET
             last_seen_at = now(),
             state        = $2,
             stage        = $3,
             job_id       = $4,
             detail       = $5,
-            progress     = COALESCE($6::jsonb, '{}'::jsonb)
+            progress     = COALESCE($6::jsonb, '{}'::jsonb),
+            health       = COALESCE($7::jsonb, '{}'::jsonb)
         """,
         worker_id,
         state,
@@ -75,6 +78,7 @@ async def record_state(
         job_id,
         (detail[:2000] if detail else None),
         progress,
+        health,
     )
 
 
@@ -83,7 +87,7 @@ async def get_worker_status() -> dict:
     pool = db.get_pool()
     rows = await pool.fetch(
         """
-        SELECT worker_id, last_seen_at, state, stage, job_id, detail, progress
+        SELECT worker_id, last_seen_at, state, stage, job_id, detail, progress, health
         FROM worker_heartbeats
         ORDER BY last_seen_at DESC
         """
@@ -104,5 +108,6 @@ async def get_worker_status() -> dict:
             "job_id": row["job_id"],
             "detail": row["detail"],
             "progress": row["progress"] or {},
+            "health": row["health"] or {},
         })
     return {"connected": connected, "workers": workers}

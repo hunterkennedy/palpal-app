@@ -313,6 +313,49 @@ export default function OverviewView({
                           <ProgressBar percent={progress.percent} />
                         </div>
                       ) : null}
+                      {worker.health ? (
+                        <div className="ac-worker-health">
+                          <span>
+                            model <b>{worker.health.whisper_model ?? '—'}</b>
+                          </span>
+                          <span>
+                            device <b>{worker.health.whisper_device ?? '—'}</b>
+                          </span>
+                          <span>
+                            yt-dlp <b>{worker.health.yt_dlp_version ?? '—'}</b>
+                          </span>
+                          {worker.health.gpu ? (
+                            <span className="ac-truncate" title={worker.health.gpu}>
+                              gpu <b>{worker.health.gpu}</b>
+                            </span>
+                          ) : null}
+                          {Object.entries(worker.health.cookies ?? {}).map(([site, cookie]) => {
+                            const days = cookie.expires_in_days;
+                            const tone =
+                              !cookie.configured || !cookie.exists || (days !== null && days !== undefined && days < 0)
+                                ? 'is-bad'
+                                : days !== null && days !== undefined && days < 7
+                                  ? 'is-warn'
+                                  : 'is-ok';
+                            return (
+                              <span key={site} className={tone}>
+                                {site} cookies{' '}
+                                <b>
+                                  {!cookie.configured
+                                    ? 'not configured'
+                                    : !cookie.exists
+                                      ? 'missing'
+                                      : days === null || days === undefined
+                                        ? 'present'
+                                        : days < 0
+                                          ? 'expired'
+                                          : `${days.toFixed(0)}d left`}
+                                </b>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 );

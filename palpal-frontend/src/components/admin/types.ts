@@ -132,6 +132,24 @@ export interface Worker {
   job_id?: string | null;
   detail?: string | null;
   progress?: JobProgress;
+  health?: {
+    yt_dlp_version?: string | null;
+    python_version?: string | null;
+    platform?: string | null;
+    gpu?: string | null;
+    whisper_model?: string | null;
+    whisper_device?: string | null;
+    whisper_compute_type?: string | null;
+    cookies?: Record<
+      string,
+      {
+        configured: boolean;
+        exists: boolean;
+        filename?: string | null;
+        expires_in_days?: number | null;
+      }
+    >;
+  };
 }
 
 export interface SchedulerJob {

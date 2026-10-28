@@ -347,6 +347,7 @@ async def worker_heartbeat(
             job_id=str(body["job_id"]) if body.get("job_id") else None,
             detail=body.get("detail"),
             progress=body.get("progress") if isinstance(body.get("progress"), dict) else None,
+            health=body.get("health") if isinstance(body.get("health"), dict) else None,
         )
     else:
         await worker_status.record_heartbeat(x_worker_id)
