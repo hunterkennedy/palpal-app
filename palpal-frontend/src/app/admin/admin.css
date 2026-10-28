@@ -829,6 +829,20 @@
 .ac-toast-mark { color: var(--ac-green); display: flex; margin-top: 1px; }
 .ac-toast-error .ac-toast-mark { color: var(--ac-red); }
 .ac-toast-detail { color: var(--ac-muted); font-size: 11px; margin-top: 2px; word-break: break-word; }
+.ac-toast-action {
+  margin-left: auto;
+  padding: 3px 7px;
+  border: 1px solid var(--ac-border-strong);
+  border-radius: 5px;
+  background: var(--ac-bg-3);
+  color: var(--ac-text-2);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  flex: none;
+}
+.ac-toast-action:hover { background: var(--ac-bg-4); color: var(--ac-text); }
 .ac-toast .ac-icon-btn { margin-left: auto; width: 20px; height: 20px; }
 
 /* ----------------------------------------------------------------- misc */

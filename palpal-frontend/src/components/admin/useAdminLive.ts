@@ -21,6 +21,7 @@ const TABLE_BUMPS: Record<string, Array<keyof Bumps>> = {
   settings: ['settings', 'overview', 'content'],
   worker_heartbeats: ['overview'],
   whats_new: ['content'],
+  admin_audit: ['overview'],
 };
 
 export type LiveState = 'connecting' | 'live' | 'reconnecting';

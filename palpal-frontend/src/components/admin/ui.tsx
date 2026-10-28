@@ -279,6 +279,7 @@ export interface ToastItem {
   message: string;
   tone: 'ok' | 'error' | 'info';
   detail?: string;
+  action?: { label: string; onAction: () => void };
 }
 
 export function ToastViewport({
@@ -299,6 +300,18 @@ export function ToastViewport({
             <div>{toast.message}</div>
             {toast.detail ? <div className="ac-toast-detail">{toast.detail}</div> : null}
           </div>
+          {toast.action ? (
+            <button
+              type="button"
+              className="ac-toast-action"
+              onClick={() => {
+                toast.action?.onAction();
+                dismiss(toast.id);
+              }}
+            >
+              {toast.action.label}
+            </button>
+          ) : null}
           <button className="ac-icon-btn" onClick={() => dismiss(toast.id)} aria-label="Dismiss">
             <X size={13} />
           </button>

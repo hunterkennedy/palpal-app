@@ -5,6 +5,7 @@ export type ViewKey =
   | 'jobs'
   | 'podcasts'
   | 'content'
+  | 'audit'
   | 'settings';
 
 export interface JobProgress {
@@ -319,6 +320,17 @@ export interface AdminSearchResults {
     episode_title?: string | null;
     source_name?: string | null;
   }>;
+}
+
+export interface AuditEntry {
+  id: number;
+  created_at: string;
+  action: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  detail: Record<string, unknown>;
+  undoable: boolean;
+  undone_at?: string | null;
 }
 
 export interface EpisodeFilters {

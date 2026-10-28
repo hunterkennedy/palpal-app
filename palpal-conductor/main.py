@@ -375,6 +375,7 @@ async def update_pipeline_settings(body: dict):
             await pipeline_settings.set_string(key, str(value))
         else:
             await pipeline_settings.set(key, bool(value))
+    await _audit("settings.update", target_type="settings", detail={"changes": body})
     return await pipeline_settings.get_all()
 
 
@@ -393,6 +394,11 @@ async def trigger_discovery(
             source_id=source_id,
             dry_run=dry_run,
         )
+    )
+    await _audit(
+        "discovery.trigger", target_type="discovery",
+        target_id=source_id or podcast_id,
+        detail={"auto_queue": auto_queue, "dry_run": dry_run},
     )
     return {
         "status": "started",
@@ -417,6 +423,10 @@ async def test_source(source_id: str):
             status_code=409,
             detail="That source is disabled, missing, or already has a discovery job in flight",
         )
+    await _audit(
+        "source.test", target_type="source", target_id=source_id,
+        detail={"job_id": result["job_ids"][0]},
+    )
     return {"status": "queued", "job_id": result["job_ids"][0], "source_id": source_id}
 
 
@@ -441,14 +451,22 @@ async def scheduler_pause():
     is set, regardless of how it was created. Discovery (scheduled or manual)
     and the stuck-job reclaim sweep are unaffected."""
     await pause_processing()
-    return {"status": "paused"}
+    audit_id = await _audit(
+        "scheduler.pause", target_type="scheduler",
+        detail={"processing_paused": True}, undo={"processing_paused": False},
+    )
+    return {"status": "paused", "audit_id": audit_id}
 
 
 @app.post("/admin/scheduler/resume", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def scheduler_resume():
     """Resume processing — also clears the auto-pause failure streak."""
     await resume_processing()
-    return {"status": "running"}
+    audit_id = await _audit(
+        "scheduler.resume", target_type="scheduler",
+        detail={"processing_paused": False}, undo={"processing_paused": True},
+    )
+    return {"status": "running", "audit_id": audit_id}
 
 
 # --------------------------------------------------------------------------- #
@@ -706,7 +724,112 @@ async def admin_search(q: str = Query(..., min_length=2, max_length=200), limit:
     }
 
 
-@app.post("/admin/attention/ignore", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+@app.get("/admin/audit", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_list_audit(
+    limit: int = Query(100, ge=1, le=500),
+    before_id: int | None = Query(None),
+):
+    pool = db.get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT id, created_at, action, target_type, target_id, detail, undo, undone_at
+        FROM admin_audit
+        WHERE ($1::bigint IS NULL OR id < $1)
+        ORDER BY id DESC
+        LIMIT $2
+        """,
+        before_id, limit,
+    )
+    return [
+        {
+            "id": r["id"],
+            "created_at": _iso(r["created_at"]),
+            "action": r["action"],
+            "target_type": r["target_type"],
+            "target_id": r["target_id"],
+            "detail": r["detail"] or {},
+            "undoable": r["undo"] is not None and r["undone_at"] is None,
+            "undone_at": _iso(r["undone_at"]),
+        }
+        for r in rows
+    ]
+
+
+@app.post("/admin/audit/{audit_id}/undo", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_undo_audit(audit_id: int):
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        "SELECT * FROM admin_audit WHERE id = $1 AND undone_at IS NULL",
+        audit_id,
+    )
+    if not row:
+        raise HTTPException(status_code=409, detail="Action is already undone or does not exist")
+    action = row["action"]
+    undo = row["undo"] or {}
+    if not undo:
+        raise HTTPException(status_code=409, detail="This action cannot be undone")
+
+    if action in ("scheduler.pause", "scheduler.resume"):
+        if action == "scheduler.pause":
+            await resume_processing()
+        else:
+            await pause_processing()
+    elif action in ("episode.blacklist", "episode.unblacklist"):
+        episode_id = undo.get("episode_id")
+        if not episode_id:
+            raise HTTPException(status_code=409, detail="Missing undo state")
+        await pool.execute(
+            """
+            UPDATE episodes
+            SET blacklisted = $1, status = $2, error_message = $3
+            WHERE id = $4::uuid
+            """,
+            bool(undo.get("blacklisted")), undo.get("status"),
+            undo.get("error_message"), episode_id,
+        )
+        caches.bust_episodes_cache()
+    elif action == "job.cancel":
+        job_id = undo.get("job_id")
+        try:
+            await pool.execute(
+                """
+                UPDATE jobs
+                SET status = 'pending', error = NULL, error_type = NULL,
+                    claimed_at = NULL, claimed_by_worker = NULL
+                WHERE id = $1::uuid
+                """,
+                job_id,
+            )
+        except asyncpg.exceptions.UniqueViolationError:
+            raise HTTPException(
+                status_code=409,
+                detail="The target already has an active job; cannot restore the cancelled job",
+            )
+        if undo.get("episode_id"):
+            await pool.execute(
+                "UPDATE episodes SET status = $1, error_message = $2 WHERE id = $3::uuid",
+                undo.get("episode_status"), undo.get("episode_error"), undo["episode_id"],
+            )
+        caches.bust_episodes_cache()
+        wakeup_worker()
+    elif action == "job.prioritize":
+        await pool.execute(
+            "UPDATE jobs SET priority = $1 WHERE id = $2::uuid",
+            int(undo.get("previous_priority", 0)), undo.get("job_id"),
+        )
+    else:
+        raise HTTPException(status_code=409, detail="This action cannot be undone")
+
+    await pool.execute(
+        "UPDATE admin_audit SET undone_at = now() WHERE id = $1", audit_id
+    )
+    await _audit(
+        "audit.undo",
+        target_type=row["target_type"],
+        target_id=row["target_id"],
+        detail={"audit_id": audit_id, "action": action},
+    )
+    return {"status": "undone", "audit_id": audit_id}
 async def admin_attention_ignore(body: dict):
     """Ignore/restore an attention category globally."""
     category = str(body.get("category", "")).strip()
@@ -774,6 +897,26 @@ async def _add_job_event(
         """,
         job_id, level, stage, percent, message[:2000],
     )
+
+
+async def _audit(
+    action: str,
+    *,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    detail: dict | None = None,
+    undo: dict | None = None,
+) -> int:
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO admin_audit (action, target_type, target_id, detail, undo)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+        """,
+        action, target_type, target_id, detail or {}, undo,
+    )
+    return row["id"]
 
 
 async def _record_progress_event(
@@ -1030,7 +1173,11 @@ async def process_episode(episode_id: str):
     queued = await queue_episodes_for_processing([episode_id])
     if not queued:
         raise HTTPException(status_code=409, detail="Episode already has an in-flight process job")
-    return {"status": "queued", "episode_id": episode_id}
+    audit_id = await _audit(
+        "episode.process", target_type="episode", target_id=episode_id,
+        detail={"title": row["title"]},
+    )
+    return {"status": "queued", "episode_id": episode_id, "audit_id": audit_id}
 
 
 @app.get("/admin/live", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1252,12 +1399,19 @@ async def admin_cancel_job(job_id: str):
             error = 'Cancelled by admin',
             error_type = 'cancelled'
         WHERE id = $1::uuid AND status IN ('pending', 'claimed')
-        RETURNING kind, episode_id::text, payload
+        RETURNING kind, status, episode_id::text, payload
         """,
         job_id,
     )
     if not row:
         raise HTTPException(status_code=409, detail="Job is not pending or claimed")
+
+    episode_before = None
+    if row["episode_id"]:
+        episode_before = await pool.fetchrow(
+            "SELECT status, error_message FROM episodes WHERE id = $1::uuid",
+            row["episode_id"],
+        )
 
     await _add_job_event(
         pool, job_id, "Cancelled by admin", level="warning", stage="cancelled",
@@ -1273,13 +1427,26 @@ async def admin_cancel_job(job_id: str):
             row["episode_id"],
         )
     caches.bust_episodes_cache()
-    return {"status": "cancelled", "job_id": job_id}
+    audit_id = await _audit(
+        "job.cancel", target_type="job", target_id=job_id,
+        detail={"kind": row["kind"], "previous_status": row["status"]},
+        undo={
+            "job_id": job_id,
+            "episode_id": row["episode_id"],
+            "episode_status": episode_before["status"] if episode_before else None,
+            "episode_error": episode_before["error_message"] if episode_before else None,
+        },
+    )
+    return {"status": "cancelled", "job_id": job_id, "audit_id": audit_id}
 
 
 @app.post("/admin/jobs/{job_id}/prioritize", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_prioritize_job(job_id: str):
     """Move a pending job to the front of its queue."""
     pool = db.get_pool()
+    previous = await pool.fetchrow(
+        "SELECT priority FROM jobs WHERE id = $1::uuid AND status = 'pending'", job_id
+    )
     result = await pool.execute(
         "UPDATE jobs SET priority = GREATEST(priority, 1) WHERE id = $1::uuid AND status = 'pending'",
         job_id,
@@ -1287,7 +1454,12 @@ async def admin_prioritize_job(job_id: str):
     if result == "UPDATE 0":
         raise HTTPException(status_code=409, detail="Only pending jobs can be prioritized")
     await _add_job_event(pool, job_id, "Prioritized by admin", stage="prioritized")
-    return {"status": "prioritized", "job_id": job_id}
+    audit_id = await _audit(
+        "job.prioritize", target_type="job", target_id=job_id,
+        detail={"previous_priority": previous["priority"] if previous else 0},
+        undo={"job_id": job_id, "previous_priority": previous["priority"] if previous else 0},
+    )
+    return {"status": "prioritized", "job_id": job_id, "audit_id": audit_id}
 
 
 @app.post("/admin/jobs/{job_id}/retry", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1343,7 +1515,11 @@ async def admin_retry_job(job_id: str):
     caches.bust_episodes_cache()
     wakeup_worker()
     await _add_job_event(pool, job_id, "Re-queued by admin", stage="retried")
-    return {"status": "queued", "job_id": job_id}
+    audit_id = await _audit(
+        "job.retry", target_type="job", target_id=job_id,
+        detail={"kind": row["kind"], "episode_id": row["episode_id"]},
+    )
+    return {"status": "queued", "job_id": job_id, "audit_id": audit_id}
 
 
 @app.post("/admin/jobs/purge", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1360,6 +1536,10 @@ async def admin_purge_jobs(body: dict = Body(default={})):
             int(days),
         )
     deleted = int(result.split()[-1])
+    await _audit(
+        "jobs.purge", target_type="jobs",
+        detail={"older_than_days": days, "deleted": deleted},
+    )
     return {"status": "purged", "deleted": deleted}
 
 
@@ -1390,16 +1570,26 @@ async def retry_episode(episode_id: str):
         episode_id,
     )
     await queue_episodes_for_processing([episode_id])
-    return {"status": "queued", "episode_id": episode_id}
+    audit_id = await _audit(
+        "episode.retry", target_type="episode", target_id=episode_id,
+        detail={"title": row["title"], "previous_status": row["status"]},
+    )
+    return {"status": "queued", "episode_id": episode_id, "audit_id": audit_id}
 
 
 @app.post("/admin/episodes/{episode_id}/delete", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def delete_episode(episode_id: str):
     """Hard-delete an episode and all associated data (transcript, chunks)."""
     pool = db.get_pool()
-    row = await pool.fetchrow("SELECT id FROM episodes WHERE id = $1::uuid", episode_id)
+    row = await pool.fetchrow(
+        "SELECT id, title, status FROM episodes WHERE id = $1::uuid", episode_id
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Episode not found")
+    await _audit(
+        "episode.delete", target_type="episode", target_id=episode_id,
+        detail={"title": row["title"], "status": row["status"], "undoable": False},
+    )
     await cancel_process_job(episode_id, "Cancelled by admin delete")
     await b2_delete_transcript(episode_id)
     await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
@@ -1417,6 +1607,12 @@ async def blacklist_episode(episode_id: str):
     it's moved to 'blacklisted' rather than left stuck; any other status is
     left as-is (e.g. an already-processed episode keeps its transcript)."""
     pool = db.get_pool()
+    episode = await pool.fetchrow(
+        "SELECT status, error_message, blacklisted FROM episodes WHERE id = $1::uuid",
+        episode_id,
+    )
+    if not episode:
+        raise HTTPException(status_code=404, detail="Episode not found")
     await cancel_process_job(episode_id, "Cancelled by admin blacklist")
     result = await pool.execute(
         """
@@ -1429,8 +1625,18 @@ async def blacklist_episode(episode_id: str):
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Episode not found")
+    audit_id = await _audit(
+        "episode.blacklist", target_type="episode", target_id=episode_id,
+        detail={"previous_status": episode["status"], "status": "blacklisted"},
+        undo={
+            "episode_id": episode_id,
+            "blacklisted": bool(episode["blacklisted"]),
+            "status": episode["status"],
+            "error_message": episode["error_message"],
+        },
+    )
     caches.bust_episodes_cache()
-    return {"status": "blacklisted", "episode_id": episode_id}
+    return {"status": "blacklisted", "episode_id": episode_id, "audit_id": audit_id}
 
 
 @app.post("/admin/episodes/{episode_id}/unblacklist", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1442,6 +1648,12 @@ async def unblacklist_episode(episode_id: str):
     process/retry/retranscribe button matches. Reset status back to 'discovered'
     in that case so the episode re-enters the normal pipeline."""
     pool = db.get_pool()
+    episode = await pool.fetchrow(
+        "SELECT status, error_message, blacklisted FROM episodes WHERE id = $1::uuid",
+        episode_id,
+    )
+    if not episode:
+        raise HTTPException(status_code=404, detail="Episode not found")
     result = await pool.execute(
         """
         UPDATE episodes
@@ -1454,9 +1666,19 @@ async def unblacklist_episode(episode_id: str):
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Episode not found")
+    audit_id = await _audit(
+        "episode.unblacklist", target_type="episode", target_id=episode_id,
+        detail={"previous_status": episode["status"]},
+        undo={
+            "episode_id": episode_id,
+            "blacklisted": bool(episode["blacklisted"]),
+            "status": episode["status"],
+            "error_message": episode["error_message"],
+        },
+    )
     caches.bust_episodes_cache()
     wakeup_worker()
-    return {"status": "unblacklisted", "episode_id": episode_id}
+    return {"status": "unblacklisted", "episode_id": episode_id, "audit_id": audit_id}
 
 
 @app.post("/admin/episodes/{episode_id}/retranscribe", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1486,7 +1708,11 @@ async def retranscribe_episode(episode_id: str):
     await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
     caches.bust_episodes_cache()
     await queue_episodes_for_processing([episode_id])
-    return {"status": "retranscribing", "episode_id": episode_id}
+    audit_id = await _audit(
+        "episode.retranscribe", target_type="episode", target_id=episode_id,
+        detail={"title": row["title"]},
+    )
+    return {"status": "retranscribing", "episode_id": episode_id, "audit_id": audit_id}
 
 
 @app.post("/admin/episodes/rechunk", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1534,6 +1760,10 @@ async def rechunk_all_episodes(
     for row in rows:
         asyncio.create_task(_rechunk(row["id"]))
 
+    await _audit(
+        "episodes.rechunk", target_type="episode-set",
+        detail={"podcast_id": podcast_id, "queued": len(rows), "target_words": target_words},
+    )
     return {"queued": len(rows), "target_words": target_words}
 
 
@@ -1554,6 +1784,10 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
             "SELECT id::text FROM episodes WHERE status = 'discovered' AND blacklisted = FALSE"
         )
     queued = await queue_episodes_for_processing([r["id"] for r in rows])
+    await _audit(
+        "episodes.process_discovered", target_type="episode-set",
+        detail={"podcast_id": podcast_id, "queued": queued},
+    )
     return {"queued": queued}
 
 
@@ -1680,10 +1914,15 @@ async def bulk_episode_action(body: BulkActionRequest):
             results.extend({"id": i, "ok": True} for i in ok_to_delete)
 
         caches.bust_episodes_cache()
+        audit_id = await _audit(
+            f"episodes.bulk.{action}", target_type="episode-set",
+            detail={"action": action, "total": len(ids), "ok": sum(1 for r in results if r["ok"])},
+        )
         return {
             "queued": sum(1 for r in results if r["ok"]),
             "total": len(ids),
             "results": results,
+            "audit_id": audit_id,
         }
 
     if action == "unblacklist":
@@ -1701,10 +1940,15 @@ async def bulk_episode_action(body: BulkActionRequest):
             wakeup_worker()
         results.extend({"id": i, "ok": True} for i in found_ids)
         caches.bust_episodes_cache()
+        audit_id = await _audit(
+            "episodes.bulk.unblacklist", target_type="episode-set",
+            detail={"total": len(ids), "ok": sum(1 for r in results if r["ok"])},
+        )
         return {
             "queued": sum(1 for r in results if r["ok"]),
             "total": len(ids),
             "results": results,
+            "audit_id": audit_id,
         }
 
     # process / retry / retranscribe all end with a force-queued process job.
@@ -1752,10 +1996,15 @@ async def bulk_episode_action(body: BulkActionRequest):
         results.extend({"id": i, "ok": True} for i in eligible)
 
     caches.bust_episodes_cache()
+    audit_id = await _audit(
+        f"episodes.bulk.{action}", target_type="episode-set",
+        detail={"action": action, "total": len(ids), "ok": len(eligible)},
+    )
     return {
         "queued": len(eligible),
         "total": len(ids),
         "results": results,
+        "audit_id": audit_id,
     }
 
 
@@ -2187,6 +2436,10 @@ async def create_podcast(body: dict):
             raise HTTPException(status_code=409, detail="Podcast ID already exists")
         raise
     caches.bust_podcasts_cache()
+    await _audit(
+        "podcast.create", target_type="podcast", target_id=pod_id,
+        detail={"display_name": body.get("display_name", pod_id)},
+    )
     return {"status": "created", "id": pod_id}
 
 
@@ -2202,6 +2455,14 @@ async def update_podcast(podcast_id: str, body: dict):
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Podcast not found")
     caches.bust_podcasts_cache()
+    await _audit(
+        "podcast.update", target_type="podcast", target_id=podcast_id,
+        detail={
+            "display_name": body.get("display_name", podcast_id),
+            "enabled": bool(body.get("enabled", True)),
+            "display_order": int(body.get("display_order", 0)),
+        },
+    )
     return {"status": "updated"}
 
 
@@ -2212,6 +2473,10 @@ async def admin_delete_podcast(podcast_id: str):
     cancel_jobs_for_podcast for why a bare cascade delete isn't enough."""
     pool = db.get_pool()
     await cancel_jobs_for_podcast(podcast_id, "Cancelled: podcast deleted")
+    await _audit(
+        "podcast.delete", target_type="podcast", target_id=podcast_id,
+        detail={"undoable": False},
+    )
     result = await pool.execute("DELETE FROM podcasts WHERE id = $1", podcast_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Podcast not found")
@@ -2247,6 +2512,10 @@ async def create_source(podcast_id: str, body: dict):
         url, enabled, json.dumps(filters),
     )
     caches.bust_podcasts_cache()
+    await _audit(
+        "source.create", target_type="source", target_id=row["id"],
+        detail={"podcast_id": podcast_id, "name": body.get("name", ""), "site": site},
+    )
     return {"status": "created"}
 
 
@@ -2265,6 +2534,10 @@ async def update_source(source_id: str, body: dict):
     if not row:
         raise HTTPException(status_code=404, detail="Source not found")
     caches.bust_podcasts_cache()
+    await _audit(
+        "source.update", target_type="source", target_id=source_id,
+        detail={"name": body.get("name", ""), "site": site, "enabled": enabled},
+    )
     return {"status": "updated"}
 
 
@@ -2275,6 +2548,10 @@ async def admin_delete_source(source_id: str):
     cancel_jobs_for_source for why a bare cascade delete isn't enough."""
     pool = db.get_pool()
     await cancel_jobs_for_source(source_id, "Cancelled: source deleted")
+    await _audit(
+        "source.delete", target_type="source", target_id=source_id,
+        detail={"undoable": False},
+    )
     result = await pool.execute("DELETE FROM sources WHERE id = $1::uuid", source_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Source not found")

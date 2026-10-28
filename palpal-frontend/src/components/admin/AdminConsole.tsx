@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Bot,
   Command,
+  History,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -27,6 +28,7 @@ import { api, qs } from './api';
 import type {
   ActionResult,
   AttentionData,
+  AuditEntry,
   Episode,
   EpisodeFilters,
   EpisodePage,
@@ -56,6 +58,7 @@ import EpisodesView from './EpisodesView';
 import JobsView from './JobsView';
 import PodcastsView from './PodcastsView';
 import ContentView from './ContentView';
+import AuditView from './AuditView';
 import SettingsView from './SettingsView';
 import EpisodeDrawer from './EpisodeDrawer';
 import JobDrawer from './JobDrawer';
@@ -68,6 +71,7 @@ const VIEW_META: Record<ViewKey, { title: string; subtitle: string }> = {
   jobs: { title: 'Jobs', subtitle: 'The worker queue and complete job history' },
   podcasts: { title: 'Podcasts', subtitle: 'Sources, ordering, and per-podcast controls' },
   content: { title: 'Content', subtitle: "What's New entries and search placeholders" },
+  audit: { title: 'Audit log', subtitle: 'Admin actions, targets, and safe undo' },
   settings: { title: 'Settings', subtitle: 'Pipeline behaviour, scheduler, and danger zone' },
 };
 
@@ -105,6 +109,8 @@ export default function AdminConsole() {
   const [attentionData, setAttentionData] = useState<AttentionData | null>(null);
   const [attentionLoading, setAttentionLoading] = useState(false);
   const [showIgnoredAttention, setShowIgnoredAttention] = useState(false);
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[] | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
 
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [podcastsLoading, setPodcastsLoading] = useState(true);
@@ -192,9 +198,9 @@ export default function AdminConsole() {
     window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
   }, [urlReady, view, episodeFilters, historyFilters, selectedPodcastId]);
 
-  const toast = useCallback((message: string, tone: ToastItem['tone'] = 'ok', options?: { detail?: string }) => {
+  const toast = useCallback((message: string, tone: ToastItem['tone'] = 'ok', options?: { detail?: string; action?: ToastItem['action'] }) => {
     const id = ++toastCounter;
-    setToasts((prev) => [...prev.slice(-3), { id, message, tone, detail: options?.detail }]);
+    setToasts((prev) => [...prev.slice(-3), { id, message, tone, detail: options?.detail, action: options?.action }]);
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((item) => item.id !== id));
     }, tone === 'error' ? 7000 : 4200);
@@ -232,6 +238,23 @@ export default function AdminConsole() {
   const refreshAll = useCallback(() => {
     live.bumpAll();
   }, [live]);
+
+  const undoAction = useCallback(
+    (auditId: number | undefined) => {
+      if (!auditId) return undefined;
+      return {
+        label: 'Undo',
+        onAction: async () => {
+          await run(`undo:${auditId}`, async () => {
+            await api(`/admin/audit/${auditId}/undo`, { method: 'POST' });
+            toast('Action undone');
+            refreshAll();
+          });
+        },
+      };
+    },
+    [run, toast, refreshAll],
+  );
 
   // On the Podcasts page, source "last discovery" rows should update when a
   // discover job finishes. Elsewhere, don't refetch the podcast list on every
@@ -275,6 +298,25 @@ export default function AdminConsole() {
       cancelled = true;
     };
   }, [live.bumps.episodes, live.bumps.overview, view, showIgnoredAttention, toast]);
+
+  useEffect(() => {
+    if (view !== 'audit') return;
+    let cancelled = false;
+    setAuditLoading(true);
+    api<AuditEntry[]>('/admin/audit?limit=200')
+      .then((data) => {
+        if (!cancelled) setAuditEntries(data);
+      })
+      .catch((error: Error) => {
+        if (!cancelled) toast('Could not load audit log', 'error', { detail: error.message });
+      })
+      .finally(() => {
+        if (!cancelled) setAuditLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, live.bumps.overview, toast]);
 
   useEffect(() => {
     if (view !== 'episodes' && view !== 'podcasts') return;
@@ -459,7 +501,9 @@ export default function AdminConsole() {
   const episodeAction = useCallback(
     async (action: string, id: string): Promise<boolean> => {
       const result = await run(`episode:${action}:${id}`, async () => {
-        await api(`/admin/episodes/${id}/${action}`, { method: 'POST' });
+        const response = await api<{ audit_id?: number }>(`/admin/episodes/${id}/${action}`, {
+          method: 'POST',
+        });
         const labels: Record<string, string> = {
           process: 'Episode queued',
           retry: 'Episode queued for retry',
@@ -468,13 +512,18 @@ export default function AdminConsole() {
           unblacklist: 'Blacklist removed',
           delete: 'Episode deleted',
         };
-        toast(labels[action] ?? 'Done');
+        toast(labels[action] ?? 'Done', 'ok', {
+          action:
+            action === 'blacklist' || action === 'unblacklist'
+              ? undoAction(response.audit_id)
+              : undefined,
+        });
         refreshAll();
         return true;
       });
       return result === true;
     },
-    [run, toast, refreshAll],
+    [run, toast, refreshAll, undoAction],
   );
 
   const bulkEpisodeAction = useCallback(
@@ -522,24 +571,32 @@ export default function AdminConsole() {
   const jobAction = useCallback(
     async (action: 'cancel' | 'prioritize' | 'retry', id: string) => {
       await run(`job:${action}:${id}`, async () => {
-        await api(`/admin/jobs/${id}/${action}`, { method: 'POST' });
+        const response = await api<{ audit_id?: number }>(`/admin/jobs/${id}/${action}`, {
+          method: 'POST',
+        });
         const labels = { cancel: 'Job cancelled', prioritize: 'Job moved to the front', retry: 'Job queued again' };
-        toast(labels[action]);
+        toast(labels[action], 'ok', {
+          action: action === 'cancel' || action === 'prioritize' ? undoAction(response.audit_id) : undefined,
+        });
         refreshAll();
       });
     },
-    [run, toast, refreshAll],
+    [run, toast, refreshAll, undoAction],
   );
 
   const schedulerAction = useCallback(
     async (action: 'pause' | 'resume') => {
       await run('scheduler', async () => {
-        await api(`/admin/scheduler/${action}`, { method: 'POST' });
-        toast(action === 'pause' ? 'Processing paused' : 'Processing resumed');
+        const response = await api<{ audit_id?: number }>(`/admin/scheduler/${action}`, {
+          method: 'POST',
+        });
+        toast(action === 'pause' ? 'Processing paused' : 'Processing resumed', 'ok', {
+          action: undoAction(response.audit_id),
+        });
         refreshAll();
       });
     },
-    [run, toast, refreshAll],
+    [run, toast, refreshAll, undoAction],
   );
 
   const discover = useCallback(
@@ -613,6 +670,7 @@ export default function AdminConsole() {
           j: 'jobs',
           p: 'podcasts',
           c: 'content',
+          l: 'audit',
           s: 'settings',
         };
         const next = map[event.key.toLowerCase()];
@@ -634,6 +692,7 @@ export default function AdminConsole() {
     { id: 'nav-jobs', label: 'Go to Jobs', group: 'Navigate', hint: 'g j', run: () => setView('jobs') },
     { id: 'nav-podcasts', label: 'Go to Podcasts', group: 'Navigate', hint: 'g p', run: () => setView('podcasts') },
     { id: 'nav-content', label: 'Go to Content', group: 'Navigate', hint: 'g c', run: () => setView('content') },
+    { id: 'nav-audit', label: 'Go to Audit log', group: 'Navigate', hint: 'g l', run: () => setView('audit') },
     { id: 'nav-settings', label: 'Go to Settings', group: 'Navigate', hint: 'g s', run: () => setView('settings') },
     {
       id: 'discover-queue',
@@ -742,6 +801,7 @@ export default function AdminConsole() {
             <NavItem icon={<Megaphone size={15} />} label="Content" active={view === 'content'} onClick={() => setView('content')} />
             <div className="ac-nav-section">System</div>
             <NavItem icon={<SlidersHorizontal size={15} />} label="Settings" active={view === 'settings'} onClick={() => setView('settings')} />
+            <NavItem icon={<History size={15} />} label="Audit log" active={view === 'audit'} onClick={() => setView('audit')} />
           </nav>
 
           <div className="ac-sidebar-footer">
@@ -913,11 +973,13 @@ export default function AdminConsole() {
               <ContentView entries={updates} placeholders={placeholders} loading={contentLoading} />
             ) : null}
 
+            {view === 'audit' ? <AuditView entries={auditEntries} loading={auditLoading} /> : null}
+
             {view === 'settings' ? <SettingsView overview={overview} loading={overviewLoading} /> : null}
 
             <div className="ac-shortcuts-hint">
               <span><KeyHint>⌘K</KeyHint> jump</span>
-              <span><KeyHint>g</KeyHint> then <KeyHint>o</KeyHint><KeyHint>a</KeyHint><KeyHint>e</KeyHint><KeyHint>j</KeyHint><KeyHint>p</KeyHint><KeyHint>c</KeyHint><KeyHint>s</KeyHint></span>
+              <span><KeyHint>g</KeyHint> then <KeyHint>o</KeyHint><KeyHint>a</KeyHint><KeyHint>e</KeyHint><KeyHint>j</KeyHint><KeyHint>p</KeyHint><KeyHint>c</KeyHint><KeyHint>l</KeyHint><KeyHint>s</KeyHint></span>
               <span className="ac-subtle">Filters and the current page are kept in the URL</span>
             </div>
           </div>

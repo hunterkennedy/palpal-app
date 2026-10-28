@@ -6,6 +6,7 @@ import type { EpisodeFilters, ViewKey } from './types';
 
 export interface ToastOptions {
   detail?: string;
+  action?: ToastItem['action'];
 }
 
 export interface AdminApi {
