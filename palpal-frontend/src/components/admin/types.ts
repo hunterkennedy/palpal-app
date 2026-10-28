@@ -171,6 +171,7 @@ export interface PodcastStats {
   display_name: string;
   enabled: boolean;
   display_order: number;
+  priority: number;
   total: number;
   discovered: number;
   downloading: number;

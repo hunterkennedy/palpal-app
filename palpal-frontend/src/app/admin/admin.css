@@ -929,6 +929,19 @@
 .ac-worker-health .is-bad b { color: #fca5a5; }
 
 /* --------------------------------------------------------------- podcasts */
+.ac-priority-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 5px 3px 8px;
+  border: 1px solid var(--ac-border);
+  border-radius: 7px;
+  color: var(--ac-subtle);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .ac-split { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 14px; align-items: start; }
 .ac-pod-list { display: flex; flex-direction: column; gap: 4px; }
 .ac-pod-item {

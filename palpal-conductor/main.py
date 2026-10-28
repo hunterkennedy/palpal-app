@@ -971,7 +971,7 @@ async def admin_overview():
     async def _by_podcast():
         return await pool.fetch(
             """
-            SELECT p.id, p.display_name, p.enabled, p.display_order,
+            SELECT p.id, p.display_name, p.enabled, p.display_order, p.priority,
                    COUNT(e.id) AS total,
                    COUNT(*) FILTER (WHERE e.status = 'discovered')  AS discovered,
                    COUNT(*) FILTER (WHERE e.status = 'downloading') AS downloading,
@@ -982,7 +982,7 @@ async def admin_overview():
             FROM podcasts p
             LEFT JOIN sources  s ON s.podcast_id = p.id
             LEFT JOIN episodes e ON e.source_id  = s.id
-            GROUP BY p.id, p.display_name, p.enabled, p.display_order
+            GROUP BY p.id, p.display_name, p.enabled, p.display_order, p.priority
             ORDER BY p.display_order, p.id
             """
         )
@@ -2449,7 +2449,7 @@ async def admin_list_podcasts():
     pod_rows, src_rows = await asyncio.gather(
         pool.fetch(
             """
-            SELECT p.id, p.display_name, p.enabled, p.display_order,
+            SELECT p.id, p.display_name, p.enabled, p.display_order, p.priority,
                    COUNT(DISTINCT s.id) AS source_count,
                    COUNT(e.id) AS total,
                    COUNT(*) FILTER (WHERE e.status = 'discovered')  AS discovered,
@@ -2461,7 +2461,7 @@ async def admin_list_podcasts():
             FROM podcasts p
             LEFT JOIN sources  s ON s.podcast_id = p.id
             LEFT JOIN episodes e ON e.source_id  = s.id
-            GROUP BY p.id, p.display_name, p.enabled, p.display_order
+            GROUP BY p.id, p.display_name, p.enabled, p.display_order, p.priority
             ORDER BY p.display_order, p.id
             """
         ),
@@ -2556,9 +2556,10 @@ async def update_podcast(podcast_id: str, body: dict):
     """Update podcast metadata."""
     pool = db.get_pool()
     result = await pool.execute(
-        "UPDATE podcasts SET display_name=$1, enabled=$2, display_order=$3 WHERE id=$4",
+        "UPDATE podcasts SET display_name=$1, enabled=$2, display_order=$3, priority=$4 WHERE id=$5",
         body.get("display_name", podcast_id),
-        bool(body.get("enabled", True)), int(body.get("display_order", 0)), podcast_id,
+        bool(body.get("enabled", True)), int(body.get("display_order", 0)),
+        int(body.get("priority", 0)), podcast_id,
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Podcast not found")

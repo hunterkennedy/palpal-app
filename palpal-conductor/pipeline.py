@@ -234,7 +234,7 @@ async def sync_process_jobs() -> int:
               WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
                 AND j.episode_id = e.id
           )
-        ORDER BY p.display_order ASC, e.created_at DESC
+        ORDER BY p.priority DESC, p.display_order ASC, e.created_at DESC
         """
     )
     n = await _enqueue_process_jobs(rows)

@@ -73,6 +73,8 @@ export default function PodcastsView({
   const [search, setSearch] = useState('');
   const [name, setName] = useState('');
   const [nameDirty, setNameDirty] = useState(false);
+  const [priority, setPriority] = useState('0');
+  const [priorityDirty, setPriorityDirty] = useState(false);
   const [editingSource, setEditingSource] = useState<SourceForm | null>(null);
   const [creating, setCreating] = useState(false);
   const [newPod, setNewPod] = useState({ name: '', id: '', enabled: true });
@@ -90,13 +92,16 @@ export default function PodcastsView({
 
   const selectedIdValue = selected?.id;
   const selectedNameValue = selected?.display_name;
+  const selectedPriorityValue = selected?.priority ?? 0;
 
   useEffect(() => {
     if (!selectedIdValue) return;
     setName(selectedNameValue ?? '');
     setNameDirty(false);
+    setPriority(String(selectedPriorityValue));
+    setPriorityDirty(false);
     setEditingSource(null);
-  }, [selectedIdValue, selectedNameValue]);
+  }, [selectedIdValue, selectedNameValue, selectedPriorityValue]);
 
   const filtered = useMemo(() => {
     if (!podcasts) return [];
@@ -118,6 +123,7 @@ export default function PodcastsView({
           display_name: selected.display_name,
           enabled: selected.enabled,
           display_order: selected.display_order,
+          priority: selected.priority ?? 0,
           ...patch,
         }),
       });
@@ -285,6 +291,7 @@ export default function PodcastsView({
                 >
                   <span className={`ac-dot ${pod.enabled ? 'online' : ''}`} />
                   <span className="ac-truncate">{pod.display_name}</span>
+                  {pod.priority ? <Badge tone="orange" title="Queue priority">P{pod.priority}</Badge> : null}
                   {problems > 0 ? <Badge tone="red">{problems}</Badge> : null}
                   <span className="ac-pod-meta">{fmtNumber(pod.total)}</span>
                   <ChevronRight size={12} className="ac-subtle" />
@@ -351,6 +358,37 @@ export default function PodcastsView({
                 </div>
               </div>
               <div className="ac-card-actions">
+                <label className="ac-priority-control" title="Higher priority podcasts are dispatched first">
+                  <span>queue priority</span>
+                  <input
+                    className="ac-input is-small"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={priority}
+                    onChange={(e) => {
+                      setPriority(e.target.value);
+                      setPriorityDirty((parseInt(e.target.value, 10) || 0) !== (selected.priority ?? 0));
+                    }}
+                    style={{ width: 62 }}
+                  />
+                  {priorityDirty ? (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      loading={admin.isPending(`podcast-priority:${selected.id}`)}
+                      onClick={async () => {
+                        await patchPodcast(
+                          { priority: Math.max(0, parseInt(priority, 10) || 0) },
+                          `podcast-priority:${selected.id}`,
+                        );
+                        setPriorityDirty(false);
+                      }}
+                    >
+                      Save
+                    </Button>
+                  ) : null}
+                </label>
                 <Toggle
                   checked={selected.enabled}
                   label="Enabled"
