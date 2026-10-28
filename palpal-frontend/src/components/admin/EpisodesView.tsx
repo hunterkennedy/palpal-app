@@ -1,0 +1,627 @@
+'use client';
+
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Ban,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { useAdmin } from './AdminContext';
+import type { Episode, EpisodeFilters, EpisodePage, Podcast } from './types';
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ProgressBar,
+  Spinner,
+  fmtDuration,
+  fmtNumber,
+  titleCase,
+  episodeUrl,
+} from './ui';
+
+const STATUS_COLORS: Record<string, string> = {
+  all: 'var(--ac-muted)',
+  attention: 'var(--ac-red)',
+  discovered: 'var(--ac-blue)',
+  downloading: 'var(--ac-yellow)',
+  processed: 'var(--ac-green)',
+  failed: 'var(--ac-red)',
+  orphaned: '#94a3b8',
+  blacklisted: 'var(--ac-accent)',
+};
+
+const STATUS_TABS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'attention', label: 'Attention' },
+  { key: 'discovered', label: 'Discovered' },
+  { key: 'downloading', label: 'In flight' },
+  { key: 'processed', label: 'Processed' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'orphaned', label: 'Orphaned' },
+  { key: 'blacklisted', label: 'Blacklisted' },
+];
+
+function siteBadge(site: string) {
+  if (site === 'patreon') return <Badge tone="orange">patreon</Badge>;
+  if (site === 'rss') return <Badge tone="purple">rss</Badge>;
+  return <Badge tone="red">yt</Badge>;
+}
+
+function stageFor(episode: Episode): { label: string; percent?: number } | null {
+  const job = episode.active_job;
+  if (!job) return null;
+  const progress = job.progress ?? {};
+  const stage = progress.stage || (job.status === 'pending' ? 'queued' : 'working');
+  return {
+    label: stage === 'downloading' ? 'Downloading' : titleCase(stage),
+    percent: progress.percent,
+  };
+}
+
+export default function EpisodesView({
+  data,
+  filters,
+  podcasts,
+  loading,
+  selected,
+  onPatchFilters,
+  onToggleSelect,
+  onClearSelection,
+  onOpenEpisode,
+}: {
+  data: EpisodePage | null;
+  filters: EpisodeFilters;
+  podcasts: Podcast[];
+  loading: boolean;
+  selected: Set<string>;
+  onPatchFilters: (patch: Partial<EpisodeFilters>) => void;
+  onToggleSelect: (id: string, checked: boolean) => void;
+  onClearSelection: () => void;
+  onOpenEpisode: (episode: Episode) => void;
+}) {
+  const admin = useAdmin();
+  const [qInput, setQInput] = useState(filters.q);
+  const [allMatching, setAllMatching] = useState(false);
+
+  useEffect(() => {
+    setQInput(filters.q);
+  }, [filters.q]);
+
+  useEffect(() => {
+    setAllMatching(false);
+    onClearSelection();
+    // Filters intentionally reset cross-page selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.status, filters.podcastId, filters.site, filters.q]);
+
+  useEffect(() => {
+    if (qInput === filters.q) return;
+    const timer = window.setTimeout(() => onPatchFilters({ q: qInput, page: 1 }), 280);
+    return () => window.clearTimeout(timer);
+  }, [qInput, filters.q, onPatchFilters]);
+
+  const episodes = useMemo(() => data?.episodes ?? [], [data?.episodes]);
+  const total = data?.total ?? 0;
+  const counts = data?.counts ?? {};
+  const page = filters.page;
+  const pageSize = filters.pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
+
+  const allOnPageSelected = episodes.length > 0 && episodes.every((ep) => selected.has(ep.id));
+  const someOnPageSelected = episodes.some((ep) => selected.has(ep.id));
+  const effectiveSelected = allMatching ? total : selected.size;
+
+  const runBulk = (action: string) => {
+    const ids = allMatching ? [] : [...selected];
+    const filter = allMatching ? filters : undefined;
+    const execute = async () => {
+      await admin.bulkEpisodeAction(action, ids, { allMatching, filter });
+      setAllMatching(false);
+      onClearSelection();
+    };
+
+    if (action === 'delete') {
+      admin.confirm({
+        title: `Delete ${fmtNumber(effectiveSelected)} episode${effectiveSelected === 1 ? '' : 's'}?`,
+        message: (
+          <>
+            This deletes the episode row, search chunks, and the stored transcript in B2. It cannot
+            be undone.
+            {allMatching ? (
+              <>
+                {' '}
+                The server will resolve the current filters and delete <strong>{fmtNumber(total)}</strong>{' '}
+                matching episodes.
+              </>
+            ) : null}
+          </>
+        ),
+        confirmLabel: 'Delete permanently',
+        tone: 'danger',
+        requireText: 'DELETE',
+        onConfirm: execute,
+      });
+    } else if (action === 'blacklist') {
+      admin.confirm({
+        title: `Blacklist ${fmtNumber(effectiveSelected)} episode${effectiveSelected === 1 ? '' : 's'}?`,
+        message: 'Blacklisted episodes stay in the database to prevent re-discovery, but are skipped by the pipeline.',
+        confirmLabel: 'Blacklist',
+        tone: 'danger',
+        onConfirm: execute,
+      });
+    } else {
+      void execute();
+    }
+  };
+
+  return (
+    <div className="ac-stack">
+      <div className="ac-card" style={{ paddingBottom: 12 }}>
+        <div className="ac-tabs">
+          {STATUS_TABS.map((tab) => {
+            const count = counts[tab.key] ?? 0;
+            return (
+              <button
+                key={tab.key}
+                className={`ac-tab ${filters.status === tab.key ? 'is-active' : ''}`}
+                onClick={() => onPatchFilters({ status: tab.key, page: 1 })}
+              >
+                <span
+                  className="ac-tab-dot"
+                  style={{ background: STATUS_COLORS[tab.key] ?? 'var(--ac-muted)' }}
+                />
+                {tab.label}
+                <span className="ac-tab-count">{fmtNumber(count)}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="ac-toolbar">
+          <div className="ac-search">
+            <Search size={14} />
+            <input
+              className="ac-input"
+              placeholder="Filter by title, podcast, or source…"
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+            />
+          </div>
+
+          <select
+            className="ac-select"
+            value={filters.podcastId}
+            onChange={(e) => onPatchFilters({ podcastId: e.target.value, page: 1 })}
+          >
+            <option value="all">All podcasts</option>
+            {podcasts.map((pod) => (
+              <option key={pod.id} value={pod.id}>
+                {pod.display_name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="ac-select"
+            value={filters.site}
+            onChange={(e) => onPatchFilters({ site: e.target.value, page: 1 })}
+          >
+            <option value="all">All sources</option>
+            <option value="youtube">YouTube</option>
+            <option value="patreon">Patreon</option>
+            <option value="rss">RSS</option>
+          </select>
+
+          <select
+            className="ac-select"
+            value={filters.sort}
+            onChange={(e) => onPatchFilters({ sort: e.target.value, page: 1 })}
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="updated">Recently updated</option>
+            <option value="status">Status</option>
+            <option value="title">Title</option>
+            <option value="duration">Duration</option>
+          </select>
+
+          <div className="ac-row-end ac-tiny ac-subtle">
+            {loading ? <Spinner /> : null}
+            {fmtNumber(from)}–{fmtNumber(to)} of {fmtNumber(total)}
+          </div>
+        </div>
+
+        {filters.status !== 'all' || filters.podcastId !== 'all' || filters.site !== 'all' || filters.q ? (
+          <div className="ac-chips">
+            <span className="ac-chips-label">Filters</span>
+            {filters.status !== 'all' ? (
+              <button
+                type="button"
+                className="ac-chip"
+                onClick={() => onPatchFilters({ status: 'all', page: 1 })}
+              >
+                <span className="ac-chip-dot" style={{ background: STATUS_COLORS[filters.status] }} />
+                {STATUS_TABS.find((tab) => tab.key === filters.status)?.label ?? filters.status}
+                <X size={11} />
+              </button>
+            ) : null}
+            {filters.podcastId !== 'all' ? (
+              <button
+                type="button"
+                className="ac-chip"
+                onClick={() => onPatchFilters({ podcastId: 'all', page: 1 })}
+              >
+                {podcasts.find((pod) => pod.id === filters.podcastId)?.display_name ?? filters.podcastId}
+                <X size={11} />
+              </button>
+            ) : null}
+            {filters.site !== 'all' ? (
+              <button
+                type="button"
+                className="ac-chip"
+                onClick={() => onPatchFilters({ site: 'all', page: 1 })}
+              >
+                {filters.site === 'youtube' ? 'YouTube' : filters.site === 'patreon' ? 'Patreon' : 'RSS'}
+                <X size={11} />
+              </button>
+            ) : null}
+            {filters.q ? (
+              <button type="button" className="ac-chip" onClick={() => onPatchFilters({ q: '', page: 1 })}>
+                “{filters.q}”
+                <X size={11} />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="ac-chip ac-chip-clear"
+              onClick={() =>
+                onPatchFilters({ status: 'all', podcastId: 'all', site: 'all', q: '', page: 1 })
+              }
+            >
+              Clear all
+            </button>
+          </div>
+        ) : null}
+
+        {effectiveSelected > 0 ? (
+          <div
+            className="ac-row"
+            style={{
+              padding: '8px 10px',
+              border: '1px solid var(--ac-accent-border)',
+              background: 'var(--ac-accent-soft)',
+              borderRadius: 8,
+              marginBottom: 10,
+            }}
+          >
+            <strong style={{ color: '#ffc078', fontSize: 12 }}>
+              {allMatching ? `All ${fmtNumber(total)} matching` : `${fmtNumber(selected.size)} selected`}
+            </strong>
+
+            {!allMatching && total > selected.size ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  onClearSelection();
+                  setAllMatching(true);
+                }}
+              >
+                Select all {fmtNumber(total)} matching
+              </Button>
+            ) : null}
+
+            <span className="ac-sep" />
+
+            <Button size="sm" variant="warning" icon={<RotateCcw size={12} />} onClick={() => runBulk('retry')}>
+              Retry
+            </Button>
+            <Button size="sm" variant="secondary" icon={<Play size={12} />} onClick={() => runBulk('process')}>
+              Process
+            </Button>
+            <Button size="sm" variant="secondary" icon={<RefreshCw size={12} />} onClick={() => runBulk('retranscribe')}>
+              Re-transcribe
+            </Button>
+            <Button size="sm" variant="secondary" icon={<Ban size={12} />} onClick={() => runBulk('blacklist')}>
+              Blacklist
+            </Button>
+            <Button size="sm" variant="ghost" icon={<X size={12} />} onClick={() => runBulk('unblacklist')}>
+              Unblacklist
+            </Button>
+            <Button size="sm" variant="danger" icon={<Trash2 size={12} />} onClick={() => runBulk('delete')}>
+              Delete
+            </Button>
+
+            <button
+              className="ac-icon-btn"
+              style={{ marginLeft: 'auto' }}
+              title="Clear selection"
+              onClick={() => {
+                setAllMatching(false);
+                onClearSelection();
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : null}
+
+        <div className="ac-table-wrap">
+          <table className="ac-table">
+            <thead>
+              <tr>
+                <th className="is-check">
+                  <input
+                    type="checkbox"
+                    className="ac-check"
+                    checked={allMatching || allOnPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = !allMatching && someOnPageSelected && !allOnPageSelected;
+                    }}
+                    onChange={(e) => {
+                      if (allMatching) {
+                        setAllMatching(false);
+                        onClearSelection();
+                        if (e.target.checked) {
+                          episodes.forEach((ep) => onToggleSelect(ep.id, true));
+                        }
+                        return;
+                      }
+                      if (e.target.checked) {
+                        episodes.forEach((ep) => onToggleSelect(ep.id, true));
+                      } else {
+                        episodes.forEach((ep) => onToggleSelect(ep.id, false));
+                      }
+                    }}
+                  />
+                </th>
+                <th>episode</th>
+                <th>podcast</th>
+                <th>status</th>
+                <th>published</th>
+                <th>length</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {loading && episodes.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>
+                    <div style={{ padding: 30, textAlign: 'center' }}>
+                      <Spinner size={18} />
+                    </div>
+                  </td>
+                </tr>
+              ) : episodes.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>
+                    <EmptyState
+                      title="No episodes match"
+                      detail="Try a different status, podcast, source, or search term."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            onPatchFilters({
+                              status: 'all',
+                              podcastId: 'all',
+                              site: 'all',
+                              q: '',
+                              page: 1,
+                            })
+                          }
+                        >
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  </td>
+                </tr>
+              ) : (
+                episodes.map((ep) => {
+                  const isSelected = allMatching || selected.has(ep.id);
+                  const stage = stageFor(ep);
+                  const url = episodeUrl(ep);
+                  return (
+                    <tr
+                      key={ep.id}
+                      className={`${isSelected ? 'is-selected' : ''} ${ep.blacklisted ? 'is-dim' : ''} is-clickable`}
+                      onClick={() => onOpenEpisode(ep)}
+                    >
+                      <td className="is-check" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          className="ac-check"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            if (allMatching) {
+                              setAllMatching(false);
+                              onClearSelection();
+                              onToggleSelect(ep.id, e.target.checked);
+                            } else {
+                              onToggleSelect(ep.id, e.target.checked);
+                            }
+                          }}
+                        />
+                      </td>
+                      <td>
+                        {url ? (
+                          <a
+                            className="ac-row-title"
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={ep.title}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {ep.title || '(untitled)'}
+                          </a>
+                        ) : (
+                          <span className="ac-row-title" title={ep.title}>
+                            {ep.title || '(untitled)'}
+                          </span>
+                        )}
+                        {ep.error_message ? (
+                          <span className="ac-row-sub is-error" title={ep.error_message}>
+                            {ep.error_message}
+                          </span>
+                        ) : stage ? (
+                          <span className="ac-row-sub">
+                            {stage.label}
+                            {stage.percent !== undefined ? ` · ${stage.percent.toFixed(0)}%` : ''}
+                            {ep.active_job?.claimed_by_worker ? ` · ${ep.active_job.claimed_by_worker.slice(0, 8)}` : ''}
+                          </span>
+                        ) : (
+                          <span className="ac-row-sub">
+                            {ep.source_name}
+                            {ep.updated_at ? ` · updated ${new Date(ep.updated_at).toLocaleDateString()}` : ''}
+                          </span>
+                        )}
+                        {stage && stage.percent !== undefined ? (
+                          <div style={{ maxWidth: 360, marginTop: 4 }} onClick={(e) => e.stopPropagation()}>
+                            <ProgressBar percent={stage.percent} height={4} />
+                          </div>
+                        ) : null}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="ac-linklike"
+                          title={`Filter to ${ep.podcast_name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onPatchFilters({ podcastId: ep.podcast_id, page: 1 });
+                          }}
+                        >
+                          {ep.podcast_name}
+                        </button>
+                        <div className="ac-row" style={{ gap: 4, marginTop: 2 }}>
+                          {siteBadge(ep.site)}
+                        </div>
+                      </td>
+                      <td>
+                        <Badge>{ep.status}</Badge>
+                        {ep.blacklisted ? (
+                          <span style={{ marginLeft: 4 }}>
+                            <Badge tone="orange" title="Blacklisted">
+                              ⊘
+                            </Badge>
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="ac-cell-muted">{ep.publication_date ?? '—'}</td>
+                      <td className="ac-cell-muted">{fmtDuration(ep.duration_seconds)}</td>
+                      <td className="is-actions" onClick={(e) => e.stopPropagation()}>
+                        <div className="ac-row-actions">
+                          {ep.status === 'discovered' ? (
+                            <button
+                              className="ac-icon-btn"
+                              title="Process now"
+                              onClick={() => admin.episodeAction('process', ep.id)}
+                            >
+                              <Play size={13} />
+                            </button>
+                          ) : null}
+                          {ep.status === 'failed' || ep.status === 'downloading' ? (
+                            <button
+                              className="ac-icon-btn"
+                              title="Retry"
+                              onClick={() => admin.episodeAction('retry', ep.id)}
+                            >
+                              <RotateCcw size={13} />
+                            </button>
+                          ) : null}
+                          {ep.status === 'processed' ? (
+                            <button
+                              className="ac-icon-btn"
+                              title="Re-transcribe"
+                              onClick={() => admin.episodeAction('retranscribe', ep.id)}
+                            >
+                              <RefreshCw size={13} />
+                            </button>
+                          ) : null}
+                          <button
+                            className="ac-icon-btn"
+                            title={ep.blacklisted ? 'Remove blacklist' : 'Blacklist'}
+                            onClick={() => admin.episodeAction(ep.blacklisted ? 'unblacklist' : 'blacklist', ep.id)}
+                          >
+                            <Ban size={13} />
+                          </button>
+                          <button
+                            className="ac-icon-btn is-danger"
+                            title="Delete"
+                            onClick={() =>
+                              admin.confirm({
+                                title: 'Delete episode?',
+                                message: (
+                                  <>
+                                    Permanently delete <strong>{ep.title || '(untitled)'}</strong>, its
+                                    search chunks, and its stored transcript. This cannot be undone.
+                                  </>
+                                ),
+                                confirmLabel: 'Delete',
+                                tone: 'danger',
+                                onConfirm: async () => {
+                                  await admin.episodeAction('delete', ep.id);
+                                },
+                              })
+                            }
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                          <button className="ac-icon-btn" title="Details" onClick={() => onOpenEpisode(ep)}>
+                            <Eye size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="ac-pagination">
+          <span>
+            {fmtNumber(from)}–{fmtNumber(to)} of {fmtNumber(total)} episodes
+          </span>
+          <div className="ac-row">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={page <= 1}
+              icon={<ChevronLeft size={13} />}
+              onClick={() => onPatchFilters({ page: page - 1 })}
+            >
+              Prev
+            </Button>
+            <span className="ac-tiny">
+              page {page} / {totalPages}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={page >= totalPages}
+              icon={<ChevronRight size={13} />}
+              onClick={() => onPatchFilters({ page: page + 1 })}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

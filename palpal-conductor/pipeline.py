@@ -365,26 +365,51 @@ def get_dispatch_status() -> dict:
 # Discovery — enqueue-only; blurb does the actual scraping                    #
 # --------------------------------------------------------------------------- #
 
-async def run_discovery(podcast_id: str | None = None, auto_queue: bool = True) -> dict:
+async def run_discovery(
+    podcast_id: str | None = None,
+    auto_queue: bool = True,
+    source_id: str | None = None,
+) -> dict:
     """
-    Enqueue a 'discover' job for every enabled source (or one podcast's).
-    Discovery itself now runs on blurb, using its local YouTube/Patreon
-    cookies (RSS sources need no local credential at all — any auth is
-    embedded in the feed URL) — conductor never touches YouTube/Patreon
-    credentials. This returns as soon as the jobs are queued; results land
-    asynchronously via handle_discover_complete as blurb works through them.
+    Enqueue a 'discover' job for every enabled source (or one podcast's, or a
+    single source). Discovery itself now runs on blurb, using its local
+    YouTube/Patreon cookies (RSS sources need no local credential at all — any
+    auth is embedded in the feed URL) — conductor never touches
+    YouTube/Patreon credentials. This returns as soon as the jobs are queued;
+    results land asynchronously via handle_discover_complete as blurb works
+    through it.
 
     auto_queue=False tags the jobs so their results are written to the DB
     without auto-dispatching process jobs afterward — useful for reviewing
     a backlog before committing to processing it.
     """
-    label = podcast_id or "all"
-    yt_sources = await get_enabled_sources_by_site("youtube", podcast_id=podcast_id)
-    patreon_sources = await get_enabled_sources_by_site("patreon", podcast_id=podcast_id)
-    rss_sources = await get_enabled_sources_by_site("rss", podcast_id=podcast_id)
+    label = source_id or podcast_id or "all"
+
+    sources_by_site: list[tuple[str, list]] = []
+    if source_id:
+        # Single-source rerun is a precision tool in the console (one feed is
+        # broken; don't re-scrape the whole podcast). SourceRow doesn't carry
+        # `site`, so read that one row directly.
+        pool = db.get_pool()
+        row = await pool.fetchrow(
+            "SELECT id::text, site, url, podcast_id FROM sources "
+            "WHERE id = $1::uuid AND enabled = TRUE",
+            source_id,
+        )
+        if row:
+            sources_by_site = [(row["site"], [row])]
+    else:
+        yt_sources = await get_enabled_sources_by_site("youtube", podcast_id=podcast_id)
+        patreon_sources = await get_enabled_sources_by_site("patreon", podcast_id=podcast_id)
+        rss_sources = await get_enabled_sources_by_site("rss", podcast_id=podcast_id)
+        sources_by_site = [
+            ("youtube", yt_sources),
+            ("patreon", patreon_sources),
+            ("rss", rss_sources),
+        ]
 
     queued = 0
-    for site, sources in (("youtube", yt_sources), ("patreon", patreon_sources), ("rss", rss_sources)):
+    for site, sources in sources_by_site:
         for source in sources:
             try:
                 await _create_job(
@@ -402,7 +427,7 @@ async def run_discovery(podcast_id: str | None = None, auto_queue: bool = True) 
             except asyncpg.exceptions.UniqueViolationError:
                 logger.info("Source %s already has a discover job in flight, skipping", source["id"])
 
-    logger.info(f"Discovery run queued (podcast={label}): {queued} discover job(s)")
+    logger.info(f"Discovery run queued (scope={label}): {queued} discover job(s)")
     return {"sources": queued, "discover_jobs_queued": queued}
 
 
@@ -693,6 +718,7 @@ def get_scheduler_status() -> dict:
     return {
         "running": _scheduler.running,
         "processing_paused": _processing_paused,
+        "consecutive_failures": _consecutive_failures,
         "jobs": jobs,
         "dispatch": get_dispatch_status(),
     }

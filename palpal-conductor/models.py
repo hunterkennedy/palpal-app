@@ -67,9 +67,21 @@ class EpisodeInfo(BaseModel):
     created_at: Optional[DateTime] = None
 
 
+class EpisodeFilter(BaseModel):
+    status: Optional[str] = None       # status, 'attention', 'blacklisted', or 'all'
+    podcast_id: Optional[str] = None
+    site: Optional[str] = None
+    q: Optional[str] = None
+
+
 class BulkActionRequest(BaseModel):
-    episode_ids: list[str]
-    action: str  # "retry" | "process"
+    episode_ids: list[str] = []
+    action: str  # "retry" | "process" | "delete" | "blacklist" | "unblacklist" | "retranscribe"
+    # When all_matching is true, `filter` resolves the target set server-side
+    # instead of shipping every id from the browser. This is what powers
+    # "select all N matching" in the admin console.
+    all_matching: bool = False
+    filter: Optional[EpisodeFilter] = None
 
 
 class PodcastResult(BaseModel):

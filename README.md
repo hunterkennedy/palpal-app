@@ -94,15 +94,33 @@ docker logs palpal-conductor
 
 Open `http://localhost:$APP_PORT/admin` and log in with `ADMIN_PASSWORD`.
 
-This is the control room for the pipeline. From here you can:
+The control room is a live console backed by conductor's job queue. It updates
+over a server-sent event stream, so counts, job state, and worker progress move
+as things happen instead of on a polling timer.
 
-- **Trigger discovery** — scan YouTube channels/playlists, Patreon collections, and RSS/Atom feeds for new episodes (runs automatically every 6h, or kick it off manually here). RSS sources are added under a podcast's Sources with `site = rss` and the full feed URL (including any auth token).
-- **Start the download queue** — the download worker runs automatically on startup; the `▶ dl` button wakes it immediately if you want to kick off processing now
-- **Monitor status** — counts per pipeline stage, download worker state (active/idle), recent failures, episodes stuck in transcription
-- **Retry failures** — re-queue a failed episode; it goes back to `discovered` and the worker picks it up
-- **Pause/resume the scheduler** — stops automatic discovery and reclaim jobs; the download worker continues running
+- **Overview** — pipeline state, queue depth, per-podcast stage counts, active
+  jobs with live download/transcription progress, recent failures, and blurb's
+  current state.
+- **Episodes** — server-filtered, sortable episode table (status, podcast,
+  source, title). Inspect one episode for its full job history and transcript
+  stats; process, retry, re-transcribe, blacklist, or delete. Bulk actions work
+  across the current filter, not just the visible page.
+- **Jobs** — the active queue (cancel, prioritize, watch progress) and a
+  filterable history of completed/failed jobs with one-click retry.
+- **Podcasts** — podcast metadata, drag-free ordering, and per-source config
+  (URL, site, title exclusions, enabled state, last discovery result). Run
+  discovery for one source, one podcast, or everything.
+- **Content** — What's New entries and the rotating search-bar placeholders.
+- **Settings** — auto-discovery/auto-download, duration floor, chunk size,
+  scheduler state, re-chunking, and job-history cleanup.
 
-> **First run:** discovery may find a large backlog. The `max_new` filter on each source in the DB caps how many new episodes are discovered per run — bump it in the `sources` table when you're ready to process history.
+Pausing processing only stops `process` jobs from being claimed. Discovery and
+the stuck-job reclaim sweep keep running; explicit admin actions still bypass
+the auto-download setting.
+
+> **First run:** discovery may find a large backlog. Use **Discover only** (or
+> disable auto-download first) to review what a source returns before queuing
+> the whole history.
 
 ---
 

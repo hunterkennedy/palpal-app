@@ -4,12 +4,15 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
+import asyncpg
 import uvicorn
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
+import admin_events
 import caches
 import db
 import pipeline_settings
@@ -82,7 +85,9 @@ async def lifespan(app: FastAPI):
     await recover_interrupted_downloads()
     await start_scheduler()
     start_dispatch_worker()
+    admin_events.start_listener()
     yield
+    await admin_events.stop_listener()
     stop_dispatch_worker()
     stop_scheduler()
     await db.close_pool()
@@ -147,7 +152,7 @@ async def worker_next_job(
             SELECT id FROM jobs
             WHERE status = 'pending'
               AND (kind != 'process' OR NOT $2)
-            ORDER BY created_at
+            ORDER BY priority DESC, created_at
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
@@ -244,8 +249,52 @@ async def worker_fail(
     return {"status": "failed", "kind": kind}
 
 
+@app.post("/worker/jobs/{job_id}/progress", tags=["worker"])
+async def worker_progress(
+    job_id: str, body: dict,
+    _key: str = Depends(verify_worker_key),
+    x_worker_id: str | None = Header(default=None),
+):
+    """Live progress for a claimed job.
+
+    blurb reports coarse stages ('downloading', 'transcribing', ...) plus an
+    optional percentage and human-readable detail. Progress is stored on the
+    job row so /admin/jobs and /admin/episodes can show what is actually
+    happening, instead of treating every claimed job as an opaque blob.
+    """
+    stage = (body.get("stage") or "")[:80]
+    detail = (body.get("detail") or "")[:500] or None
+    percent = body.get("percent")
+    try:
+        percent = None if percent is None else max(0.0, min(100.0, float(percent)))
+    except (TypeError, ValueError):
+        percent = None
+
+    progress = {"stage": stage or "working"}
+    if percent is not None:
+        progress["percent"] = round(percent, 1)
+    if detail:
+        progress["detail"] = detail
+
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE jobs
+        SET progress = $1::jsonb, progress_at = now()
+        WHERE id = $2::uuid AND status = 'claimed'
+        RETURNING kind, episode_id::text
+        """,
+        json.dumps(progress), job_id,
+    )
+    if not row:
+        return {"status": "stale"}
+    await worker_status.record_heartbeat(x_worker_id)
+    return {"status": "ok", "kind": row["kind"]}
+
+
 @app.post("/worker/heartbeat", tags=["worker"])
 async def worker_heartbeat(
+    body: dict | None = None,
     _key: str = Depends(verify_worker_key),
     x_worker_id: str | None = Header(default=None),
 ):
@@ -253,8 +302,22 @@ async def worker_heartbeat(
     Lightweight liveness ping, independent of job polling. Job-claim polling
     backs off up to 12h when idle, so blurb calls this on a short fixed
     interval instead so the admin panel's connectivity indicator stays fresh.
+
+    Newer blurb versions also include their local state, so the console can
+    show the current stage instead of only a last-seen timestamp. Older
+    workers that send no body keep working unchanged.
     """
-    await worker_status.record_heartbeat(x_worker_id)
+    if body:
+        await worker_status.record_state(
+            x_worker_id,
+            state=body.get("state"),
+            stage=body.get("stage"),
+            job_id=str(body["job_id"]) if body.get("job_id") else None,
+            detail=body.get("detail"),
+            progress=body.get("progress") if isinstance(body.get("progress"), dict) else None,
+        )
+    else:
+        await worker_status.record_heartbeat(x_worker_id)
     return {"status": "ok"}
 
 
@@ -285,11 +348,17 @@ async def update_pipeline_settings(body: dict):
 @app.post("/admin/discover", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def trigger_discovery(
     podcast_id: str | None = Query(None, description="Limit discovery to one podcast ID"),
+    source_id: str | None = Query(None, description="Limit discovery to one source ID"),
     auto_queue: bool = Query(True, description="Automatically queue new episodes for processing"),
 ):
-    """Manually trigger a discovery run (optionally scoped to one podcast)."""
-    asyncio.create_task(run_discovery(podcast_id=podcast_id, auto_queue=auto_queue))
-    return {"status": "started", "podcast_id": podcast_id, "auto_queue": auto_queue}
+    """Manually trigger a discovery run (optionally scoped to one podcast or source)."""
+    asyncio.create_task(run_discovery(podcast_id=podcast_id, auto_queue=auto_queue, source_id=source_id))
+    return {
+        "status": "started",
+        "podcast_id": podcast_id,
+        "source_id": source_id,
+        "auto_queue": auto_queue,
+    }
 
 
 @app.post("/admin/episodes/backfill-patreon-duration", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -321,6 +390,212 @@ async def scheduler_resume():
     """Resume processing — also clears the auto-pause failure streak."""
     await resume_processing()
     return {"status": "running"}
+
+
+# --------------------------------------------------------------------------- #
+# Console: live stream + consolidated overview                                #
+# --------------------------------------------------------------------------- #
+
+@app.get("/admin/stream", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_stream():
+    """Server-sent invalidation stream for the admin console.
+
+    Sends an `invalidate` event (with the changed table names) whenever a
+    watched table changes. The console debounces these and refetches only the
+    queries it currently has open. A comment line every 15s keeps proxies from
+    idling the connection out.
+    """
+    async def event_generator():
+        queue = admin_events.subscribe()
+        try:
+            yield "retry: 3000\n\n"
+            yield "event: ready\ndata: {}\n\n"
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"event: invalidate\ndata: {payload}\n\n"
+        finally:
+            admin_events.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _iso(value):
+    return value.isoformat() if value is not None else None
+
+
+_ACTIVE_JOB_SELECT = """
+    SELECT j.id::text, j.kind, j.status, j.claimed_by_worker, j.claimed_at,
+           j.created_at, j.priority, j.attempts, j.progress, j.progress_at,
+           e.id::text AS episode_id, e.title AS episode_title,
+           ep_pod.display_name AS episode_podcast,
+           src.id::text AS source_id, src.name AS source_name,
+           src_pod.display_name AS source_podcast
+    FROM jobs j
+    LEFT JOIN episodes e       ON e.id = j.episode_id
+    LEFT JOIN sources  es      ON es.id = e.source_id
+    LEFT JOIN podcasts ep_pod  ON ep_pod.id = es.podcast_id
+    LEFT JOIN sources  src     ON src.id = j.source_id
+    LEFT JOIN podcasts src_pod ON src_pod.id = src.podcast_id
+"""
+
+
+def _job_payload(row: dict) -> dict:
+    d = dict(row)
+    for key in ("claimed_at", "created_at", "finished_at", "progress_at"):
+        if key in d:
+            d[key] = _iso(d.get(key))
+    d["progress"] = d.get("progress") or {}
+    return d
+
+
+@app.get("/admin/overview", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_overview():
+    """One consolidated snapshot for the console's landing page.
+
+    The old panel assembled this from /admin/live, /admin/jobs and a 30s
+    /admin/podcasts call, which meant three clocks and three sources of truth.
+    This is one query batch on one clock.
+    """
+    pool = db.get_pool()
+
+    async def _by_podcast():
+        return await pool.fetch(
+            """
+            SELECT p.id, p.display_name, p.enabled, p.display_order,
+                   COUNT(e.id) AS total,
+                   COUNT(*) FILTER (WHERE e.status = 'discovered')  AS discovered,
+                   COUNT(*) FILTER (WHERE e.status = 'downloading') AS downloading,
+                   COUNT(*) FILTER (WHERE e.status = 'processed')   AS processed,
+                   COUNT(*) FILTER (WHERE e.status = 'failed')      AS failed,
+                   COUNT(*) FILTER (WHERE e.status = 'orphaned')    AS orphaned,
+                   COUNT(*) FILTER (WHERE e.blacklisted)            AS blacklisted
+            FROM podcasts p
+            LEFT JOIN sources  s ON s.podcast_id = p.id
+            LEFT JOIN episodes e ON e.source_id  = s.id
+            GROUP BY p.id, p.display_name, p.enabled, p.display_order
+            ORDER BY p.display_order, p.id
+            """
+        )
+
+    async def _counts():
+        return await pool.fetchrow(
+            """
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE status = 'discovered')  AS discovered,
+                   COUNT(*) FILTER (WHERE status = 'downloading') AS downloading,
+                   COUNT(*) FILTER (WHERE status = 'processed')   AS processed,
+                   COUNT(*) FILTER (WHERE status = 'failed')      AS failed,
+                   COUNT(*) FILTER (WHERE status = 'orphaned')    AS orphaned,
+                   COUNT(*) FILTER (WHERE status = 'blacklisted') AS blacklisted,
+                   COUNT(*) FILTER (WHERE blacklisted)            AS blacklisted_flag,
+                   COUNT(*) FILTER (WHERE status IN ('failed', 'orphaned')) AS attention
+            FROM episodes
+            """
+        )
+
+    async def _job_counts():
+        return await pool.fetch(
+            """
+            SELECT kind, status, COUNT(*) AS n FROM jobs
+            WHERE status IN ('pending', 'claimed')
+            GROUP BY kind, status
+            """
+        )
+
+    async def _active_jobs():
+        return await pool.fetch(
+            f"""
+            {_ACTIVE_JOB_SELECT}
+            WHERE j.status IN ('pending', 'claimed')
+            ORDER BY j.priority DESC, j.created_at
+            LIMIT 12
+            """
+        )
+
+    async def _recent_failures():
+        return await pool.fetch(
+            """
+            SELECT j.id::text, j.kind, j.error, j.error_type, j.finished_at, j.created_at,
+                   e.title AS episode_title, src.name AS source_name,
+                   ep_pod.display_name AS episode_podcast,
+                   src_pod.display_name AS source_podcast
+            FROM jobs j
+            LEFT JOIN episodes e       ON e.id = j.episode_id
+            LEFT JOIN sources  es      ON es.id = e.source_id
+            LEFT JOIN podcasts ep_pod  ON ep_pod.id = es.podcast_id
+            LEFT JOIN sources  src     ON src.id = j.source_id
+            LEFT JOIN podcasts src_pod ON src_pod.id = src.podcast_id
+            WHERE j.status = 'failed'
+            ORDER BY COALESCE(j.finished_at, j.created_at) DESC
+            LIMIT 8
+            """
+        )
+
+    async def _runs():
+        return await pool.fetch(
+            """
+            SELECT key, value FROM settings
+            WHERE key IN ('last_discovery_run', 'last_reclaim_run', 'processing_paused')
+            """
+        )
+
+    (
+        settings,
+        pods,
+        counts,
+        job_counts,
+        active_jobs,
+        recent_failures,
+        run_rows,
+        blurb,
+    ) = await asyncio.gather(
+        pipeline_settings.get_all(),
+        _by_podcast(),
+        _counts(),
+        _job_counts(),
+        _active_jobs(),
+        _recent_failures(),
+        _runs(),
+        worker_status.get_worker_status(),
+    )
+
+    job_count_map = {f"{r['kind']}_{r['status']}": r["n"] for r in job_counts}
+    runs = {r["key"]: r["value"] for r in run_rows}
+
+    return {
+        "scheduler": get_scheduler_status(),
+        "blurb": blurb,
+        "settings": settings,
+        "counts": dict(counts),
+        "podcasts": [dict(r) for r in pods],
+        "jobs": {
+            "counts": job_count_map,
+            "active_total": sum(job_count_map.values()),
+            "active": [_job_payload(r) for r in active_jobs],
+            "recent_failures": [_job_payload(r) for r in recent_failures],
+            "failed_24h": await pool.fetchval(
+                "SELECT COUNT(*) FROM jobs WHERE status = 'failed' "
+                "AND COALESCE(finished_at, created_at) > now() - interval '24 hours'"
+            ),
+        },
+        "last_runs": {
+            "discovery": runs.get("last_discovery_run"),
+            "reclaim": runs.get("last_reclaim_run"),
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.post("/admin/episodes/{episode_id}/process", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -384,61 +659,27 @@ async def admin_live():
     }
 
 
-def _fmt_job(row: dict) -> dict:
-    d = dict(row)
-    for key in ("claimed_at", "created_at"):
-        if d.get(key) is not None:
-            d[key] = d[key].isoformat()
-    return d
-
-
 @app.get("/admin/jobs", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_list_jobs(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
 ):
-    """The actual job queue: what's pending/claimed right now (with the target
-    episode/source resolved via the real FK columns, not payload parsing),
-    plus a short recent-history tail and per-kind/status counts. Replaces the
-    old FSM tape, which only ever showed a single guessed-at active slot.
-
-    The active list is paginated — with 100+ episodes backed up in the queue
-    (e.g. processing paused for a while) this is polled every few seconds by
-    the admin panel, so an unbounded SELECT here would mean shipping and
-    re-rendering the whole queue on every poll.
+    """The active job queue: pending/claimed jobs with target, progress,
+    attempts and priority. History lives in /admin/jobs/history, which can be
+    filtered and paged independently instead of only ever showing a 20-row tail.
     """
     pool = db.get_pool()
     offset = (page - 1) * page_size
 
-    active_rows, recent_rows, counts_rows = await asyncio.gather(
+    active_rows, counts_rows = await asyncio.gather(
         pool.fetch(
-            """
-            SELECT j.id::text, j.kind, j.status, j.claimed_by_worker, j.claimed_at, j.created_at,
-                   e.title AS episode_title, ep_pod.display_name AS episode_podcast,
-                   src.name AS source_name, src_pod.display_name AS source_podcast
-            FROM jobs j
-            LEFT JOIN episodes e       ON e.id = j.episode_id
-            LEFT JOIN sources  es      ON es.id = e.source_id
-            LEFT JOIN podcasts ep_pod  ON ep_pod.id = es.podcast_id
-            LEFT JOIN sources  src     ON src.id = j.source_id
-            LEFT JOIN podcasts src_pod ON src_pod.id = src.podcast_id
+            f"""
+            {_ACTIVE_JOB_SELECT}
             WHERE j.status IN ('pending', 'claimed')
-            ORDER BY j.created_at
+            ORDER BY j.priority DESC, j.created_at
             LIMIT $1 OFFSET $2
             """,
             page_size, offset,
-        ),
-        pool.fetch(
-            """
-            SELECT j.id::text, j.kind, j.status, j.error, j.error_type, j.created_at,
-                   e.title AS episode_title, src.name AS source_name
-            FROM jobs j
-            LEFT JOIN episodes e ON e.id = j.episode_id
-            LEFT JOIN sources  src ON src.id = j.source_id
-            WHERE j.status IN ('completed', 'failed')
-            ORDER BY j.created_at DESC
-            LIMIT 20
-            """
         ),
         pool.fetch(
             """
@@ -449,19 +690,234 @@ async def admin_list_jobs(
         ),
     )
 
-    # counts_rows already aggregates every pending/claimed job regardless of
-    # this call's page, so the active total comes from summing it rather than
-    # a second COUNT(*) query.
     active_total = sum(r["n"] for r in counts_rows)
 
     return {
-        "active": [_fmt_job(r) for r in active_rows],
+        "active": [_job_payload(r) for r in active_rows],
         "active_total": active_total,
         "page": page,
         "page_size": page_size,
-        "recent": [_fmt_job(r) for r in recent_rows],
         "counts": {f"{r['kind']}_{r['status']}": r["n"] for r in counts_rows},
     }
+
+
+@app.get("/admin/jobs/history", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_job_history(
+    status: str | None = Query(None, description="completed | failed | all"),
+    kind: str | None = Query(None, description="discover | process"),
+    q: str | None = Query(None, description="Match episode title, source name or error text"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+):
+    """Paged, filtered job history. Replaces the old fixed 20-row 'recent' tail."""
+    pool = db.get_pool()
+    offset = (page - 1) * page_size
+    status_filter = None if status in (None, "all") else status
+    kind_filter = None if kind in (None, "all") else kind
+
+    where_sql = """
+        WHERE j.status IN ('completed', 'failed')
+          AND ($1::text IS NULL OR j.status = $1)
+          AND ($2::text IS NULL OR j.kind = $2)
+          AND ($3::text IS NULL OR
+               COALESCE(e.title, '') ILIKE '%' || $3 || '%' OR
+               COALESCE(src.name, '') ILIKE '%' || $3 || '%' OR
+               COALESCE(j.error, '') ILIKE '%' || $3 || '%')
+    """
+    args = [status_filter, kind_filter, q]
+
+    rows, total_row, counts_rows = await asyncio.gather(
+        pool.fetch(
+            f"""
+            SELECT j.id::text, j.kind, j.status, j.error, j.error_type,
+                   j.created_at, j.claimed_at, j.finished_at, j.attempts,
+                   j.claimed_by_worker, j.progress,
+                   e.id::text AS episode_id, e.title AS episode_title,
+                   ep_pod.display_name AS episode_podcast,
+                   src.id::text AS source_id, src.name AS source_name,
+                   src_pod.display_name AS source_podcast
+            FROM jobs j
+            LEFT JOIN episodes e       ON e.id = j.episode_id
+            LEFT JOIN sources  es      ON es.id = e.source_id
+            LEFT JOIN podcasts ep_pod  ON ep_pod.id = es.podcast_id
+            LEFT JOIN sources  src     ON src.id = j.source_id
+            LEFT JOIN podcasts src_pod ON src_pod.id = src.podcast_id
+            {where_sql}
+            ORDER BY COALESCE(j.finished_at, j.created_at) DESC
+            LIMIT $4 OFFSET $5
+            """,
+            *args, page_size, offset,
+        ),
+        pool.fetchrow(f"SELECT COUNT(*) FROM jobs j "
+                      f"LEFT JOIN episodes e ON e.id = j.episode_id "
+                      f"LEFT JOIN sources src ON src.id = j.source_id {where_sql}", *args),
+        pool.fetch(
+            """
+            SELECT status, COUNT(*) AS n FROM jobs
+            WHERE status IN ('completed', 'failed')
+            GROUP BY status
+            """
+        ),
+    )
+
+    return {
+        "jobs": [_job_payload(r) for r in rows],
+        "total": total_row["count"],
+        "page": page,
+        "page_size": page_size,
+        "counts": {r["status"]: r["n"] for r in counts_rows},
+    }
+
+
+@app.get("/admin/jobs/{job_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_job_detail(job_id: str):
+    """Full details for one job, including payload and complete error text."""
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT j.id::text, j.kind, j.status, j.error, j.error_type,
+               j.created_at, j.claimed_at, j.finished_at, j.attempts,
+               j.priority, j.claimed_by_worker, j.progress, j.progress_at,
+               j.payload, (j.result IS NOT NULL) AS has_result,
+               e.id::text AS episode_id, e.title AS episode_title,
+               ep_pod.display_name AS episode_podcast,
+               src.id::text AS source_id, src.name AS source_name,
+               src_pod.display_name AS source_podcast
+        FROM jobs j
+        LEFT JOIN episodes e       ON e.id = j.episode_id
+        LEFT JOIN sources  es      ON es.id = e.source_id
+        LEFT JOIN podcasts ep_pod  ON ep_pod.id = es.podcast_id
+        LEFT JOIN sources  src     ON src.id = j.source_id
+        LEFT JOIN podcasts src_pod ON src_pod.id = src.podcast_id
+        WHERE j.id = $1::uuid
+        """,
+        job_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _job_payload(row)
+
+
+@app.post("/admin/jobs/{job_id}/cancel", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_cancel_job(job_id: str):
+    """Cancel a pending/claimed job and release its episode back to the queue.
+
+    A claimed job may still be running on blurb; the stale-complete guard in
+    /worker/jobs/{id}/complete discards whatever it posts back because the job
+    is no longer 'claimed'. Duration-probe jobs are left alone on the episode
+    side — they target already-processed rows.
+    """
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE jobs
+        SET status = 'failed',
+            error = 'Cancelled by admin',
+            error_type = 'cancelled'
+        WHERE id = $1::uuid AND status IN ('pending', 'claimed')
+        RETURNING kind, episode_id::text, payload
+        """,
+        job_id,
+    )
+    if not row:
+        raise HTTPException(status_code=409, detail="Job is not pending or claimed")
+
+    if row["kind"] == "process" and row["episode_id"] and not (row["payload"] or {}).get("duration_only"):
+        await pool.execute(
+            """
+            UPDATE episodes
+            SET status = 'discovered', error_message = 'Job cancelled by admin'
+            WHERE id = $1::uuid AND status = 'downloading' AND blacklisted = FALSE
+            """,
+            row["episode_id"],
+        )
+    caches.bust_episodes_cache()
+    return {"status": "cancelled", "job_id": job_id}
+
+
+@app.post("/admin/jobs/{job_id}/prioritize", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_prioritize_job(job_id: str):
+    """Move a pending job to the front of its queue."""
+    pool = db.get_pool()
+    result = await pool.execute(
+        "UPDATE jobs SET priority = GREATEST(priority, 1) WHERE id = $1::uuid AND status = 'pending'",
+        job_id,
+    )
+    if result == "UPDATE 0":
+        raise HTTPException(status_code=409, detail="Only pending jobs can be prioritized")
+    return {"status": "prioritized", "job_id": job_id}
+
+
+@app.post("/admin/jobs/{job_id}/retry", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_retry_job(job_id: str):
+    """Put a finished job back on the queue without losing its original payload."""
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT j.id, j.kind, j.status, j.episode_id::text, j.payload,
+               e.blacklisted
+        FROM jobs j
+        LEFT JOIN episodes e ON e.id = j.episode_id
+        WHERE j.id = $1::uuid
+        """,
+        job_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if row["status"] not in ("completed", "failed"):
+        raise HTTPException(status_code=409, detail="Only finished jobs can be retried")
+    if row["blacklisted"]:
+        raise HTTPException(
+            status_code=409,
+            detail="The episode is blacklisted — remove the blacklist before retrying",
+        )
+
+    try:
+        await pool.execute(
+            """
+            UPDATE jobs
+            SET status = 'pending', error = NULL, error_type = NULL,
+                claimed_at = NULL, claimed_by_worker = NULL,
+                progress = '{}'::jsonb, progress_at = NULL
+            WHERE id = $1::uuid
+            """,
+            job_id,
+        )
+    except asyncpg.exceptions.UniqueViolationError:
+        raise HTTPException(
+            status_code=409,
+            detail="The target already has an active job — wait for it to finish first",
+        )
+
+    if row["kind"] == "process" and row["episode_id"] and not (row["payload"] or {}).get("duration_only"):
+        await pool.execute(
+            """
+            UPDATE episodes
+            SET status = 'downloading', error_message = NULL
+            WHERE id = $1::uuid AND blacklisted = FALSE
+            """,
+            row["episode_id"],
+        )
+    caches.bust_episodes_cache()
+    wakeup_worker()
+    return {"status": "queued", "job_id": job_id}
+
+
+@app.post("/admin/jobs/purge", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_purge_jobs(body: dict = Body(default={})):
+    """Delete finished job history older than N days (default: everything)."""
+    pool = db.get_pool()
+    days = body.get("older_than_days")
+    if days is None:
+        result = await pool.execute("DELETE FROM jobs WHERE status IN ('completed', 'failed')")
+    else:
+        result = await pool.execute(
+            "DELETE FROM jobs WHERE status IN ('completed', 'failed') "
+            "AND COALESCE(finished_at, created_at) < now() - ($1::int * interval '1 day')",
+            int(days),
+        )
+    deleted = int(result.split()[-1])
+    return {"status": "purged", "deleted": deleted}
 
 
 @app.post("/admin/episodes/{episode_id}/retry", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -658,106 +1114,206 @@ async def process_all_discovered(podcast_id: str | None = Query(None)):
     return {"queued": queued}
 
 
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+async def _resolve_episode_ids(
+    pool, body: BulkActionRequest,
+) -> list[str]:
+    """Resolve a bulk target set from explicit ids or the active filter."""
+    if body.all_matching and body.filter:
+        f = body.filter
+        args = _episode_filter_args(f.status, f.podcast_id, f.site, f.q)
+        rows = await pool.fetch(
+            f"""
+            SELECT e.id::text
+            FROM episodes e
+            JOIN sources  s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            {_episode_filter_sql()}
+            LIMIT 5001
+            """,
+            *args,
+        )
+        if len(rows) > 5000:
+            raise HTTPException(
+                status_code=400,
+                detail="That filter matches more than 5,000 episodes — narrow it first",
+            )
+        return [r["id"] for r in rows]
+
+    seen: set[str] = set()
+    ids: list[str] = []
+    for raw in body.episode_ids:
+        episode_id = str(raw)
+        if episode_id in seen:
+            continue
+        seen.add(episode_id)
+        ids.append(episode_id)
+    return ids
+
+
 @app.post("/admin/episodes/bulk-action", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def bulk_episode_action(body: BulkActionRequest):
-    """Apply an action to a list of episode IDs. Returns per-episode results."""
+    """Apply an action to a set of episodes.
+
+    Targets can be explicit ids or `all_matching` + the same filters as
+    /admin/episodes (this is what powers "select all N matching" in the
+    console). Actions are executed set-wise instead of one query per episode,
+    so a 500-episode retry is a handful of statements, not 1,500.
+    """
     if body.action not in ("retry", "process", "delete", "blacklist", "unblacklist", "retranscribe"):
         raise HTTPException(status_code=400, detail="invalid action")
 
     pool = db.get_pool()
-    results = []
-    # Episodes that end this loop as 'discovered' via an explicit process/retry/
-    # retranscribe request — force-queued together (bypassing auto_download and
-    # scheduler-pause) once, after the loop, instead of per-item.
-    to_queue: list[str] = []
+    ids = await _resolve_episode_ids(pool, body)
+    if not ids:
+        return {"queued": 0, "total": 0, "results": []}
 
-    for episode_id in body.episode_ids:
-        try:
-            row = await pool.fetchrow(
-                "SELECT status, title FROM episodes WHERE id = $1::uuid", episode_id
+    valid_ids = [i for i in ids if _UUID_RE.match(i)]
+    results: list[dict] = [
+        {"id": i, "ok": False, "detail": "invalid episode id"} for i in ids if i not in valid_ids
+    ]
+    rows = await pool.fetch(
+        "SELECT id::text, status, title, blacklisted FROM episodes WHERE id = ANY($1::uuid[])",
+        valid_ids,
+    )
+    by_id = {r["id"]: r for r in rows}
+    for episode_id in valid_ids:
+        if episode_id not in by_id:
+            results.append({"id": episode_id, "ok": False, "detail": "not found"})
+
+    action = body.action
+    found_ids = [i for i in valid_ids if i in by_id]
+
+    if action in ("blacklist", "delete"):
+        if found_ids:
+            reason = "Cancelled by admin blacklist" if action == "blacklist" else "Cancelled by admin delete"
+            await pool.execute(
+                """
+                UPDATE jobs SET status = 'failed', error = $2
+                WHERE kind = 'process' AND status IN ('pending', 'claimed')
+                  AND episode_id = ANY($1::uuid[])
+                """,
+                found_ids, reason,
             )
-            if not row:
-                results.append({"id": episode_id, "ok": False, "detail": "not found"})
-                continue
 
-            if body.action == "retry":
-                if row["status"] not in ("failed", "downloading"):
-                    results.append({"id": episode_id, "ok": False, "detail": f"cannot retry '{row['status']}'"})
-                    continue
-                if not row["title"]:
-                    results.append({"id": episode_id, "ok": False, "detail": "no title — private/unfetchable, can never download"})
-                    continue
-                await cancel_process_job(episode_id, "Cancelled by admin retry")
-                await pool.execute(
-                    "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
-                )
-                to_queue.append(episode_id)
-
-            elif body.action == "process":
-                if row["status"] != "discovered":
-                    results.append({"id": episode_id, "ok": False, "detail": f"cannot process '{row['status']}'"})
-                    continue
-                if not row["title"]:
-                    results.append({"id": episode_id, "ok": False, "detail": "no title — private/unfetchable, can never download"})
-                    continue
-                to_queue.append(episode_id)
-
-            elif body.action == "delete":
-                await cancel_process_job(episode_id, "Cancelled by admin delete")
-                await b2_delete_transcript(episode_id)
-                await pool.execute("DELETE FROM episodes WHERE id = $1::uuid", episode_id)
-
-            elif body.action == "blacklist":
-                await cancel_process_job(episode_id, "Cancelled by admin blacklist")
+        if action == "blacklist":
+            if found_ids:
                 await pool.execute(
                     """
                     UPDATE episodes
                     SET blacklisted = TRUE,
                         status = CASE WHEN status = 'downloading' THEN 'blacklisted' ELSE status END
-                    WHERE id = $1::uuid
+                    WHERE id = ANY($1::uuid[])
                     """,
-                    episode_id,
+                    found_ids,
                 )
+            results.extend({"id": i, "ok": True} for i in found_ids)
+        else:
+            sem = asyncio.Semaphore(8)
+            ok_to_delete: list[str] = []
 
-            elif body.action == "unblacklist":
+            async def _delete_blob(episode_id: str):
+                async with sem:
+                    try:
+                        await b2_delete_transcript(episode_id)
+                        return episode_id, None
+                    except Exception as exc:
+                        return episode_id, str(exc)
+
+            delete_results = await asyncio.gather(*(_delete_blob(i) for i in found_ids))
+            for episode_id, error in delete_results:
+                if error:
+                    results.append({"id": episode_id, "ok": False, "detail": f"transcript delete failed: {error}"})
+                else:
+                    ok_to_delete.append(episode_id)
+            if ok_to_delete:
                 await pool.execute(
-                    """
-                    UPDATE episodes
-                    SET blacklisted   = FALSE,
-                        status        = CASE WHEN status = 'blacklisted' THEN 'discovered' ELSE status END,
-                        error_message = CASE WHEN status = 'blacklisted' THEN NULL ELSE error_message END
-                    WHERE id = $1::uuid
-                    """,
-                    episode_id,
+                    "DELETE FROM episodes WHERE id = ANY($1::uuid[])", ok_to_delete
                 )
-                wakeup_worker()
+            results.extend({"id": i, "ok": True} for i in ok_to_delete)
 
-            elif body.action == "retranscribe":
-                if row["status"] == "downloading":
-                    results.append({"id": episode_id, "ok": False, "detail": f"cannot retranscribe '{row['status']}'"})
-                    continue
-                if not row["title"]:
-                    results.append({"id": episode_id, "ok": False, "detail": "no title — private/unfetchable, can never download"})
-                    continue
-                await cancel_process_job(episode_id, "Cancelled by retranscribe")
-                await pool.execute(
-                    "UPDATE episodes SET status='discovered', error_message=NULL WHERE id=$1::uuid", episode_id
-                )
-                await pool.execute("DELETE FROM transcript_chunks WHERE episode_id = $1::uuid", episode_id)
-                to_queue.append(episode_id)
-
-            results.append({"id": episode_id, "ok": True})
-
-        except Exception as exc:
-            results.append({"id": episode_id, "ok": False, "detail": str(exc)})
-
-    if to_queue:
-        await queue_episodes_for_processing(to_queue)
-
-    queued = sum(1 for r in results if r["ok"])
-    if queued:
         caches.bust_episodes_cache()
-    return {"queued": queued, "total": len(body.episode_ids), "results": results}
+        return {
+            "queued": sum(1 for r in results if r["ok"]),
+            "total": len(ids),
+            "results": results,
+        }
+
+    if action == "unblacklist":
+        if found_ids:
+            await pool.execute(
+                """
+                UPDATE episodes
+                SET blacklisted   = FALSE,
+                    status        = CASE WHEN status = 'blacklisted' THEN 'discovered' ELSE status END,
+                    error_message = CASE WHEN status = 'blacklisted' THEN NULL ELSE error_message END
+                WHERE id = ANY($1::uuid[])
+                """,
+                found_ids,
+            )
+            wakeup_worker()
+        results.extend({"id": i, "ok": True} for i in found_ids)
+        caches.bust_episodes_cache()
+        return {
+            "queued": sum(1 for r in results if r["ok"]),
+            "total": len(ids),
+            "results": results,
+        }
+
+    # process / retry / retranscribe all end with a force-queued process job.
+    eligible: list[str] = []
+    for episode_id in found_ids:
+        row = by_id[episode_id]
+        if row["blacklisted"]:
+            results.append({"id": episode_id, "ok": False, "detail": "blacklisted"})
+            continue
+        if not row["title"]:
+            results.append({"id": episode_id, "ok": False, "detail": "no title — private/unfetchable, can never download"})
+            continue
+        if action == "process" and row["status"] != "discovered":
+            results.append({"id": episode_id, "ok": False, "detail": f"cannot process '{row['status']}'"})
+            continue
+        if action == "retry" and row["status"] not in ("failed", "downloading"):
+            results.append({"id": episode_id, "ok": False, "detail": f"cannot retry '{row['status']}'"})
+            continue
+        if action == "retranscribe" and row["status"] == "downloading":
+            results.append({"id": episode_id, "ok": False, "detail": "episode is currently downloading"})
+            continue
+        eligible.append(episode_id)
+
+    if eligible:
+        if action in ("retry", "retranscribe"):
+            await pool.execute(
+                """
+                UPDATE jobs SET status = 'failed', error = $2
+                WHERE kind = 'process' AND status IN ('pending', 'claimed')
+                  AND episode_id = ANY($1::uuid[])
+                """,
+                eligible,
+                "Cancelled by admin retry" if action == "retry" else "Cancelled by retranscribe",
+            )
+            await pool.execute(
+                "UPDATE episodes SET status = 'discovered', error_message = NULL WHERE id = ANY($1::uuid[])",
+                eligible,
+            )
+        if action == "retranscribe":
+            await pool.execute(
+                "DELETE FROM transcript_chunks WHERE episode_id = ANY($1::uuid[])",
+                eligible,
+            )
+        await queue_episodes_for_processing(eligible)
+        results.extend({"id": i, "ok": True} for i in eligible)
+
+    caches.bust_episodes_cache()
+    return {
+        "queued": len(eligible),
+        "total": len(ids),
+        "results": results,
+    }
 
 
 async def _fetch_episodes() -> list[EpisodeInfo]:
@@ -805,43 +1361,65 @@ async def list_episodes() -> list[EpisodeInfo]:
     return data
 
 
-@app.get("/admin/episodes", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def admin_list_episodes(
-    status: str | None = Query(None, description="Status value, or 'blacklisted' for the blacklisted flag, or omit/'all' for no filter"),
-    podcast_id: str | None = Query(None),
-    site: str | None = Query(None),
-    q: str | None = Query(None, description="Case-insensitive title substring filter"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
-):
-    """
-    Paginated, server-filtered episode list for the admin panel — always live
-    from DB, no cache. Runs on the same fast poll as /admin/live and
-    /admin/jobs (unlike those, this used to be a full unpaginated table dump
-    on a slower poll, which is exactly why it visibly lagged behind them).
-
-    Status-tab counts are global (independent of podcast_id/site/q, matching
-    the existing tab UX) and returned separately in `counts` rather than
-    computed from whatever page happens to be loaded.
-    """
-    pool = db.get_pool()
-    offset = (page - 1) * page_size
+def _episode_filter_args(status, podcast_id, site, q):
+    """Shared filter state for /admin/episodes and bulk-by-filter actions."""
     blacklisted_only = status == "blacklisted"
-    status_filter = None if status in (None, "all", "blacklisted") else status
+    attention = status == "attention"
+    status_filter = None if status in (None, "all", "blacklisted", "attention") else status
     podcast_filter = None if podcast_id in (None, "all") else podcast_id
     site_filter = None if site in (None, "all") else site
+    return [blacklisted_only, status_filter, podcast_filter, site_filter, q, attention]
 
-    filter_sql = """
-        FROM episodes e
-        JOIN sources  s ON s.id = e.source_id
-        JOIN podcasts p ON p.id = s.podcast_id
+
+def _episode_filter_sql() -> str:
+    return """
         WHERE ($1::boolean IS NOT TRUE OR e.blacklisted = TRUE)
           AND ($2::text IS NULL OR e.status = $2)
           AND ($3::text IS NULL OR s.podcast_id = $3)
           AND ($4::text IS NULL OR s.site = $4)
-          AND ($5::text IS NULL OR e.title ILIKE '%' || $5 || '%')
+          AND ($5::text IS NULL OR
+               e.title        ILIKE '%' || $5 || '%' OR
+               p.display_name ILIKE '%' || $5 || '%' OR
+               s.name         ILIKE '%' || $5 || '%')
+          AND ($6::boolean IS NOT TRUE OR e.status IN ('failed', 'orphaned'))
     """
-    filter_args = [blacklisted_only, status_filter, podcast_filter, site_filter, q]
+
+
+_EPISODE_SORTS = {
+    "newest": "e.publication_date DESC NULLS LAST, e.created_at DESC",
+    "oldest": "e.publication_date ASC NULLS LAST, e.created_at ASC",
+    "updated": "e.updated_at DESC NULLS LAST",
+    "title": "e.title ASC",
+    "status": "e.status ASC, e.publication_date DESC NULLS LAST",
+    "duration": "e.duration_seconds DESC NULLS LAST",
+}
+
+
+@app.get("/admin/episodes", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_list_episodes(
+    status: str | None = Query(
+        None,
+        description="Status value, 'attention' (failed + orphaned), "
+                    "'blacklisted', or omit/'all' for no filter",
+    ),
+    podcast_id: str | None = Query(None),
+    site: str | None = Query(None),
+    q: str | None = Query(None, description="Case-insensitive title/podcast/source substring filter"),
+    sort: str = Query("newest", description="newest | oldest | updated | title | status | duration"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """Paginated, server-filtered episode list for the admin console.
+
+    Each row carries its live process job (if any) including progress, so the
+    table can distinguish "downloading 42%" from "transcribing" without a
+    second request per row. Status-tab counts stay global, matching the tab UX.
+    """
+    pool = db.get_pool()
+    offset = (page - 1) * page_size
+    filter_args = _episode_filter_args(status, podcast_id, site, q)
+    filter_sql = _episode_filter_sql()
+    order_sql = _EPISODE_SORTS.get(sort, _EPISODE_SORTS["newest"])
 
     rows, total_row, counts_rows = await asyncio.gather(
         pool.fetch(
@@ -849,32 +1427,86 @@ async def admin_list_episodes(
             SELECT
                 e.id::text, e.video_id, e.title, e.publication_date, e.status,
                 e.error_message, e.blacklisted, s.podcast_id, p.display_name AS podcast_name,
-                s.name AS source_name, s.site, e.duration_seconds, e.created_at
+                s.name AS source_name, s.site, e.duration_seconds,
+                e.created_at, e.updated_at,
+                aj.id::text AS active_job_id,
+                aj.status AS active_job_status,
+                aj.claimed_by_worker AS active_job_worker,
+                aj.claimed_at AS active_job_claimed_at,
+                aj.created_at AS active_job_created_at,
+                aj.progress AS active_job_progress,
+                aj.attempts AS active_job_attempts,
+                aj.priority AS active_job_priority
+            FROM episodes e
+            JOIN sources  s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            LEFT JOIN LATERAL (
+                SELECT j.id, j.status, j.claimed_by_worker, j.claimed_at,
+                       j.created_at, j.progress, j.attempts, j.priority
+                FROM jobs j
+                WHERE j.kind = 'process' AND j.episode_id = e.id
+                  AND j.status IN ('pending', 'claimed')
+                ORDER BY (j.status = 'claimed') DESC, j.created_at DESC
+                LIMIT 1
+            ) aj ON TRUE
             {filter_sql}
-            ORDER BY e.publication_date DESC NULLS LAST, e.created_at DESC
+            ORDER BY {order_sql}
             LIMIT ${len(filter_args) + 1} OFFSET ${len(filter_args) + 2}
             """,
             *filter_args, page_size, offset,
         ),
-        pool.fetchrow(f"SELECT COUNT(*) {filter_sql}", *filter_args),
+        pool.fetchrow(
+            f"""
+            SELECT COUNT(*)
+            FROM episodes e
+            JOIN sources  s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            {filter_sql}
+            """,
+            *filter_args,
+        ),
         pool.fetch(
-            "SELECT status, COUNT(*) AS n, COUNT(*) FILTER (WHERE blacklisted) AS bl FROM episodes GROUP BY status"
+            "SELECT status, COUNT(*) AS n, COUNT(*) FILTER (WHERE blacklisted) AS bl "
+            "FROM episodes GROUP BY status"
         ),
     )
 
-    counts: dict[str, int] = {"all": 0, "blacklisted": 0}
+    counts: dict[str, int] = {"all": 0, "blacklisted": 0, "attention": 0}
     for r in counts_rows:
         counts[r["status"]] = r["n"]
         counts["all"] += r["n"]
         counts["blacklisted"] += r["bl"]
+        if r["status"] in ("failed", "orphaned"):
+            counts["attention"] += r["n"]
 
-    episodes = [
-        EpisodeInfo(
-            **{k: row[k] for k in row.keys()},
-            youtube_url=f"https://youtube.com/watch?v={row['video_id']}",
+    episodes = []
+    for row in rows:
+        episode = {
+            k: row[k]
+            for k in (
+                "id", "video_id", "title", "publication_date", "status",
+                "error_message", "blacklisted", "podcast_id", "podcast_name",
+                "source_name", "site", "duration_seconds", "created_at", "updated_at",
+            )
+        }
+        episode["youtube_url"] = f"https://youtube.com/watch?v={row['video_id']}"
+        episode["active_job"] = (
+            {
+                "id": row["active_job_id"],
+                "kind": "process",
+                "status": row["active_job_status"],
+                "claimed_by_worker": row["active_job_worker"],
+                "claimed_at": _iso(row["active_job_claimed_at"]),
+                "created_at": _iso(row["active_job_created_at"]),
+                "progress": row["active_job_progress"] or {},
+                "attempts": row["active_job_attempts"],
+                "priority": row["active_job_priority"],
+            }
+            if row["active_job_id"]
+            else None
         )
-        for row in rows
-    ]
+        episodes.append(episode)
+
     return {
         "episodes": episodes,
         "total": total_row["count"],
@@ -882,6 +1514,49 @@ async def admin_list_episodes(
         "page_size": page_size,
         "counts": counts,
     }
+
+
+@app.get("/admin/episodes/{episode_id}", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_episode_detail(episode_id: str):
+    """Everything the console's episode drawer needs, in one request."""
+    pool = db.get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT e.id::text, e.video_id, e.title, e.publication_date, e.status,
+               e.error_message, e.blacklisted, e.duration_seconds,
+               e.created_at, e.updated_at,
+               s.id::text AS source_id, s.name AS source_name, s.site,
+               p.id AS podcast_id, p.display_name AS podcast_name,
+               (SELECT COUNT(*) FROM transcript_chunks tc WHERE tc.episode_id = e.id) AS chunk_count,
+               (SELECT COALESCE(SUM(tc.word_count), 0) FROM transcript_chunks tc WHERE tc.episode_id = e.id) AS word_count,
+               (SELECT MIN(tc.start_time) FROM transcript_chunks tc WHERE tc.episode_id = e.id) AS first_chunk_at,
+               (SELECT MAX(tc.end_time) FROM transcript_chunks tc WHERE tc.episode_id = e.id) AS last_chunk_at
+        FROM episodes e
+        JOIN sources  s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        WHERE e.id = $1::uuid
+        """,
+        episode_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    jobs = await pool.fetch(
+        """
+        SELECT id::text, kind, status, error, error_type, attempts, priority,
+               progress, progress_at, created_at, claimed_at, finished_at,
+               claimed_by_worker
+        FROM jobs
+        WHERE episode_id = $1::uuid
+        ORDER BY created_at DESC
+        LIMIT 25
+        """,
+        episode_id,
+    )
+
+    episode = dict(row)
+    episode["youtube_url"] = f"https://youtube.com/watch?v={row['video_id']}"
+    return {"episode": episode, "jobs": [_job_payload(j) for j in jobs]}
 
 
 @app.post("/admin/episodes/cache/bust", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -903,23 +1578,90 @@ async def bust_podcasts_cache_endpoint() -> dict:
 
 @app.get("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_admin_token)])
 async def admin_list_podcasts():
-    """All podcasts (including disabled) with all sources and filter config."""
+    """All podcasts (including disabled) with source config and live stats.
+
+    Stats are included here so the console can render the podcast page without
+    joining a second aggregate endpoint that disagrees with /admin/overview.
+    """
     pool = db.get_pool()
-    pod_rows = await pool.fetch(
-        "SELECT id, display_name, enabled, display_order FROM podcasts ORDER BY display_order, id"
+    pod_rows, src_rows = await asyncio.gather(
+        pool.fetch(
+            """
+            SELECT p.id, p.display_name, p.enabled, p.display_order,
+                   COUNT(DISTINCT s.id) AS source_count,
+                   COUNT(e.id) AS total,
+                   COUNT(*) FILTER (WHERE e.status = 'discovered')  AS discovered,
+                   COUNT(*) FILTER (WHERE e.status = 'downloading') AS downloading,
+                   COUNT(*) FILTER (WHERE e.status = 'processed')   AS processed,
+                   COUNT(*) FILTER (WHERE e.status = 'failed')      AS failed,
+                   COUNT(*) FILTER (WHERE e.status = 'orphaned')    AS orphaned,
+                   COUNT(*) FILTER (WHERE e.blacklisted)            AS blacklisted
+            FROM podcasts p
+            LEFT JOIN sources  s ON s.podcast_id = p.id
+            LEFT JOIN episodes e ON e.source_id  = s.id
+            GROUP BY p.id, p.display_name, p.enabled, p.display_order
+            ORDER BY p.display_order, p.id
+            """
+        ),
+        pool.fetch(
+            """
+            SELECT s.id::text, s.podcast_id, s.name, s.site, s.url, s.enabled, s.filters,
+                   COUNT(e.id) AS episode_count,
+                   COUNT(*) FILTER (WHERE e.status = 'processed') AS processed,
+                   COUNT(*) FILTER (WHERE e.status IN ('failed', 'orphaned')) AS problems,
+                   lj.status AS last_discover_status,
+                   lj.created_at AS last_discover_at,
+                   lj.error AS last_discover_error
+            FROM sources s
+            LEFT JOIN episodes e ON e.source_id = s.id
+            LEFT JOIN LATERAL (
+                SELECT status, created_at, error
+                FROM jobs
+                WHERE kind = 'discover' AND source_id = s.id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) lj ON TRUE
+            GROUP BY s.id, s.podcast_id, s.name, s.site, s.url, s.enabled, s.filters,
+                     lj.status, lj.created_at, lj.error
+            ORDER BY s.name
+            """
+        ),
     )
-    src_rows = await pool.fetch(
-        "SELECT id::text, podcast_id, name, site, url, enabled, filters FROM sources ORDER BY name"
-    )
+
     pods = {r["id"]: {**dict(r), "sources": []} for r in pod_rows}
     for s in src_rows:
         entry = dict(s)
         f = entry["filters"]
         entry["filters"] = f if isinstance(f, dict) else (json.loads(f) if isinstance(f, str) else {})
+        entry["last_discover_at"] = _iso(entry.get("last_discover_at"))
         pid = entry.pop("podcast_id")
         if pid in pods:
             pods[pid]["sources"].append(entry)
     return list(pods.values())
+
+
+@app.put("/admin/podcasts/order", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def reorder_podcasts(body: dict):
+    """Persist a complete podcast order in one statement.
+
+    The old panel issued one PUT per changed row after a drag; reordering ten
+    podcasts meant ten round-trips and ten cache busts.
+    """
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="ids must be a non-empty list")
+    pool = db.get_pool()
+    await pool.execute(
+        """
+        UPDATE podcasts p
+        SET display_order = u.ord - 1
+        FROM unnest($1::text[]) WITH ORDINALITY AS u(id, ord)
+        WHERE p.id = u.id
+        """,
+        [str(i) for i in ids],
+    )
+    caches.bust_podcasts_cache()
+    return {"status": "reordered", "count": len(ids)}
 
 
 @app.post("/admin/podcasts", tags=["admin"], dependencies=[Depends(verify_admin_token)])

@@ -1,0 +1,224 @@
+export type ViewKey =
+  | 'overview'
+  | 'episodes'
+  | 'jobs'
+  | 'podcasts'
+  | 'content'
+  | 'settings';
+
+export interface JobProgress {
+  stage?: string;
+  percent?: number;
+  detail?: string;
+}
+
+export interface Job {
+  id: string;
+  kind: 'discover' | 'process';
+  status: 'pending' | 'claimed' | 'completed' | 'failed';
+  claimed_by_worker?: string | null;
+  claimed_at?: string | null;
+  created_at: string;
+  finished_at?: string | null;
+  progress_at?: string | null;
+  attempts?: number;
+  priority?: number;
+  progress?: JobProgress;
+  error?: string | null;
+  error_type?: string | null;
+  episode_id?: string | null;
+  episode_title?: string | null;
+  episode_podcast?: string | null;
+  source_id?: string | null;
+  source_name?: string | null;
+  source_podcast?: string | null;
+  payload?: Record<string, unknown>;
+  has_result?: boolean;
+}
+
+export interface Episode {
+  id: string;
+  video_id: string;
+  title: string;
+  publication_date?: string | null;
+  status: string;
+  error_message?: string | null;
+  blacklisted: boolean;
+  podcast_id: string;
+  podcast_name: string;
+  source_name: string;
+  site: 'youtube' | 'patreon' | 'rss' | string;
+  duration_seconds?: number | null;
+  youtube_url: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  active_job?: Job | null;
+}
+
+export interface EpisodePage {
+  episodes: Episode[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: Record<string, number>;
+}
+
+export interface EpisodeDetail {
+  episode: Episode & {
+    source_id: string;
+    chunk_count: number;
+    word_count: number;
+    first_chunk_at?: number | null;
+    last_chunk_at?: number | null;
+  };
+  jobs: Job[];
+}
+
+export interface Worker {
+  worker_id: string;
+  last_seen_at: string;
+  online: boolean;
+  state?: string | null;
+  stage?: string | null;
+  job_id?: string | null;
+  detail?: string | null;
+  progress?: JobProgress;
+}
+
+export interface SchedulerJob {
+  id: string;
+  next_run?: string | null;
+}
+
+export interface SchedulerStatus {
+  running: boolean;
+  processing_paused: boolean;
+  consecutive_failures?: number;
+  jobs: SchedulerJob[];
+  dispatch?: { active: number; capacity: number };
+}
+
+export interface PodcastStats {
+  id: string;
+  display_name: string;
+  enabled: boolean;
+  display_order: number;
+  total: number;
+  discovered: number;
+  downloading: number;
+  processed: number;
+  failed: number;
+  orphaned: number;
+  blacklisted: number;
+}
+
+export interface Source {
+  id: string;
+  podcast_id?: string;
+  name: string;
+  site: 'youtube' | 'patreon' | 'rss' | string;
+  url: string;
+  enabled: boolean;
+  filters: { title_exclude?: string[]; [key: string]: unknown };
+  episode_count: number;
+  processed: number;
+  problems: number;
+  last_discover_status?: string | null;
+  last_discover_at?: string | null;
+  last_discover_error?: string | null;
+}
+
+export interface Podcast extends PodcastStats {
+  source_count: number;
+  sources: Source[];
+}
+
+export interface PipelineSettings {
+  auto_discover: boolean;
+  auto_download: boolean;
+  min_episode_duration_seconds: number;
+  chunk_target_words: number;
+  [key: string]: unknown;
+}
+
+export interface Overview {
+  scheduler: SchedulerStatus;
+  blurb: { connected: boolean; workers: Worker[] };
+  settings: PipelineSettings;
+  counts: {
+    total: number;
+    discovered: number;
+    downloading: number;
+    processed: number;
+    failed: number;
+    orphaned: number;
+    blacklisted: number;
+    blacklisted_flag: number;
+    attention: number;
+  };
+  podcasts: PodcastStats[];
+  jobs: {
+    counts: Record<string, number>;
+    active_total: number;
+    active: Job[];
+    recent_failures: Job[];
+    failed_24h: number;
+  };
+  last_runs: { discovery?: string | null; reclaim?: string | null };
+  generated_at: string;
+}
+
+export interface JobsPage {
+  active: Job[];
+  active_total: number;
+  page: number;
+  page_size: number;
+  counts: Record<string, number>;
+}
+
+export interface JobHistoryPage {
+  jobs: Job[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: Record<string, number>;
+}
+
+export interface WhatsNewEntry {
+  id: number;
+  content: string;
+  posted_at: string;
+}
+
+export interface EpisodeFilters {
+  status: string;
+  q: string;
+  podcastId: string;
+  site: string;
+  sort: string;
+  page: number;
+  pageSize: number;
+}
+
+export interface JobHistoryFilters {
+  status: string;
+  kind: string;
+  q: string;
+  page: number;
+  pageSize: number;
+}
+
+export interface Bumps {
+  overview: number;
+  episodes: number;
+  jobs: number;
+  podcasts: number;
+  settings: number;
+  content: number;
+}
+
+export interface ActionResult {
+  queued: number;
+  total: number;
+  results?: Array<{ id: string; ok: boolean; detail?: string }>;
+}
