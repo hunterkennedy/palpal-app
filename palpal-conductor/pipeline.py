@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -369,6 +370,7 @@ async def run_discovery(
     podcast_id: str | None = None,
     auto_queue: bool = True,
     source_id: str | None = None,
+    dry_run: bool = False,
 ) -> dict:
     """
     Enqueue a 'discover' job for every enabled source (or one podcast's, or a
@@ -382,6 +384,10 @@ async def run_discovery(
     auto_queue=False tags the jobs so their results are written to the DB
     without auto-dispatching process jobs afterward — useful for reviewing
     a backlog before committing to processing it.
+
+    dry_run=True asks the worker to scrape the source without applying the
+    result (no inserts/blacklists/orphaning). The job result is then summarised
+    for the admin console's source test view.
     """
     label = source_id or podcast_id or "all"
 
@@ -409,10 +415,11 @@ async def run_discovery(
         ]
 
     queued = 0
+    job_ids: list[str] = []
     for site, sources in sources_by_site:
         for source in sources:
             try:
-                await _create_job(
+                job_id = await _create_job(
                     "discover",
                     {
                         "source_id": source["id"],
@@ -420,21 +427,91 @@ async def run_discovery(
                         "url": source["url"],
                         "podcast_id": source["podcast_id"],
                         "auto_queue": auto_queue,
+                        "dry_run": dry_run,
                     },
                     source_id=source["id"],
                 )
                 queued += 1
+                job_ids.append(job_id)
             except asyncpg.exceptions.UniqueViolationError:
                 logger.info("Source %s already has a discover job in flight, skipping", source["id"])
 
-    logger.info(f"Discovery run queued (scope={label}): {queued} discover job(s)")
-    return {"sources": queued, "discover_jobs_queued": queued}
+    logger.info(f"Discovery run queued (scope={label}, dry_run={dry_run}): {queued} discover job(s)")
+    return {"sources": queued, "discover_jobs_queued": queued, "job_ids": job_ids}
 
 
 # --------------------------------------------------------------------------- #
 # Job completion handlers — called from the /worker/jobs/{id}/complete|fail   #
 # endpoints once the DB row has been transitioned.                            #
 # --------------------------------------------------------------------------- #
+
+async def _summarize_dry_run(job_id: str, source, entries: list[dict]) -> None:
+    """Turn a dry-run discovery result into a compact summary stored on the job."""
+    pool = db.get_pool()
+    title_exclude = [str(s).lower() for s in (source["filters"] or {}).get("title_exclude", [])]
+    min_duration = await settings.get_int("min_episode_duration_seconds")
+
+    title_excluded = 0
+    unavailable = 0
+    too_short = 0
+    eligible: list[dict] = []
+    seen_ids: list[str] = []
+
+    for entry in entries:
+        video_id = entry.get("video_id")
+        title = entry.get("title") or ""
+        if not video_id:
+            continue
+        seen_ids.append(video_id)
+        if not title or (title.startswith("[") and title.endswith("]")):
+            unavailable += 1
+            continue
+        if any(excl in title.lower() for excl in title_exclude):
+            title_excluded += 1
+            continue
+        duration = entry.get("duration")
+        if min_duration and duration is not None and duration < min_duration:
+            too_short += 1
+            continue
+        eligible.append(entry)
+
+    known_rows = await pool.fetch(
+        "SELECT video_id FROM episodes WHERE source_id = $1::uuid",
+        source["id"],
+    )
+    known = {r["video_id"] for r in known_rows}
+    seen = set(seen_ids)
+    summary = {
+        "dry_run": True,
+        "entry_count": len(seen_ids),
+        "would_import": len([e for e in eligible if e.get("video_id") not in known]),
+        "already_known": len([e for e in eligible if e.get("video_id") in known]),
+        "title_excluded": title_excluded,
+        "unavailable": unavailable,
+        "too_short": too_short,
+        "would_orphan": len(known - seen),
+        "title_exclude": title_exclude,
+        "min_duration_seconds": min_duration,
+        "sample": [
+            {
+                "video_id": e.get("video_id"),
+                "title": e.get("title") or "",
+                "pub_date": e.get("pub_date") or e.get("publication_date"),
+                "duration": e.get("duration"),
+            }
+            for e in eligible[:30]
+        ],
+    }
+    await pool.execute(
+        "UPDATE jobs SET result = $1::jsonb WHERE id = $2::uuid",
+        json.dumps(summary), job_id,
+    )
+    logger.info(
+        "Dry-run discovery %s: %d entries, %d would import, %d known, %d excluded, %d unavailable, %d too short",
+        job_id, summary["entry_count"], summary["would_import"], summary["already_known"],
+        title_excluded, unavailable, too_short,
+    )
+
 
 async def handle_discover_complete(job_id: str, payload: dict, result: dict) -> None:
     source_id = payload["source_id"]
@@ -445,6 +522,10 @@ async def handle_discover_complete(job_id: str, payload: dict, result: dict) -> 
     source = await get_source(source_id)
     if not source:
         logger.warning(f"Discover job {job_id}: source {source_id} no longer exists, discarding result")
+        return
+
+    if payload.get("dry_run"):
+        await _summarize_dry_run(job_id, source, entries)
         return
 
     new_episodes, reactivated_count = await apply_discovery_results(source_id, source["filters"], entries)

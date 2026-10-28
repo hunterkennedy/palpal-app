@@ -19,6 +19,8 @@ import {
   ProgressBar,
   Spinner,
   fmtDateTime,
+  fmtDuration,
+  fmtNumber,
   fmtRelative,
   jobLabel,
   titleCase,
@@ -247,6 +249,49 @@ export default function JobDrawer({
                   <div className="ac-callout">No events recorded yet.</div>
                 )}
               </section>
+
+              {job.dry_run_result ? (
+                <section>
+                  <div className="ac-card-header" style={{ marginBottom: 8 }}>
+                    <h2>Dry-run result</h2>
+                    <div className="ac-card-actions">
+                      <Badge tone="blue">no changes applied</Badge>
+                    </div>
+                  </div>
+                  <div className="ac-grid ac-grid-3" style={{ marginBottom: 12 }}>
+                    <Meta label="Entries" value={fmtNumber(job.dry_run_result.entry_count)} />
+                    <Meta label="Would import" value={fmtNumber(job.dry_run_result.would_import)} />
+                    <Meta label="Already known" value={fmtNumber(job.dry_run_result.already_known)} />
+                    <Meta label="Title excluded" value={fmtNumber(job.dry_run_result.title_excluded)} />
+                    <Meta label="Unavailable" value={fmtNumber(job.dry_run_result.unavailable)} />
+                    <Meta label="Too short" value={fmtNumber(job.dry_run_result.too_short)} />
+                    <Meta label="Would orphan" value={fmtNumber(job.dry_run_result.would_orphan)} />
+                    <Meta label="Min duration" value={`${fmtNumber(job.dry_run_result.min_duration_seconds)}s`} />
+                  </div>
+                  {job.dry_run_result.sample?.length ? (
+                    <div className="ac-table-wrap">
+                      <table className="ac-table">
+                        <thead>
+                          <tr>
+                            <th>title</th>
+                            <th>published</th>
+                            <th>length</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {job.dry_run_result.sample.map((entry) => (
+                            <tr key={entry.video_id}>
+                              <td className="ac-truncate" title={entry.title}>{entry.title || '(untitled)'}</td>
+                              <td className="ac-cell-muted">{entry.pub_date ?? '—'}</td>
+                              <td className="ac-cell-muted">{fmtDuration(entry.duration)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
 
               <section>
                 <div className="ac-card-header" style={{ marginBottom: 8 }}>

@@ -382,15 +382,41 @@ async def trigger_discovery(
     podcast_id: str | None = Query(None, description="Limit discovery to one podcast ID"),
     source_id: str | None = Query(None, description="Limit discovery to one source ID"),
     auto_queue: bool = Query(True, description="Automatically queue new episodes for processing"),
+    dry_run: bool = Query(False, description="Scrape and summarise only; do not apply results"),
 ):
     """Manually trigger a discovery run (optionally scoped to one podcast or source)."""
-    asyncio.create_task(run_discovery(podcast_id=podcast_id, auto_queue=auto_queue, source_id=source_id))
+    asyncio.create_task(
+        run_discovery(
+            podcast_id=podcast_id,
+            auto_queue=auto_queue,
+            source_id=source_id,
+            dry_run=dry_run,
+        )
+    )
     return {
         "status": "started",
         "podcast_id": podcast_id,
         "source_id": source_id,
         "auto_queue": auto_queue,
+        "dry_run": dry_run,
     }
+
+
+@app.post("/admin/sources/{source_id}/test", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def test_source(source_id: str):
+    """Queue a dry-run discovery job for one source and return its job id.
+
+    The worker scrapes normally, but conductor summarises the result instead of
+    applying inserts/blacklists/orphaning. The summary is stored on the job and
+    shown in the admin job drawer.
+    """
+    result = await run_discovery(source_id=source_id, auto_queue=False, dry_run=True)
+    if not result["job_ids"]:
+        raise HTTPException(
+            status_code=409,
+            detail="That source is disabled, missing, or already has a discovery job in flight",
+        )
+    return {"status": "queued", "job_id": result["job_ids"][0], "source_id": source_id}
 
 
 @app.post("/admin/episodes/backfill-patreon-duration", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1022,6 +1048,9 @@ async def admin_job_detail(job_id: str):
                j.created_at, j.claimed_at, j.finished_at, j.attempts,
                j.priority, j.claimed_by_worker, j.progress, j.progress_at,
                j.payload, (j.result IS NOT NULL) AS has_result,
+               CASE WHEN j.kind = 'discover'
+                          AND COALESCE((j.payload->>'dry_run')::boolean, false)
+                    THEN j.result ELSE NULL END AS dry_run_result,
                e.id::text AS episode_id, e.title AS episode_title,
                ep_pod.display_name AS episode_podcast,
                src.id::text AS source_id, src.name AS source_name,

@@ -45,6 +45,24 @@ export interface Job {
   payload?: Record<string, unknown>;
   has_result?: boolean;
   events?: JobEvent[];
+  dry_run_result?: {
+    dry_run: boolean;
+    entry_count: number;
+    would_import: number;
+    already_known: number;
+    title_excluded: number;
+    unavailable: number;
+    too_short: number;
+    would_orphan: number;
+    title_exclude?: string[];
+    min_duration_seconds?: number;
+    sample?: Array<{
+      video_id: string;
+      title: string;
+      pub_date?: string | null;
+      duration?: number | null;
+    }>;
+  } | null;
 }
 
 export interface Episode {

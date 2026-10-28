@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ChevronRight,
   Edit3,
+  FlaskConical,
   Plus,
   RefreshCw,
   Search,
@@ -59,12 +60,14 @@ export default function PodcastsView({
   onSelect,
   loading,
   onOpenEpisodes,
+  onOpenJob,
 }: {
   podcasts: Podcast[] | null;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   loading: boolean;
   onOpenEpisodes: (podcastId: string, status: string) => void;
+  onOpenJob: (jobId: string) => void;
 }) {
   const admin = useAdmin();
   const [search, setSearch] = useState('');
@@ -200,6 +203,19 @@ export default function PodcastsView({
         }),
       });
       admin.toast(enabled ? 'Source enabled' : 'Source disabled');
+      admin.refreshAll();
+    });
+  }
+
+  async function testSource(source: Source) {
+    await admin.run(`test-source:${source.id}`, async () => {
+      const result = await api<{ job_id: string }>(`/admin/sources/${source.id}/test`, {
+        method: 'POST',
+      });
+      admin.toast('Dry-run discovery queued', 'ok', {
+        detail: `Job ${result.job_id.slice(0, 8)} — no changes will be applied`,
+      });
+      onOpenJob(result.job_id);
       admin.refreshAll();
     });
   }
@@ -471,6 +487,16 @@ export default function PodcastsView({
                         ) : null}
                         {problems > 0 ? <Badge tone="red">{problems} problems</Badge> : null}
                         <div className="ac-row-end ac-row" style={{ gap: 4 }}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={<FlaskConical size={11} />}
+                            loading={admin.isPending(`test-source:${source.id}`)}
+                            onClick={() => testSource(source)}
+                            title="Scrape this source without applying any changes"
+                          >
+                            test
+                          </Button>
                           <Button
                             size="sm"
                             variant="ghost"

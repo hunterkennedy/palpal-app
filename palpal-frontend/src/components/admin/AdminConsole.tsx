@@ -901,6 +901,7 @@ export default function AdminConsole() {
                     episodeFilters: { podcastId, status, site: 'all', q: '', page: 1 },
                   })
                 }
+                onOpenJob={setDrawerJobId}
               />
             ) : null}
 
