@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -45,43 +45,50 @@ class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
-          <div className="bg-gray-800/50 rounded-xl p-8 border border-red-500/30 max-w-lg w-full text-center">
-            <div className="flex items-center justify-center mb-6">
-              <AlertTriangle className="w-12 h-12 text-red-400" />
+        <div
+          className="min-h-screen flex items-center justify-center p-6"
+          style={{
+            background:
+              'radial-gradient(900px 450px at 82% -10%, rgba(254,133,0,0.1), transparent 60%), var(--bg-page)',
+          }}
+        >
+          <div className="card-primary w-full max-w-lg text-center" style={{ padding: '2.5rem' }}>
+            <div className="flex items-center justify-center mb-5">
+              <AlertTriangle className="w-11 h-11" style={{ color: 'var(--error)' }} />
             </div>
-            
-            <h2 className="text-2xl font-bold text-red-400 mb-4">
-              Something went wrong
-            </h2>
-            
-            <p className="text-gray-300 mb-6 leading-relaxed">
-              We encountered an unexpected error. This has been logged and we'll look into it.
+
+            <p
+              className="text-sm font-semibold tracking-[0.18em] uppercase mb-2"
+              style={{ color: 'var(--accent-primary)' }}
+            >
+              palpal
             </p>
-            
-            <div className="space-y-3">
-              <button 
-                onClick={this.handleReset}
-                className="w-full flex items-center justify-center space-x-2 bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-lg font-medium transition-colors"
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>Try Again</span>
+            <h2 className="heading-primary">Something went wrong</h2>
+
+            <p className="text-body mb-7">
+              We encountered an unexpected error. Your library is safe — try again or reload the page.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button type="button" onClick={this.handleReset} className="btn-primary">
+                Try again
               </button>
-              
-              <button 
-                onClick={this.handleReload}
-                className="w-full text-gray-400 hover:text-white px-6 py-3 rounded-lg font-medium transition-colors border border-gray-600 hover:border-gray-500"
-              >
-                Reload Page
+              <button type="button" onClick={this.handleReload} className="btn-secondary">
+                Reload page
               </button>
             </div>
-            
+
             {process.env.NODE_ENV === 'development' && this.state.error && (
               <details className="mt-6 text-left">
-                <summary className="text-gray-400 cursor-pointer hover:text-gray-300 text-sm">
-                  Error Details (Development)
-                </summary>
-                <pre className="mt-2 text-xs bg-gray-900 p-3 rounded border overflow-auto text-red-300">
+                <summary className="text-meta cursor-pointer">Error details</summary>
+                <pre
+                  className="mt-2 text-xs p-3 rounded-lg overflow-auto"
+                  style={{
+                    background: 'var(--bg-tertiary)',
+                    color: 'var(--error)',
+                    border: '1px solid var(--border-primary)',
+                  }}
+                >
                   {this.state.error.stack}
                 </pre>
               </details>
