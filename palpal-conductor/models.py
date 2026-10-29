@@ -1,7 +1,8 @@
 from datetime import date as Date, datetime as DateTime
 from typing import Optional
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 
@@ -91,3 +92,18 @@ class PodcastResult(BaseModel):
     has_icon: bool
     social_sections: list
     display_order: int
+
+
+class AnalyticsSearchEvent(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    result_count: int = Field(ge=0, le=1_000_000_000)
+    podcast_filter: Optional[str] = Field(default=None, max_length=100)
+    top_podcast_ids: list[str] = Field(default_factory=list, max_length=10)
+    corrected: bool = False
+
+
+class AnalyticsOpenEvent(BaseModel):
+    podcast_id: str = Field(min_length=1, max_length=100)
+    episode_id: Optional[UUID] = None
+    chunk_id: Optional[UUID] = None
+    source_site: Optional[str] = Field(default=None, max_length=50)

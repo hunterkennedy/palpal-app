@@ -12,8 +12,14 @@ import db
 
 logger = logging.getLogger(__name__)
 
-KNOWN_KEYS = {"auto_discover", "auto_download"}
-KNOWN_INT_KEYS = {"min_episode_duration_seconds", "chunk_target_words", "job_history_retention_days"}
+KNOWN_KEYS = {
+    "auto_discover", "auto_download",
+    "analytics_enabled", "analytics_store_queries",
+}
+KNOWN_INT_KEYS = {
+    "min_episode_duration_seconds", "chunk_target_words", "job_history_retention_days",
+    "analytics_query_retention_days", "analytics_aggregate_retention_days",
+}
 KNOWN_STRING_KEYS = {"discovery_schedule"}
 
 _cache: dict[str, bool] | None = None
@@ -29,9 +35,10 @@ async def get_all() -> dict[str, Any]:
         pool = db.get_pool()
         rows = await pool.fetch("SELECT key, value FROM settings WHERE key = ANY($1)", list(KNOWN_KEYS))
         _cache = {row["key"]: row["value"].lower() == "true" for row in rows}
-        # Default to True for any key not yet in DB
+        # Default to True for any key not yet in DB, except analytics: collecting
+        # data is opt-in and should stay off if its setting row is missing.
         for key in KNOWN_KEYS:
-            _cache.setdefault(key, True)
+            _cache.setdefault(key, key != "analytics_enabled")
         result = dict(_cache)
 
     for key in KNOWN_INT_KEYS:

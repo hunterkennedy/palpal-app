@@ -8,6 +8,7 @@ import asyncpg
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+import analytics
 import caches
 import db
 import pipeline_settings as settings
@@ -818,6 +819,10 @@ async def start_scheduler() -> None:
     )
     _scheduler.add_job(
         purge_job_history, "interval", hours=6, id="history-purge",
+    )
+    _scheduler.add_job(
+        analytics.purge_old_analytics, "interval", hours=24, id="analytics-purge",
+        next_run_time=now + timedelta(minutes=10),
     )
     # The scheduler itself always runs — the discovery cron (gated by its own
     # auto_discover check) and the reclaim sweep are unrelated to whether

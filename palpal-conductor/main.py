@@ -15,6 +15,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Reques
 from fastapi.responses import Response, StreamingResponse
 
 import admin_events
+import analytics
 import caches
 import db
 import pipeline_settings
@@ -22,6 +23,8 @@ import worker_status
 from db_migrations import run_migrations
 from auth import verify_admin_token, verify_worker_key
 from models import (
+    AnalyticsOpenEvent,
+    AnalyticsSearchEvent,
     BulkActionRequest,
     ChunkResult,
     ChunksResponse,
@@ -103,6 +106,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="palpal-conductor", lifespan=lifespan)
+
+
+def _forwarded_client_ip(request: Request) -> str | None:
+    """Read the client IP forwarded by the frontend.
+
+    The frontend already resolves the trustworthy last X-Forwarded-For hop.
+    This value is used only for in-memory unique-searcher counting and is never
+    logged or stored.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]
+    return request.client.host if request.client else None
 
 
 # --------------------------------------------------------------------------- #
@@ -732,6 +750,32 @@ async def admin_search(q: str = Query(..., min_length=2, max_length=200), limit:
             for r in job_rows
         ],
     }
+
+
+@app.get("/admin/analytics", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_analytics(
+    days: int = Query(30, ge=1, le=730, description="Number of Pacific calendar days to include"),
+    min_query_count: int = Query(1, ge=1, le=1000, description="Hide queries below this many searches"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Aggregate search analytics for the admin console.
+
+    Returns daily totals, top/zero-result queries, per-podcast interest, and
+    top clips. It never returns identifiers or individual events.
+    """
+    return await analytics.dashboard(
+        days=days,
+        min_query_count=min_query_count,
+        limit=limit,
+    )
+
+
+@app.delete("/admin/analytics", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def admin_analytics_purge():
+    """Delete all analytics aggregates and reset the in-memory visitor count."""
+    deleted = await analytics.purge_all()
+    await _audit("analytics.purge", target_type="analytics", detail={"deleted": deleted})
+    return {"status": "ok", "deleted": deleted}
 
 
 @app.get("/admin/audit", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -2931,6 +2975,53 @@ async def search(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Privacy-preserving analytics ingestion                                      #
+# --------------------------------------------------------------------------- #
+
+@app.post(
+    "/analytics/search",
+    tags=["analytics"],
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(verify_admin_token)],
+)
+async def ingest_analytics_search(
+    body: AnalyticsSearchEvent,
+    request: Request,
+):
+    """Record one intentional search. Internal endpoint; frontend-only caller.
+
+    The client IP is used only to update the in-memory daily unique-searcher
+    count. It is never written to Postgres or a log.
+    """
+    await analytics.record_search(
+        query=body.query,
+        result_count=body.result_count,
+        podcast_filter=body.podcast_filter,
+        top_podcast_ids=body.top_podcast_ids,
+        corrected=body.corrected,
+        client_ip=_forwarded_client_ip(request),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/analytics/open",
+    tags=["analytics"],
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(verify_admin_token)],
+)
+async def ingest_analytics_open(body: AnalyticsOpenEvent):
+    """Record one outbound result-link open. Never linked to a search."""
+    await analytics.record_open(
+        podcast_id=body.podcast_id,
+        episode_id=body.episode_id,
+        chunk_id=body.chunk_id,
+        source_site=body.source_site,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 _CHUNK_FIELDS = (
     "id", "episode_id", "chunk_index", "text", "start_time", "end_time", "duration",
     "start_formatted", "start_minutes", "word_count", "podcast_id", "podcast_name",
@@ -3138,6 +3229,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     import copy
     log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
-    log_config["formatters"]["access"]["fmt"] = "%(asctime)s %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+    log_config["formatters"]["access"]["fmt"] = "%(asctime)s %(levelprefix)s \"%(request_line)s\" %(status_code)s"
     log_config["formatters"]["default"]["fmt"] = "%(asctime)s %(levelprefix)s %(message)s"
     uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info", log_config=log_config)
