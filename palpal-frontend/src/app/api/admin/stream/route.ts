@@ -22,19 +22,22 @@ export async function GET(request: NextRequest) {
   if (!connectionLimit.ok) {
     return NextResponse.json(
       { error: 'Too many stream connections', retry_after: connectionLimit.retryAfterSeconds },
-      { status: 429, headers: rateLimitHeaders(connectionLimit) },
+      { status: 429, headers: { ...rateLimitHeaders(connectionLimit), 'Cache-Control': 'private, no-store' } },
     );
   }
   if (activeStreams >= MAX_CONCURRENT_STREAMS) {
     return NextResponse.json(
       { error: 'Too many concurrent admin streams', retry_after: 5 },
-      { status: 429, headers: { 'Retry-After': '5' } },
+      { status: 429, headers: { 'Retry-After': '5', 'Cache-Control': 'private, no-store' } },
     );
   }
 
   const session = (await cookies()).get('palpal_admin_session');
   if (!session || !(await verifyAdminToken(session.value))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401, headers: { 'Cache-Control': 'private, no-store' } },
+    );
   }
 
   const controller = new AbortController();
@@ -50,7 +53,7 @@ export async function GET(request: NextRequest) {
   if (!upstream || !upstream.ok || !upstream.body) {
     return new NextResponse('event stream unavailable', {
       status: upstream?.status && upstream.status >= 400 ? upstream.status : 502,
-      headers: { 'Content-Type': 'text/plain' },
+      headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'private, no-store' },
     });
   }
 
@@ -94,7 +97,7 @@ export async function GET(request: NextRequest) {
   return new NextResponse(stream, {
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
+      'Cache-Control': 'private, no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
       ...rateLimitHeaders(connectionLimit),

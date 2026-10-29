@@ -79,7 +79,8 @@ async def lifespan(app: FastAPI):
     _access_logger.addFilter(_SearchFilter())
     # Ensure timestamps appear and formatting is consistent regardless of how uvicorn was invoked
     from uvicorn.logging import AccessFormatter, DefaultFormatter
-    _access_fmt = "%(asctime)s %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+    # Keep access logs useful for troubleshooting without retaining client IPs.
+    _access_fmt = "%(asctime)s %(levelprefix)s \"%(request_line)s\" %(status_code)s"
     _default_fmt = "%(asctime)s %(levelprefix)s %(message)s"
     for _h in _access_logger.handlers:
         _h.setFormatter(AccessFormatter(_access_fmt))
@@ -2858,7 +2859,6 @@ _ISO_DATE = r"^\d{4}-\d{2}-\d{2}$"
 
 @app.get("/search", tags=["search"], response_model=SearchResponse)
 async def search(
-    request: Request,
     q: str = Query(..., min_length=1, max_length=500, description="Full-text search query"),
     podcast_id: str | None = Query(None, description="Filter to a single podcast ID"),
     page: int = Query(1, ge=1, le=1000, description="Page number (1-based)"),
@@ -2866,8 +2866,8 @@ async def search(
     date_from: str | None = Query(None, pattern=_ISO_DATE, description="Only include episodes published on/after this date (YYYY-MM-DD)"),
     date_to: str | None = Query(None, pattern=_ISO_DATE, description="Only include episodes published on/before this date (YYYY-MM-DD)"),
 ) -> SearchResponse:
-    client_ip = request.headers.get("x-forwarded-for") or (request.client.host if request.client else "unknown")
-    logger.info("search q=%r podcast_id=%r page=%d ip=%s", q, podcast_id, page, client_ip)
+    # Never log the query or client IP here. Search terms can contain personal
+    # data, and access logs are deliberately kept identifier-free.
     # rank * freshness decay: 0.999^days_old (~30% decay after 1 year, ~50% after 2)
     # NULL publication_date gets no decay (treated as age 0)
     order_clause = (

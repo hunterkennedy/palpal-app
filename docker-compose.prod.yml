@@ -3,6 +3,11 @@ services:
   postgres:
     image: docker.io/library/postgres:16-alpine
     container_name: palpal-postgres
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -24,6 +29,11 @@ services:
   palpal-frontend:
     image: ghcr.io/hunterkennedy/palpal-frontend:${IMAGE_TAG:-latest}
     container_name: palpal-frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - PORT=${APP_PORT}
       - NODE_ENV=${NODE_ENV}
@@ -49,6 +59,11 @@ services:
   palpal-conductor:
     image: ghcr.io/hunterkennedy/palpal-conductor:${IMAGE_TAG:-latest}
     container_name: palpal-conductor
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - BLURB_API_KEY=${BLURB_API_KEY}

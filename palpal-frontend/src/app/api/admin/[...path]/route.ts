@@ -14,13 +14,16 @@ async function proxy(request: NextRequest, path: string[]) {
   if (!limit.ok) {
     return NextResponse.json(
       { error: 'Too many admin requests', retry_after: limit.retryAfterSeconds },
-      { status: 429, headers: rateLimitHeaders(limit) },
+      { status: 429, headers: { ...rateLimitHeaders(limit), 'Cache-Control': 'private, no-store' } },
     );
   }
 
   const session = (await cookies()).get('palpal_admin_session');
   if (!session || !(await verifyAdminToken(session.value))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401, headers: { 'Cache-Control': 'private, no-store' } },
+    );
   }
 
   const qs = request.nextUrl.search;
@@ -46,6 +49,7 @@ async function proxy(request: NextRequest, path: string[]) {
     status: res.status,
     headers: {
       'Content-Type': res.headers.get('Content-Type') ?? 'application/json',
+      'Cache-Control': 'private, no-store',
       ...(disposition ? { 'Content-Disposition': disposition } : {}),
       ...rateLimitHeaders(limit),
     },

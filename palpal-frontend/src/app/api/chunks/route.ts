@@ -20,7 +20,14 @@ export async function GET(request: NextRequest) {
 
   try {
     const { chunks, has_more_before, has_more_after } = await getChunks(chunkId, radius);
-    return NextResponse.json({ chunks, hasMoreBefore: has_more_before, hasMoreAfter: has_more_after });
+    return NextResponse.json(
+      { chunks, hasMoreBefore: has_more_before, hasMoreAfter: has_more_after },
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400',
+        },
+      },
+    );
   } catch (error) {
     console.error('Chunks API error:', error);
     return NextResponse.json({ error: 'Failed to fetch chunks' }, { status: 500 });

@@ -59,10 +59,19 @@ const nextConfig: NextConfig = {
         headers: securityHeaders,
       },
       {
-        source: '/api/(.*)',
+        // Authenticated and worker endpoints must never be stored by a shared
+        // cache. Public API routes set their own Cache-Control headers.
+        source: '/api/admin/:path*',
         headers: [
           ...securityHeaders,
-          { key: 'Cache-Control', value: 'public, s-maxage=300, stale-while-revalidate=86400' },
+          { key: 'Cache-Control', value: 'private, no-store, no-transform' },
+        ],
+      },
+      {
+        source: '/api/worker/:path*',
+        headers: [
+          ...securityHeaders,
+          { key: 'Cache-Control', value: 'private, no-store' },
         ],
       },
     ];

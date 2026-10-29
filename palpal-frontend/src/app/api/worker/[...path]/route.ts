@@ -6,7 +6,10 @@ const BLURB_API_KEY = process.env.BLURB_API_KEY!;
 async function proxy(request: NextRequest, path: string[]) {
   const apiKey = request.headers.get('X-API-Key');
   if (!apiKey || apiKey !== BLURB_API_KEY) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401, headers: { 'Cache-Control': 'private, no-store' } },
+    );
   }
 
   const qs = request.nextUrl.search;
@@ -30,7 +33,10 @@ async function proxy(request: NextRequest, path: string[]) {
 
   return new NextResponse(res.body, {
     status: res.status,
-    headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/octet-stream' },
+    headers: {
+      'Content-Type': res.headers.get('Content-Type') ?? 'application/octet-stream',
+      'Cache-Control': 'private, no-store',
+    },
   });
 }
 

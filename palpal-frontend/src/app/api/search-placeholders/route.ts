@@ -21,6 +21,6 @@ export async function GET(request: NextRequest) {
           },
     });
   } catch {
-    return NextResponse.json([]);
+    return NextResponse.json([], { headers: { 'Cache-Control': 'no-store' } });
   }
 }

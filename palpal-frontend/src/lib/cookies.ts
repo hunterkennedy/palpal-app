@@ -19,7 +19,8 @@ interface SavedChunk {
   notes?: string; // User notes
 }
 
-const PREFERENCES_COOKIE = 'palpal_preferences';
+const PREFERENCES_KEY = 'palpal_preferences'; // localStorage key
+const PREFERENCES_COOKIE = 'palpal_preferences'; // legacy cookie (migrated on read)
 const SAVED_CHUNKS_KEY = 'palpal_saved_chunks'; // localStorage key
 const SAVED_CHUNKS_COOKIE = 'palpal_saved_chunks'; // legacy cookie name (for migration)
 const COOKIE_EXPIRY_DAYS = 365; // 1 year
@@ -53,38 +54,65 @@ function getCookie(name: string): string | null {
   return null;
 }
 
+function isValidPreferences(value: unknown): value is UserPreferences {
+  if (typeof value !== 'object' || value === null) return false;
+  const preferences = value as UserPreferences;
+  return (
+    Array.isArray(preferences.selectedPodcasts) &&
+    preferences.selectedPodcasts.every(podcast => typeof podcast === 'string')
+  );
+}
+
+function parsePreferences(raw: string | null): UserPreferences | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return isValidPreferences(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Save user preferences to cookie
+ * Save user preferences to localStorage. These are functional settings, not
+ * tracking data, so they stay on the device and are never sent to the server.
  */
 export function saveUserPreferences(preferences: UserPreferences): void {
   try {
-    const prefString = JSON.stringify(preferences);
-    setCookie(PREFERENCES_COOKIE, prefString);
+    lsSet(PREFERENCES_KEY, JSON.stringify(preferences));
   } catch (error) {
     console.warn('Failed to save user preferences:', error);
   }
 }
 
 /**
- * Load user preferences from cookie
+ * Load user preferences from localStorage, migrating the legacy
+ * `palpal_preferences` cookie on first read.
  */
 export function loadUserPreferences(): UserPreferences | null {
   try {
-    const prefString = getCookie(PREFERENCES_COOKIE);
-    if (!prefString) return null;
-    
-    const preferences = JSON.parse(prefString) as UserPreferences;
-    
-    // Validate the loaded preferences
-    if (
-      typeof preferences === 'object' &&
-      preferences !== null &&
-      Array.isArray(preferences.selectedPodcasts)
-    ) {
-      return preferences;
+    const storedRaw = lsGet(PREFERENCES_KEY);
+    if (storedRaw) {
+      const stored = parsePreferences(storedRaw);
+      if (stored) return stored;
+      lsRemove(PREFERENCES_KEY);
     }
-    
-    return null;
+
+    // One-time migration: move the old cookie value into localStorage, then
+    // expire the cookie so regular visitors stop sending it with requests.
+    const legacyRaw = getCookie(PREFERENCES_COOKIE);
+    if (!legacyRaw) return null;
+
+    const preferences = parsePreferences(legacyRaw);
+    if (!preferences) {
+      setCookie(PREFERENCES_COOKIE, '', -1);
+      return null;
+    }
+
+    if (lsSet(PREFERENCES_KEY, JSON.stringify(preferences))) {
+      setCookie(PREFERENCES_COOKIE, '', -1);
+    }
+    return preferences;
   } catch (error) {
     console.warn('Failed to load user preferences:', error);
     return null;
@@ -105,10 +133,14 @@ function lsGet(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
 
-function lsSet(key: string, value: string): void {
-  if (typeof window === 'undefined') return;
-  try { localStorage.setItem(key, value); } catch (e) {
+function lsSet(key: string, value: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
     console.warn('localStorage write failed:', e);
+    return false;
   }
 }
 
