@@ -35,10 +35,9 @@ async def get_all() -> dict[str, Any]:
         pool = db.get_pool()
         rows = await pool.fetch("SELECT key, value FROM settings WHERE key = ANY($1)", list(KNOWN_KEYS))
         _cache = {row["key"]: row["value"].lower() == "true" for row in rows}
-        # Default to True for any key not yet in DB, except analytics: collecting
-        # data is opt-in and should stay off if its setting row is missing.
+        # Default to True for any key not yet in DB
         for key in KNOWN_KEYS:
-            _cache.setdefault(key, key != "analytics_enabled")
+            _cache.setdefault(key, True)
         result = dict(_cache)
 
     for key in KNOWN_INT_KEYS:

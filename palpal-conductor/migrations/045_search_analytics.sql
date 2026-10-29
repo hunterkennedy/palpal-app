@@ -63,11 +63,11 @@ CREATE INDEX IF NOT EXISTS idx_analytics_clip_daily_chunk
     ON analytics_clip_daily (chunk_id);
 
 -- Settings are exposed through the existing admin pipeline-settings endpoint.
--- Collection is opt-in: analytics_enabled starts false and must be turned on
--- after the privacy policy covering it is live. Query text is retained for 180
--- days; identifier-free aggregates for 2 years.
+-- Collection is opt-out: analytics_enabled starts true, and users can opt out
+-- via GPC/DNT or the per-browser control in the privacy policy. Query text is
+-- retained for 180 days; identifier-free aggregates for 2 years.
 INSERT INTO settings (key, value) VALUES
-    ('analytics_enabled',                  'false'),
+    ('analytics_enabled',                  'true'),
     ('analytics_store_queries',            'true'),
     ('analytics_query_retention_days',     '180'),
     ('analytics_aggregate_retention_days', '730')

@@ -152,7 +152,7 @@ async def record_search(
     client_ip: str | None,
 ) -> bool:
     """Record one intentional search. Returns False when analytics is disabled."""
-    if not await pipeline_settings.get("analytics_enabled", default=False):
+    if not await pipeline_settings.get("analytics_enabled", default=True):
         return False
 
     store_queries = await pipeline_settings.get("analytics_store_queries", default=True)
@@ -239,7 +239,7 @@ async def record_open(
     source_site: str | None = None,
 ) -> bool:
     """Record one outbound result-link open. Never linked to a search."""
-    if not await pipeline_settings.get("analytics_enabled", default=False):
+    if not await pipeline_settings.get("analytics_enabled", default=True):
         return False
 
     podcast_id = _clean_id(podcast_id)
