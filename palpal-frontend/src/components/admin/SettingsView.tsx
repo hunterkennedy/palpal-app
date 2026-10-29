@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  BarChart3,
   CalendarClock,
   Database,
   RefreshCw,
@@ -36,6 +37,8 @@ export default function SettingsView({
   const [chunkWords, setChunkWords] = useState('50');
   const [retentionDays, setRetentionDays] = useState('0');
   const [schedule, setSchedule] = useState('0 */6 * * *');
+  const [analyticsQueryDays, setAnalyticsQueryDays] = useState('180');
+  const [analyticsAggregateDays, setAnalyticsAggregateDays] = useState('730');
   const [rechunkOpen, setRechunkOpen] = useState(false);
   const [rechunkInfo, setRechunkInfo] = useState<{ queued: number; target_words: number } | null>(null);
   const [rechunkText, setRechunkText] = useState('');
@@ -44,6 +47,8 @@ export default function SettingsView({
   const chunkWordsSetting = overview?.settings.chunk_target_words;
   const retentionSetting = overview?.settings.job_history_retention_days;
   const scheduleSetting = overview?.settings.discovery_schedule;
+  const analyticsQueryRetentionSetting = overview?.settings.analytics_query_retention_days;
+  const analyticsAggregateRetentionSetting = overview?.settings.analytics_aggregate_retention_days;
 
   useEffect(() => {
     if (minDurSetting === undefined && chunkWordsSetting === undefined) return;
@@ -52,6 +57,12 @@ export default function SettingsView({
     setRetentionDays(String(retentionSetting ?? 0));
     setSchedule(scheduleSetting || '0 */6 * * *');
   }, [minDurSetting, chunkWordsSetting, retentionSetting, scheduleSetting]);
+
+  useEffect(() => {
+    if (analyticsQueryRetentionSetting === undefined) return;
+    setAnalyticsQueryDays(String(analyticsQueryRetentionSetting ?? 180));
+    setAnalyticsAggregateDays(String(analyticsAggregateRetentionSetting ?? 730));
+  }, [analyticsQueryRetentionSetting, analyticsAggregateRetentionSetting]);
 
   if (!overview) {
     return (
@@ -222,6 +233,97 @@ export default function SettingsView({
 
       <section className="ac-card">
         <div className="ac-card-header">
+          <span className="ac-card-header-icon"><BarChart3 size={15} /></span>
+          <h2>Search analytics</h2>
+        </div>
+
+        <div className="ac-list">
+          <SettingToggle
+            label="Collect search analytics"
+            detail="First-party, cookieless, aggregate-only. On by default; visitors can opt out with GPC/DNT or the control in the privacy policy."
+            checked={overview.settings.analytics_enabled}
+            pending={admin.isPending('setting:analytics_enabled')}
+            onChange={(value) => admin.saveSettings({ analytics_enabled: value })}
+          />
+          <SettingToggle
+            label="Store search text"
+            detail="When off, searches are still counted but the query text is not saved. Podcast and clip aggregates are unaffected."
+            checked={overview.settings.analytics_store_queries}
+            pending={admin.isPending('setting:analytics_store_queries')}
+            onChange={(value) => admin.saveSettings({ analytics_store_queries: value })}
+          />
+        </div>
+
+        <div className="ac-grid ac-grid-2" style={{ marginTop: 18 }}>
+          <div className="ac-field">
+            <span>Query text retention (days)</span>
+            <div className="ac-row">
+              <input
+                className="ac-input"
+                type="number"
+                min={0}
+                step={1}
+                value={analyticsQueryDays}
+                onChange={(e) => setAnalyticsQueryDays(e.target.value)}
+                style={{ width: 130 }}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Save size={12} />}
+                loading={admin.isPending('setting:analytics_query_retention_days')}
+                onClick={() =>
+                  admin.saveSettings({
+                    analytics_query_retention_days: Math.max(0, parseInt(analyticsQueryDays, 10) || 0),
+                  })
+                }
+              >
+                Save
+              </Button>
+            </div>
+            <span className="ac-tiny">Search text older than this is purged daily. 0 keeps it indefinitely.</span>
+          </div>
+
+          <div className="ac-field">
+            <span>Aggregate retention (days)</span>
+            <div className="ac-row">
+              <input
+                className="ac-input"
+                type="number"
+                min={0}
+                step={1}
+                value={analyticsAggregateDays}
+                onChange={(e) => setAnalyticsAggregateDays(e.target.value)}
+                style={{ width: 130 }}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Save size={12} />}
+                loading={admin.isPending('setting:analytics_aggregate_retention_days')}
+                onClick={() =>
+                  admin.saveSettings({
+                    analytics_aggregate_retention_days: Math.max(0, parseInt(analyticsAggregateDays, 10) || 0),
+                  })
+                }
+              >
+                Save
+              </Button>
+            </div>
+            <span className="ac-tiny">
+              Daily totals, podcast, and clip aggregates. 0 keeps them indefinitely.
+            </span>
+          </div>
+        </div>
+
+        <div className="ac-tiny ac-subtle" style={{ marginTop: 10 }}>
+          Days are counted in America/Los_Angeles. Query text is only stored when the related setting
+          is on, and obvious PII is redacted before storage.
+        </div>
+      </section>
+
+      <section className="ac-card">
+        <div className="ac-card-header">
           <span className="ac-card-header-icon"><CalendarClock size={15} /></span>
           <h2>Scheduler</h2>
           <div className="ac-card-actions">
@@ -296,6 +398,42 @@ export default function SettingsView({
                         body: JSON.stringify({}),
                       });
                       admin.toast(`Deleted ${result.deleted} job(s)`);
+                      admin.refreshAll();
+                    });
+                  },
+                })
+              }
+            >
+              Clear
+            </Button>
+          </div>
+
+          <div className="ac-list-item">
+            <BarChart3 size={15} style={{ color: 'var(--ac-red)' }} />
+            <div className="ac-list-item-main">
+              <div className="ac-list-item-title">Clear analytics data</div>
+              <div className="ac-list-item-sub">
+                Deletes every search, query, podcast, and clip aggregate. This cannot be undone.
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="danger"
+              icon={<Trash2 size={12} />}
+              onClick={() =>
+                admin.confirm({
+                  title: 'Clear all analytics data?',
+                  message: 'This permanently deletes every analytics aggregate row.',
+                  confirmLabel: 'Clear analytics',
+                  tone: 'danger',
+                  requireText: 'CLEAR',
+                  onConfirm: async () => {
+                    await admin.run('purge-analytics', async () => {
+                      const result = await api<{ deleted: Record<string, number> }>('/admin/analytics', {
+                        method: 'DELETE',
+                      });
+                      const total = Object.values(result.deleted).reduce((sum, value) => sum + value, 0);
+                      admin.toast(`Deleted ${fmtNumber(total)} analytics row(s)`);
                       admin.refreshAll();
                     });
                   },

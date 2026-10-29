@@ -1,5 +1,6 @@
 export type ViewKey =
   | 'overview'
+  | 'analytics'
   | 'attention'
   | 'episodes'
   | 'jobs'
@@ -209,7 +210,75 @@ export interface PipelineSettings {
   chunk_target_words: number;
   job_history_retention_days: number;
   discovery_schedule: string;
+  analytics_enabled: boolean;
+  analytics_store_queries: boolean;
+  analytics_query_retention_days: number;
+  analytics_aggregate_retention_days: number;
   [key: string]: unknown;
+}
+
+export interface AnalyticsTotals {
+  searches: number;
+  unique_searcher_days: number;
+  avg_daily_unique_searchers: number;
+  avg_daily_searches: number;
+  zero_result_searches: number;
+  zero_result_rate: number;
+  corrected_searches: number;
+  opens: number;
+}
+
+export interface AnalyticsDailyPoint {
+  day: string;
+  searches: number;
+  unique_searchers: number;
+  zero_result_searches: number;
+  corrected_searches: number;
+  opens: number;
+}
+
+export interface AnalyticsQuery {
+  query: string;
+  searches: number;
+  zero_result_searches: number;
+  zero_result_rate?: number;
+}
+
+export interface AnalyticsPodcast {
+  podcast_id: string;
+  display_name: string;
+  enabled: boolean;
+  impressions: number;
+  filtered_searches: number;
+  opens: number;
+  open_rate: number;
+  last_open?: string | null;
+}
+
+export interface AnalyticsClip {
+  chunk_id: string;
+  episode_id?: string | null;
+  podcast_id: string;
+  podcast_name: string;
+  episode_title?: string | null;
+  start_formatted?: string | null;
+  text?: string | null;
+  source_site?: string | null;
+  opens: number;
+  last_opened?: string | null;
+}
+
+export interface AnalyticsData {
+  timezone: string;
+  range: { days: number; from: string; to: string };
+  retention: { query_days: number; aggregate_days: number };
+  totals: AnalyticsTotals;
+  daily: AnalyticsDailyPoint[];
+  top_queries: AnalyticsQuery[];
+  zero_result_queries: AnalyticsQuery[];
+  podcasts: AnalyticsPodcast[];
+  top_clips: AnalyticsClip[];
+  review_candidates: AnalyticsPodcast[];
 }
 
 export interface Overview {

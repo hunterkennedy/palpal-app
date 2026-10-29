@@ -1229,6 +1229,79 @@
   font-size: 10.5px;
 }
 
+/* --------------------------------------------------------------- analytics */
+.ac-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 170px;
+  overflow-x: auto;
+  padding: 4px 2px 0;
+}
+
+.ac-chart-day {
+  display: flex;
+  flex: 1;
+  min-width: 8px;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.ac-chart-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  height: 145px;
+}
+
+.ac-chart-bar {
+  width: 4px;
+  max-width: 8px;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: var(--ac-accent);
+  opacity: 0.85;
+}
+
+.ac-chart-bar.is-opens { background: var(--ac-blue); opacity: 0.75; }
+
+.ac-chart-label {
+  color: var(--ac-subtle);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.ac-legend-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 2px;
+  background: var(--ac-accent);
+  vertical-align: middle;
+}
+
+.ac-legend-dot.is-opens { background: var(--ac-blue); }
+
+.ac-link-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.ac-link-button:hover .ac-row-title { color: var(--ac-accent); }
+
 
 @media (max-width: 720px) {
   .ac-episodes-table thead { display: none; }

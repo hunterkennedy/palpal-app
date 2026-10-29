@@ -10,6 +10,7 @@ import React, {
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Bot,
   Command,
   History,
@@ -53,6 +54,7 @@ import {
   type ToastItem,
 } from './ui';
 import OverviewView from './OverviewView';
+import AnalyticsView from './AnalyticsView';
 import AttentionView from './AttentionView';
 import EpisodesView from './EpisodesView';
 import JobsView from './JobsView';
@@ -66,6 +68,7 @@ import CommandPalette, { type CommandItem } from './CommandPalette';
 
 const VIEW_META: Record<ViewKey, { title: string; subtitle: string }> = {
   overview: { title: 'Overview', subtitle: 'Live pipeline control and recent activity' },
+  analytics: { title: 'Analytics', subtitle: 'Aggregate search and podcast interest' },
   attention: { title: 'Attention', subtitle: 'Grouped failures and orphaned episodes' },
   episodes: { title: 'Episodes', subtitle: 'Search, inspect, and act on every episode' },
   jobs: { title: 'Jobs', subtitle: 'The worker queue and complete job history' },
@@ -665,6 +668,7 @@ export default function AdminConsole() {
       if (gRef.current) {
         const map: Record<string, ViewKey> = {
           o: 'overview',
+          t: 'analytics',
           a: 'attention',
           e: 'episodes',
           j: 'jobs',
@@ -687,6 +691,7 @@ export default function AdminConsole() {
 
   const commandItems: CommandItem[] = [
     { id: 'nav-overview', label: 'Go to Overview', group: 'Navigate', hint: 'g o', run: () => setView('overview') },
+    { id: 'nav-analytics', label: 'Go to Analytics', group: 'Navigate', hint: 'g t', run: () => setView('analytics') },
     { id: 'nav-attention', label: 'Go to Attention', group: 'Navigate', hint: 'g a', run: () => setView('attention') },
     { id: 'nav-episodes', label: 'Go to Episodes', group: 'Navigate', hint: 'g e', run: () => setView('episodes') },
     { id: 'nav-jobs', label: 'Go to Jobs', group: 'Navigate', hint: 'g j', run: () => setView('jobs') },
@@ -774,6 +779,7 @@ export default function AdminConsole() {
           <nav className="ac-nav">
             <div className="ac-nav-section">Monitor</div>
             <NavItem icon={<LayoutDashboard size={15} />} label="Overview" active={view === 'overview'} onClick={() => setView('overview')} />
+            <NavItem icon={<BarChart3 size={15} />} label="Analytics" active={view === 'analytics'} onClick={() => setView('analytics')} />
             <NavItem
               icon={<AlertTriangle size={15} />}
               label="Attention"
@@ -916,6 +922,10 @@ export default function AdminConsole() {
               />
             ) : null}
 
+            {view === 'analytics' ? (
+              <AnalyticsView onOpenEpisode={(episodeId) => openEpisode(episodeId)} />
+            ) : null}
+
             {view === 'attention' ? (
               <AttentionView
                 data={attentionData}
@@ -981,7 +991,7 @@ export default function AdminConsole() {
 
             <div className="ac-shortcuts-hint">
               <span><KeyHint>⌘K</KeyHint> jump</span>
-              <span><KeyHint>g</KeyHint> then <KeyHint>o</KeyHint><KeyHint>a</KeyHint><KeyHint>e</KeyHint><KeyHint>j</KeyHint><KeyHint>p</KeyHint><KeyHint>c</KeyHint><KeyHint>l</KeyHint><KeyHint>s</KeyHint></span>
+              <span><KeyHint>g</KeyHint> then <KeyHint>o</KeyHint><KeyHint>t</KeyHint><KeyHint>a</KeyHint><KeyHint>e</KeyHint><KeyHint>j</KeyHint><KeyHint>p</KeyHint><KeyHint>c</KeyHint><KeyHint>l</KeyHint><KeyHint>s</KeyHint></span>
               {view === 'episodes' ? (
                 <span>
                   <KeyHint>j</KeyHint>/<KeyHint>k</KeyHint> rows · <KeyHint>x</KeyHint> select ·{' '}
