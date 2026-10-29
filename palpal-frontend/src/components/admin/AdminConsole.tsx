@@ -767,7 +767,7 @@ export default function AdminConsole() {
             <div className="ac-brand-mark">p</div>
             <div className="ac-brand-text">
               <strong>palpal</strong>
-              <span>control room</span>
+              <span>admin console</span>
             </div>
           </div>
 

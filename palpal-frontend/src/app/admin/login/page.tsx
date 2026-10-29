@@ -29,7 +29,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <div className="login-box">
         <div className="login-brand">
           <div className="login-mark">p</div>
-          <h1>palpal control room</h1>
+          <h1>palpal admin console</h1>
         </div>
         <p className="sub">Sign in to manage the pipeline</p>
         <form action={loginAction}>

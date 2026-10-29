@@ -94,7 +94,7 @@ docker logs palpal-conductor
 
 Open `http://localhost:$APP_PORT/admin` and log in with `ADMIN_PASSWORD`.
 
-The control room is a live console backed by conductor's job queue. It updates
+The admin console is a live console backed by conductor's job queue. It updates
 over a server-sent event stream, so counts, job state, and worker progress move
 as things happen instead of on a polling timer.
 

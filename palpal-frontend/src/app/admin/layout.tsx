@@ -1,7 +1,7 @@
 import './admin.css';
 
 export const metadata = {
-  title: 'palpal control room',
+  title: 'palpal admin console',
   robots: { index: false, follow: false },
 };
 
