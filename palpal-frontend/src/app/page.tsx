@@ -11,6 +11,7 @@ import { DateRange } from '@/components/SearchFilters';
 import { GroupByOption } from '@/components/GroupByFilter';
 import { SearchHit, ErrorState } from '@/types';
 import { loadUserPreferences, saveUserPreferences } from '@/lib/cookies';
+import { trackSearch } from '@/lib/analytics';
 import { PodcastConfig } from '@/types/podcast';
 
 // SearchHit interface moved to @/types
@@ -306,14 +307,28 @@ export default function Home() {
         throw new Error('Search request failed');
       }
       const results = await response.json();
+      const hits = results.hits as SearchHit[];
+      const total = Number(results.estimatedTotalHits) || 0;
       if (append) {
-        setSearchResults(prev => [...prev, ...results.hits as SearchHit[]]);
+        setSearchResults(prev => [...prev, ...hits]);
       } else {
-        setSearchResults(results.hits as SearchHit[]);
+        setSearchResults(hits);
         setCurrentPage(1);
         setCorrectedQuery(results.correctedQuery ?? null);
+
+        // Count intentional searches only, not "load more" pagination.
+        const topPodcastIds = Array.from(
+          new Set(hits.map(hit => hit.podcast_id).filter(Boolean))
+        ).slice(0, 10);
+        trackSearch({
+          query,
+          result_count: total,
+          podcast_filter: podcast_id ?? null,
+          top_podcast_ids: topPodcastIds,
+          corrected: Boolean(results.correctedQuery),
+        });
       }
-      setTotalHits(results.estimatedTotalHits || 0);
+      setTotalHits(total);
     } catch (err) {
       const errorState = getErrorState(err);
       setSearchError(errorState);

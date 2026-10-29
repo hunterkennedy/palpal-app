@@ -16,6 +16,7 @@ import sanitizeHtml from 'sanitize-html';
 import { SearchHit } from '@/types';
 import { PodcastConfig } from '@/types/podcast';
 import { getWatchUrl, getWatchText, isPatreonSource } from '@/lib/chunk-utils';
+import { trackOpen } from '@/lib/analytics';
 import ChunkNotes from '@/components/ChunkNotes';
 import ChunkContextView from '@/components/ChunkContextView';
 import { ConductorChunk } from '@/lib/conductor';
@@ -224,7 +225,15 @@ export default function SearchResultCard({
                 : 'text-red-500 hover:text-red-400 focus:ring-red-500'
             }`}
             aria-label={`${getWatchText(hit).replace('Watch on ', `Watch "${hit.episode_title}" on `)}${isPatreonSource(hit) ? '' : ` starting at ${hit.start_formatted}`}`}
-            onClick={e => e.stopPropagation()}
+            onClick={e => {
+              e.stopPropagation();
+              trackOpen({
+                podcast_id: hit.podcast_id,
+                episode_id: hit.episode_id || null,
+                chunk_id: hit.id || null,
+                source_site: hit.site || null,
+              });
+            }}
           >
             <Play className="w-4 h-4" aria-hidden="true" />
             <span>{getWatchText(hit)}</span>
