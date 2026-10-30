@@ -23,22 +23,31 @@ export interface OpenAnalyticsEvent {
   source_site: string | null;
 }
 
-function hasOptedOut(): boolean {
-  if (typeof window === 'undefined') return true;
+/** Whether the browser itself is sending GPC or DNT. */
+export function hasBrowserPrivacySignal(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const nav = navigator as Navigator & { globalPrivacyControl?: boolean };
+  return (
+    nav.globalPrivacyControl === true ||
+    nav.doNotTrack === '1' ||
+    nav.doNotTrack === 'yes'
+  );
+}
 
+/** The per-browser opt-out choice stored by palpal. */
+export function getAnalyticsOptOutPreference(): boolean {
+  if (typeof window === 'undefined') return false;
   try {
-    if (window.localStorage.getItem(OPTOUT_KEY) === '1') return true;
+    return window.localStorage.getItem(OPTOUT_KEY) === '1';
   } catch {
     // localStorage may be unavailable (private mode, blocked storage).
+    return false;
   }
+}
 
-  if (typeof navigator === 'undefined') return true;
-
-  const nav = navigator as Navigator & { globalPrivacyControl?: boolean };
-  if (nav.globalPrivacyControl === true) return true;
-  if (nav.doNotTrack === '1' || nav.doNotTrack === 'yes') return true;
-
-  return false;
+function hasOptedOut(): boolean {
+  if (typeof window === 'undefined') return true;
+  return hasBrowserPrivacySignal() || getAnalyticsOptOutPreference();
 }
 
 function send(path: string, payload: unknown, preferBeacon: boolean): void {
