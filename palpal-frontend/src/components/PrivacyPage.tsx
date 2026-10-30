@@ -88,9 +88,8 @@ export default function PrivacyPage() {
             estimate how many different people search each day, I process your IP address in memory and turn it into a
             keyed hash using a random secret that is generated fresh each day and never written to disk. Only the daily
             count is stored. The secret and the in-memory hashes are discarded at the end of the day or when the service
-            restarts, so searches cannot be linked across days or back to you. This estimate is approximate: a person
-            using several devices may be counted more than once, and several people sharing one connection may be counted
-            once.
+            restarts, so searches cannot be linked across days or back to you. The number is approximate because using
+            multiple devices may count you more than once, and sharing a connection may count several people as one.
           </p>
           <p className="section-text mb-4">
             <strong>Legal basis:</strong> legitimate interests (Article 6(1)(f) GDPR) in understanding aggregate usage so
