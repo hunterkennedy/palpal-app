@@ -84,7 +84,10 @@ export default function SearchResults({ query, correctedQuery, results, totalHit
         start_formatted: hit.start_formatted,
         end_formatted: endFormatted,
         podcast_name: hit.podcast_name,
-        source_name: hit.source_name
+        source_name: hit.source_name,
+        podcast_id: hit.podcast_id,
+        episode_id: hit.episode_id,
+        site: hit.site,
       };
       saveChunk(chunkData);
       setSavedChunkIds(prev => {

@@ -40,6 +40,7 @@ export interface ConductorChunk {
   podcast_id: string;
   podcast_name: string;
   source_name: string;
+  site: string;
   episode_title: string;
   video_id: string;
   publication_date: string | null;

@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
   if (!CONDUCTOR_URL || !ADMIN_KEY) return noContent();
 
   try {
-    await fetch(`${CONDUCTOR_URL}/analytics/open`, {
+    const res = await fetch(`${CONDUCTOR_URL}/analytics/open`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${ADMIN_KEY}`,
@@ -79,8 +79,12 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(parsed.data),
       cache: 'no-store',
     });
+    if (!res.ok) {
+      // Status only: never log the request body.
+      console.warn('Analytics open ingest failed', res.status);
+    }
   } catch {
-    // Analytics failures must not affect navigation.
+    console.warn('Analytics open ingest request failed');
   }
 
   return noContent();

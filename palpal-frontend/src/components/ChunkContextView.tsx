@@ -4,6 +4,7 @@ import React from 'react';
 import { Clock, ChevronUp, ChevronDown, Loader2, Play } from 'lucide-react';
 import { ConductorChunk } from '@/lib/conductor';
 import { getWatchUrl, isPatreonSource } from '@/lib/chunk-utils';
+import { trackOpen } from '@/lib/analytics';
 
 interface ChunkContextViewProps {
   chunks: ConductorChunk[];
@@ -74,6 +75,14 @@ export default function ChunkContextView({
                   className="flex-shrink-0 flex items-center gap-1 text-xs mt-0.5 transition-opacity hover:opacity-80"
                   style={{
                     color: isPatreonSource(chunk) ? 'var(--accent-primary)' : '#ef4444',
+                  }}
+                  onClick={() => {
+                    trackOpen({
+                      podcast_id: chunk.podcast_id,
+                      episode_id: chunk.episode_id || null,
+                      chunk_id: chunk.id || null,
+                      source_site: chunk.site || null,
+                    });
                   }}
                 >
                   <Play className="w-3 h-3" />

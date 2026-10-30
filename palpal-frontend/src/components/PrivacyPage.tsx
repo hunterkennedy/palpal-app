@@ -8,7 +8,7 @@ import {
 } from '@/lib/analytics';
 
 const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? 'contact@palpal.app';
-const LAST_UPDATED = 'October 29, 2026';
+const LAST_UPDATED = 'October 30, 2026';
 
 export default function PrivacyPage() {
   const [analyticsOptOut, setAnalyticsOptOutState] = useState<boolean | null>(null);

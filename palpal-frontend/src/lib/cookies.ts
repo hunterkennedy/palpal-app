@@ -15,6 +15,9 @@ interface SavedChunk {
   end_formatted?: string;
   podcast_name: string;
   source_name?: string;
+  podcast_id?: string;
+  episode_id?: string;
+  site?: string;
   savedAt: number; // timestamp
   notes?: string; // User notes
 }
@@ -161,6 +164,9 @@ export function saveChunk(chunk: {
   end_formatted?: string;
   podcast_name: string;
   source_name?: string;
+  podcast_id?: string;
+  episode_id?: string;
+  site?: string;
   notes?: string;
 }): void {
   try {

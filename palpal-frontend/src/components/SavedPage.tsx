@@ -6,6 +6,7 @@ import { getSavedChunks, unsaveChunk, clearSavedChunks, type SavedChunk } from '
 import ChunkNotes from '@/components/ChunkNotes';
 import ChunkContextView from '@/components/ChunkContextView';
 import { getWatchUrl, getWatchText, isPatreonSource } from '@/lib/chunk-utils';
+import { trackOpen } from '@/lib/analytics';
 import { ConductorChunk } from '@/lib/conductor';
 
 interface ContextData {
@@ -213,6 +214,15 @@ export default function SavedPage({ onSaveStatusChange }: SavedPageProps) {
                             : 'text-red-400 hover:text-red-300 focus:ring-red-500'
                         }`}
                         aria-label={`${getWatchText(chunk).replace('Watch on ', `Watch "${chunk.episode_title}" on `)}`}
+                        onClick={() => {
+                          if (!chunk.podcast_id) return;
+                          trackOpen({
+                            podcast_id: chunk.podcast_id,
+                            episode_id: chunk.episode_id || null,
+                            chunk_id: chunk.id || null,
+                            source_site: chunk.site || null,
+                          });
+                        }}
                       >
                         <Play className="w-4 h-4 " aria-hidden="true" />
                         <span>{getWatchText(chunk)}</span>

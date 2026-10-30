@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
   if (!CONDUCTOR_URL || !ADMIN_KEY) return noContent();
 
   try {
-    await fetch(`${CONDUCTOR_URL}/analytics/search`, {
+    const res = await fetch(`${CONDUCTOR_URL}/analytics/search`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${ADMIN_KEY}`,
@@ -93,8 +93,12 @@ export async function POST(request: NextRequest) {
       }),
       cache: 'no-store',
     });
+    if (!res.ok) {
+      // Status only: never log the query or request body.
+      console.warn('Analytics search ingest failed', res.status);
+    }
   } catch {
-    // Analytics failures must not affect search.
+    console.warn('Analytics search ingest request failed');
   }
 
   return noContent();
