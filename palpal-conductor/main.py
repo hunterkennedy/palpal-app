@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import asyncpg
@@ -2898,17 +2898,17 @@ async def correct_query(pool, q: str) -> str | None:
     return corrected if corrected.lower() != q.lower() else None
 
 
-_ISO_DATE = r"^\d{4}-\d{2}-\d{2}$"
-
-
 @app.get("/search", tags=["search"], response_model=SearchResponse)
 async def search(
     q: str = Query(..., min_length=1, max_length=500, description="Full-text search query"),
     podcast_id: str | None = Query(None, description="Filter to a single podcast ID"),
     page: int = Query(1, ge=1, le=1000, description="Page number (1-based)"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
-    date_from: str | None = Query(None, pattern=_ISO_DATE, description="Only include episodes published on/after this date (YYYY-MM-DD)"),
-    date_to: str | None = Query(None, pattern=_ISO_DATE, description="Only include episodes published on/before this date (YYYY-MM-DD)"),
+    # Typed as date so asyncpg receives a date object: the SQL casts ($5::date)
+    # make Postgres report these params as `date`, and asyncpg refuses to
+    # encode strings for that type.
+    date_from: date | None = Query(None, description="Only include episodes published on/after this date (YYYY-MM-DD)"),
+    date_to: date | None = Query(None, description="Only include episodes published on/before this date (YYYY-MM-DD)"),
 ) -> SearchResponse:
     # Never log the query or client IP here. Search terms can contain personal
     # data, and access logs are deliberately kept identifier-free.
