@@ -2261,7 +2261,6 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
             e.title,
             e.publication_date,
             e.status,
-            e.error_message,
             e.blacklisted,
             s.podcast_id,
             p.display_name  AS podcast_name,
@@ -2272,6 +2271,8 @@ async def _fetch_episodes() -> list[EpisodeInfo]:
         FROM episodes e
         JOIN sources  s  ON s.id  = e.source_id
         JOIN podcasts p  ON p.id  = s.podcast_id
+        WHERE e.blacklisted = FALSE
+          AND p.enabled = TRUE
         ORDER BY e.publication_date DESC NULLS LAST, e.created_at DESC
         """
     )
@@ -2941,9 +2942,14 @@ async def search(
             ts_headline('english', tc.episode_title, query,
                 'StartSel=<mark>, StopSel=</mark>'
             ) AS title_highlighted
-        FROM transcript_chunks tc,
-             websearch_to_tsquery('english', $1) query
+        FROM transcript_chunks tc
+        JOIN episodes e ON e.id = tc.episode_id
+        JOIN sources  s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        CROSS JOIN websearch_to_tsquery('english', $1) query
         WHERE tc.search_vector @@ query
+          AND e.blacklisted = FALSE
+          AND p.enabled = TRUE
           AND ($2::text IS NULL OR tc.podcast_id = $2)
           AND ($5::date IS NULL OR tc.publication_date >= $5::date)
           AND ($6::date IS NULL OR tc.publication_date <= $6::date)
@@ -2952,9 +2958,14 @@ async def search(
     """
     count_q = """
         SELECT COUNT(*)
-        FROM transcript_chunks tc,
-             websearch_to_tsquery('english', $1) query
+        FROM transcript_chunks tc
+        JOIN episodes e ON e.id = tc.episode_id
+        JOIN sources  s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        CROSS JOIN websearch_to_tsquery('english', $1) query
         WHERE tc.search_vector @@ query
+          AND e.blacklisted = FALSE
+          AND p.enabled = TRUE
           AND ($2::text IS NULL OR tc.podcast_id = $2)
           AND ($3::date IS NULL OR tc.publication_date >= $3::date)
           AND ($4::date IS NULL OR tc.publication_date <= $4::date)
@@ -3038,7 +3049,14 @@ async def chunks(
     rows = await pool.fetch(
         """
         WITH center AS (
-            SELECT episode_id, chunk_index FROM transcript_chunks WHERE id = $1::uuid
+            SELECT tc.episode_id, tc.chunk_index
+            FROM transcript_chunks tc
+            JOIN episodes e ON e.id = tc.episode_id
+            JOIN sources  s ON s.id = e.source_id
+            JOIN podcasts p ON p.id = s.podcast_id
+            WHERE tc.id = $1::uuid
+              AND e.blacklisted = FALSE
+              AND p.enabled = TRUE
         ),
         bounds AS (
             SELECT MAX(tc2.chunk_index) AS max_index
@@ -3130,10 +3148,14 @@ async def episodes_check(
     pool = db.get_pool()
     row = await pool.fetchrow(
         """
-        SELECT 1 FROM transcript_chunks
-        WHERE episode_id = (
-            SELECT id FROM episodes WHERE video_id = $1 LIMIT 1
-        )
+        SELECT 1
+        FROM transcript_chunks tc
+        JOIN episodes e ON e.id = tc.episode_id
+        JOIN sources  s ON s.id = e.source_id
+        JOIN podcasts p ON p.id = s.podcast_id
+        WHERE e.video_id = $1
+          AND e.blacklisted = FALSE
+          AND p.enabled = TRUE
         LIMIT 1
         """,
         video_id,

@@ -52,12 +52,12 @@ class ChunksResponse(BaseModel):
 
 
 class EpisodeInfo(BaseModel):
+    # Public /episodes payload. Pipeline error details stay in /admin/episodes.
     id: str
     video_id: str
     title: str
     publication_date: Optional[Date]
     status: str
-    error_message: Optional[str]
     blacklisted: bool
     podcast_id: str
     podcast_name: str

@@ -12,6 +12,14 @@ export default async function Watchlist() {
     getPodcasts().catch(() => []),
   ]);
 
+  const enabledPodcastIds = new Set(rawPodcasts.map(p => p.id));
+
+  // Blacklisted episodes and disabled podcasts are internal bookkeeping; never
+  // serialize them into the public watchlist payload.
+  const visibleEpisodes = episodes.filter(
+    e => !e.blacklisted && enabledPodcastIds.has(e.podcast_id),
+  );
+
   const podcasts: PodcastConfig[] = rawPodcasts.map(p => ({
     id: p.id,
     displayName: p.display_name,
@@ -36,7 +44,7 @@ export default async function Watchlist() {
       <Navbar currentPage="watchlist" />
 
       <div className="content-container">
-        <WatchlistPage initialEpisodes={episodes} initialPodcasts={podcasts} />
+        <WatchlistPage initialEpisodes={visibleEpisodes} initialPodcasts={podcasts} />
       </div>
 
       <Footer />

@@ -104,7 +104,26 @@ export async function getEpisodes(): Promise<EpisodeInfo[]> {
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`Conductor /episodes error: ${res.status}`);
-  return res.json();
+
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+
+  // Allowlist public fields. This endpoint feeds the public watchlist payload,
+  // so internal pipeline details must never be spread through from conductor.
+  return data.map((e: Record<string, unknown>) => ({
+    id: String(e.id),
+    video_id: String(e.video_id),
+    title: String(e.title),
+    publication_date: typeof e.publication_date === 'string' ? e.publication_date : null,
+    status: String(e.status),
+    blacklisted: Boolean(e.blacklisted),
+    podcast_id: String(e.podcast_id),
+    podcast_name: String(e.podcast_name),
+    source_name: String(e.source_name),
+    site: String(e.site),
+    duration_seconds: typeof e.duration_seconds === 'number' ? e.duration_seconds : null,
+    youtube_url: String(e.youtube_url),
+  }));
 }
 
 
