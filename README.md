@@ -166,28 +166,6 @@ git pull
 docker compose up -d --build
 ```
 
-### Deploying prebuilt images
-
-Every push to `main` runs `.github/workflows/publish.yml`, which builds both
-images and pushes them to GHCR as `latest` and `sha-<short-sha>`. Build layers
-are cached in GitHub Actions, so only changed layers are rebuilt.
-
-On the server, log in to GHCR once (skip this if the packages are public):
-
-```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-username> --password-stdin
-```
-
-Then deploy the published images:
-
-```bash
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-```
-
-`IMAGE_TAG` in `.env` selects what runs — `latest` (the default) or a pinned
-`sha-…` tag from a workflow run for rollbacks.
-
 ---
 
 ## Reset
