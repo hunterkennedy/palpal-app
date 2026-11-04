@@ -282,51 +282,6 @@ async def queue_episodes_for_processing(episode_ids: list[str]) -> int:
     return n
 
 
-async def backfill_patreon_durations() -> int:
-    """
-    One-off admin action: queue a duration-probe job for every Patreon episode
-    missing duration_seconds (episodes discovered before duration capture
-    existed). Reuses the 'process' job kind with duration_only=True so blurb
-    does a metadata-only yt-dlp probe — no re-download, no re-transcribe —
-    and existing episodes are left untouched aside from that one column.
-    Safe to call repeatedly; already-queued/duration-known episodes are
-    skipped. Returns the number of jobs created.
-    """
-    pool = db.get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT e.id::text AS episode_id, e.video_id
-        FROM episodes e
-        JOIN sources s ON s.id = e.source_id
-        WHERE s.site = 'patreon' AND e.duration_seconds IS NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM jobs j
-              WHERE j.kind = 'process' AND j.status IN ('pending', 'claimed')
-                AND j.episode_id = e.id
-          )
-        """
-    )
-    created = 0
-    for row in rows:
-        try:
-            await _create_job(
-                "process",
-                {
-                    "episode_id": row["episode_id"],
-                    "site": "patreon",
-                    "video_id": row["video_id"],
-                    "duration_only": True,
-                },
-                episode_id=row["episode_id"],
-            )
-            created += 1
-        except asyncpg.exceptions.UniqueViolationError:
-            continue
-    if created:
-        logger.info(f"Queued {created} Patreon duration-probe job(s)")
-    return created
-
-
 async def dispatch_worker() -> None:
     """Background loop: sweeps for discovered episodes on wakeup or on a fixed interval."""
     while True:
@@ -654,20 +609,6 @@ async def handle_process_complete(job_id: str, payload: dict, result: dict) -> N
     episode_id = payload["episode_id"]
     pool = db.get_pool()
 
-    # Lightweight duration-only backfill job (see backfill_patreon_durations) —
-    # just record the probed duration, don't touch transcript/status.
-    if payload.get("duration_only"):
-        duration_seconds = result.get("duration_seconds")
-        if duration_seconds is not None:
-            await pool.execute(
-                "UPDATE episodes SET duration_seconds = $1 WHERE id = $2::uuid",
-                duration_seconds, episode_id,
-            )
-            caches.bust_episodes_cache()
-        else:
-            logger.warning(f"Job {job_id}: duration probe for episode {episode_id} returned no duration")
-        return
-
     transcript = result.get("transcript")
     publication_date = result.get("publication_date")
     duration_seconds = result.get("duration_seconds")
@@ -717,14 +658,6 @@ _PROCESS_ERROR_OUTCOME = {
 
 async def handle_process_fail(job_id: str, payload: dict, error: str, error_type: str | None) -> None:
     episode_id = payload["episode_id"]
-
-    # Duration-only backfill jobs target episodes that are already processed —
-    # a failed probe (post removed, transient network error) must not flip
-    # their status. Just log it; the episode is picked up again by the next
-    # backfill sweep since duration_seconds is still NULL.
-    if payload.get("duration_only"):
-        logger.warning(f"Duration probe job {job_id} failed for episode {episode_id}: {error}")
-        return
 
     pool = db.get_pool()
     outcome = _PROCESS_ERROR_OUTCOME.get(error_type or "other", "failed")

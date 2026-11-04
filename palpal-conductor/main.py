@@ -40,7 +40,7 @@ from pipeline import (
     recover_interrupted_downloads,
     handle_discover_complete, handle_discover_fail,
     handle_process_complete, handle_process_fail,
-    queue_episodes_for_processing, backfill_patreon_durations,
+    queue_episodes_for_processing,
     cancel_jobs_for_source, cancel_jobs_for_podcast,
     reschedule_discovery, purge_job_history,
     preview_source_change,
@@ -520,15 +520,6 @@ async def apply_source_url(source_id: str, body: dict):
         detail=counts,
     )
     return {"status": "applied", **counts}
-
-
-@app.post("/admin/episodes/backfill-patreon-duration", tags=["admin"], dependencies=[Depends(verify_admin_token)])
-async def backfill_patreon_duration():
-    """Queue a metadata-only duration probe for every Patreon episode missing
-    duration_seconds (episodes discovered before duration capture existed).
-    No re-download or re-transcribe — just fills in the one column."""
-    n = await backfill_patreon_durations()
-    return {"status": "queued", "jobs_created": n}
 
 
 @app.get("/admin/scheduler/status", tags=["admin"], dependencies=[Depends(verify_admin_token)])
@@ -1598,7 +1589,7 @@ async def admin_cancel_job(job_id: str):
         pool, job_id, "Cancelled by admin", level="warning", stage="cancelled",
     )
 
-    if row["kind"] == "process" and row["episode_id"] and not (row["payload"] or {}).get("duration_only"):
+    if row["kind"] == "process" and row["episode_id"]:
         await pool.execute(
             """
             UPDATE episodes
@@ -1684,7 +1675,7 @@ async def admin_retry_job(job_id: str):
             detail="The target already has an active job — wait for it to finish first",
         )
 
-    if row["kind"] == "process" and row["episode_id"] and not (row["payload"] or {}).get("duration_only"):
+    if row["kind"] == "process" and row["episode_id"]:
         await pool.execute(
             """
             UPDATE episodes
