@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Ban,
+  Check,
   Eye,
   Sparkles,
   RotateCcw,
@@ -77,10 +78,56 @@ export default function JobDrawer({
     return () => window.removeEventListener('keydown', onKey);
   }, [jobId, onClose]);
 
+  async function applyRebind() {
+    if (!job?.source_id || !job.dry_run_result) return;
+    const preview = job.dry_run_result;
+    admin.confirm({
+      title: 'Apply this source rebind?',
+      message: (
+        <>
+          Update <strong>{job.source_name ?? job.source_id}</strong> to the previewed URL
+          and reconcile its episodes:
+          <br />
+          {fmtNumber(preview.matched ?? 0)} matched · {fmtNumber(preview.would_add ?? 0)} added ·{' '}
+          {fmtNumber(preview.would_orphan ?? 0)} orphaned ·{' '}
+          {fmtNumber(preview.metadata?.failed_retried ?? 0)} failed retried.
+          <br />
+          Nothing is deleted; unmatched episodes are marked orphaned and can be restored.
+        </>
+      ),
+      confirmLabel: 'Apply rebind',
+      tone: 'primary',
+      onConfirm: async () => {
+        await admin.run(`source-apply:${job.id}`, async () => {
+          const applied = await api<{
+            matched: number;
+            added: number;
+            orphaned: number;
+            retried: number;
+            rebound: number;
+            reactivated: number;
+          }>(`/admin/sources/${job.source_id}/apply-url`, {
+            method: 'POST',
+            body: JSON.stringify({ job_id: job.id }),
+          });
+          admin.toast('Source rebound', 'ok', {
+            detail:
+              `${fmtNumber(applied.matched)} matched · ${fmtNumber(applied.added)} added · `
+              + `${fmtNumber(applied.orphaned)} orphaned · ${fmtNumber(applied.retried)} retried`,
+          });
+          onClose();
+          admin.refreshAll();
+        });
+      },
+    });
+  }
+
   if (!jobId) return null;
 
   const target = job ? jobLabel(job) : null;
   const progress = job?.progress ?? {};
+  const dryRun = job?.dry_run_result ?? null;
+  const isRebind = dryRun?.kind === 'source_rebind';
 
   return (
     <div className="ac-drawer-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -250,46 +297,144 @@ export default function JobDrawer({
                 )}
               </section>
 
-              {job.dry_run_result ? (
+              {dryRun ? (
                 <section>
                   <div className="ac-card-header" style={{ marginBottom: 8 }}>
-                    <h2>Dry-run result</h2>
+                    <h2>{isRebind ? 'Rebind preview' : 'Dry-run result'}</h2>
                     <div className="ac-card-actions">
-                      <Badge tone="blue">no changes applied</Badge>
+                      <Badge tone={dryRun.applied_at ? 'green' : 'blue'}>
+                        {dryRun.applied_at ? 'applied' : 'no changes applied'}
+                      </Badge>
+                      {isRebind && job.status === 'completed' && !dryRun.applied_at ? (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon={<Check size={12} />}
+                          loading={admin.isPending(`source-apply:${job.id}`)}
+                          onClick={applyRebind}
+                        >
+                          Apply rebind
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
-                  <div className="ac-grid ac-grid-3" style={{ marginBottom: 12 }}>
-                    <Meta label="Entries" value={fmtNumber(job.dry_run_result.entry_count)} />
-                    <Meta label="Would import" value={fmtNumber(job.dry_run_result.would_import)} />
-                    <Meta label="Already known" value={fmtNumber(job.dry_run_result.already_known)} />
-                    <Meta label="Title excluded" value={fmtNumber(job.dry_run_result.title_excluded)} />
-                    <Meta label="Unavailable" value={fmtNumber(job.dry_run_result.unavailable)} />
-                    <Meta label="Too short" value={fmtNumber(job.dry_run_result.too_short)} />
-                    <Meta label="Would orphan" value={fmtNumber(job.dry_run_result.would_orphan)} />
-                    <Meta label="Min duration" value={`${fmtNumber(job.dry_run_result.min_duration_seconds)}s`} />
-                  </div>
-                  {job.dry_run_result.sample?.length ? (
-                    <div className="ac-table-wrap">
-                      <table className="ac-table">
-                        <thead>
-                          <tr>
-                            <th>title</th>
-                            <th>published</th>
-                            <th>length</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {job.dry_run_result.sample.map((entry) => (
-                            <tr key={entry.video_id}>
-                              <td className="ac-truncate" title={entry.title}>{entry.title || '(untitled)'}</td>
-                              <td className="ac-cell-muted">{entry.pub_date ?? '—'}</td>
-                              <td className="ac-cell-muted">{fmtDuration(entry.duration)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
+
+                  {isRebind ? (
+                    <>
+                      <div className="ac-grid ac-grid-3" style={{ marginBottom: 8 }}>
+                        <Meta label="Matched" value={fmtNumber(dryRun.matched ?? 0)} />
+                        <Meta label="Would add" value={fmtNumber(dryRun.would_add ?? 0)} />
+                        <Meta label="Would orphan" value={fmtNumber(dryRun.would_orphan ?? 0)} />
+                        <Meta label="Retry failed" value={fmtNumber(dryRun.metadata?.failed_retried ?? 0)} />
+                        <Meta label="Durations filled" value={fmtNumber(dryRun.metadata?.duration_filled ?? 0)} />
+                        <Meta label="Ambiguous" value={fmtNumber(dryRun.ambiguous_count ?? 0)} />
+                      </div>
+                      <div className="ac-tiny ac-subtle" style={{ marginBottom: 10 }}>
+                        {fmtNumber(dryRun.matched_exact ?? 0)} exact ID ·{' '}
+                        {fmtNumber(dryRun.matched_canonical ?? 0)} canonical ·{' '}
+                        {fmtNumber(dryRun.matched_title_date ?? 0)} title/date ·{' '}
+                        {fmtNumber(dryRun.matched_title ?? 0)} title
+                      </div>
+
+                      {dryRun.sample_adds?.length ? (
+                        <div style={{ marginBottom: 12 }}>
+                          <div className="ac-stage-label" style={{ marginBottom: 5 }}>
+                            <span>Would add</span>
+                            <b>{fmtNumber(dryRun.would_add ?? 0)}</b>
+                          </div>
+                          <div className="ac-table-wrap">
+                            <table className="ac-table">
+                              <thead>
+                                <tr><th>title</th><th>published</th><th>length</th></tr>
+                              </thead>
+                              <tbody>
+                                {dryRun.sample_adds.map((entry) => (
+                                  <tr key={entry.video_id}>
+                                    <td className="ac-truncate" title={entry.title}>{entry.title || '(untitled)'}</td>
+                                    <td className="ac-cell-muted">{entry.pub_date ?? '—'}</td>
+                                    <td className="ac-cell-muted">{fmtDuration(entry.duration)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {dryRun.sample_orphans?.length ? (
+                        <div style={{ marginBottom: 12 }}>
+                          <div className="ac-stage-label" style={{ marginBottom: 5 }}>
+                            <span>Would orphan</span>
+                            <b>{fmtNumber(dryRun.would_orphan ?? 0)}</b>
+                          </div>
+                          <div className="ac-table-wrap">
+                            <table className="ac-table">
+                              <thead>
+                                <tr><th>title</th><th>published</th><th>status</th></tr>
+                              </thead>
+                              <tbody>
+                                {dryRun.sample_orphans.map((entry) => (
+                                  <tr key={entry.video_id}>
+                                    <td className="ac-truncate" title={entry.title}>{entry.title || '(untitled)'}</td>
+                                    <td className="ac-cell-muted">{entry.pub_date ?? '—'}</td>
+                                    <td className="ac-cell-muted">{entry.status ?? '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {dryRun.ambiguous_count ? (
+                        <div className="ac-callout is-danger">
+                          <strong>{fmtNumber(dryRun.ambiguous_count)} ambiguous</strong>
+                          <ul style={{ margin: '6px 0 0 16px' }}>
+                            {dryRun.ambiguous?.slice(0, 5).map((item) => (
+                              <li key={`${item.video_id}-${item.reason}`}>
+                                {item.title || item.video_id}: {item.reason}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <div className="ac-grid ac-grid-3" style={{ marginBottom: 12 }}>
+                        <Meta label="Entries" value={fmtNumber(dryRun.entry_count)} />
+                        <Meta label="Would import" value={fmtNumber(dryRun.would_import)} />
+                        <Meta label="Already known" value={fmtNumber(dryRun.already_known)} />
+                        <Meta label="Title excluded" value={fmtNumber(dryRun.title_excluded)} />
+                        <Meta label="Unavailable" value={fmtNumber(dryRun.unavailable)} />
+                        <Meta label="Too short" value={fmtNumber(dryRun.too_short)} />
+                        <Meta label="Would orphan" value={fmtNumber(dryRun.would_orphan)} />
+                        <Meta label="Min duration" value={`${fmtNumber(dryRun.min_duration_seconds)}s`} />
+                      </div>
+                      {dryRun.sample?.length ? (
+                        <div className="ac-table-wrap">
+                          <table className="ac-table">
+                            <thead>
+                              <tr>
+                                <th>title</th>
+                                <th>published</th>
+                                <th>length</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {dryRun.sample.map((entry) => (
+                                <tr key={entry.video_id}>
+                                  <td className="ac-truncate" title={entry.title}>{entry.title || '(untitled)'}</td>
+                                  <td className="ac-cell-muted">{entry.pub_date ?? '—'}</td>
+                                  <td className="ac-cell-muted">{fmtDuration(entry.duration)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </section>
               ) : null}
 

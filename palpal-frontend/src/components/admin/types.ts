@@ -49,9 +49,10 @@ export interface Job {
   events?: JobEvent[];
   dry_run_result?: {
     dry_run: boolean;
+    kind?: 'source_rebind';
     entry_count: number;
-    would_import: number;
-    already_known: number;
+    would_import?: number;
+    already_known?: number;
     title_excluded: number;
     unavailable: number;
     too_short: number;
@@ -64,6 +65,55 @@ export interface Job {
       pub_date?: string | null;
       duration?: number | null;
     }>;
+    // Source rebind preview fields
+    source_id?: string;
+    matched?: number;
+    matched_exact?: number;
+    matched_canonical?: number;
+    matched_title_date?: number;
+    matched_title?: number;
+    would_add?: number;
+    would_reactivate?: number;
+    metadata?: {
+      video_id_rebound?: number;
+      title_filled?: number;
+      title_trimmed?: number;
+      publication_date_filled?: number;
+      duration_filled?: number;
+      failed_retried?: number;
+    };
+    ambiguous_count?: number;
+    ambiguous?: Array<{
+      video_id: string;
+      title: string;
+      pub_date?: string | null;
+      duration?: number | null;
+      reason: string;
+    }>;
+    sample_matches?: Array<{
+      episode_id: string;
+      old_video_id: string;
+      new_video_id: string;
+      title: string;
+      pub_date?: string | null;
+      duration?: number | null;
+      how: string;
+    }>;
+    sample_adds?: Array<{
+      video_id: string;
+      title: string;
+      pub_date?: string | null;
+      duration?: number | null;
+    }>;
+    sample_orphans?: Array<{
+      video_id: string;
+      title: string;
+      pub_date?: string | null;
+      duration?: number | null;
+      status?: string;
+    }>;
+    applied_at?: string | null;
+    applied_counts?: Record<string, unknown>;
   } | null;
 }
 

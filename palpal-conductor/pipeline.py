@@ -13,10 +13,12 @@ import caches
 import db
 import pipeline_settings as settings
 from activities.discovery import (
+    _coerce_filters,
     get_enabled_sources_by_site, get_source,
     apply_discovery_results, apply_channel_icon,
 )
 from activities.process import process_transcript
+from source_rebind import build_reconcile_plan
 
 logger = logging.getLogger(__name__)
 
@@ -445,14 +447,110 @@ async def run_discovery(
     return {"sources": queued, "discover_jobs_queued": queued, "job_ids": job_ids}
 
 
+async def preview_source_change(
+    source_id: str,
+    *,
+    url: str,
+    site: str,
+    name: str | None = None,
+    enabled: bool | None = None,
+    filters: dict | None = None,
+) -> str | None:
+    """Queue a dry-run discovery against a candidate URL without saving it.
+
+    The job is tagged as a reconcile preview. When blurb returns the entries,
+    ``_summarize_dry_run`` matches them against the source's existing episodes
+    and stores a plan the admin can review and apply atomically.
+
+    Returns None when the source no longer exists. Raises
+    asyncpg.UniqueViolationError when another discovery job is already in flight
+    for the source (the same unique index ordinary discovery relies on).
+    """
+    pool = db.get_pool()
+    source = await pool.fetchrow(
+        """
+        SELECT id::text, podcast_id, name, site, url, enabled, filters
+        FROM sources
+        WHERE id = $1::uuid
+        """,
+        source_id,
+    )
+    if not source:
+        return None
+
+    # A scheduled discovery may be sitting pending (e.g. the worker is offline).
+    # It cannot run concurrently with the preview and would immediately be
+    # superseded by the rebind anyway, so retire it. A claimed job is left alone:
+    # its owner is actively scraping, and the unique index below reports the
+    # conflict instead of cancelling in-flight work.
+    await pool.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed',
+            error = 'Superseded by source rebind preview',
+            error_type = 'superseded'
+        WHERE kind = 'discover'
+          AND status = 'pending'
+          AND source_id = $1::uuid
+        """,
+        source_id,
+    )
+
+    job_id = await _create_job(
+        "discover",
+        {
+            "source_id": source_id,
+            "podcast_id": source["podcast_id"],
+            "site": site,
+            "url": url,
+            "auto_queue": False,
+            "dry_run": True,
+            "reconcile": True,
+            "current_site": source["site"],
+            "current_url": source["url"],
+            "name": name if name is not None else source["name"],
+            "enabled": source["enabled"] if enabled is None else bool(enabled),
+            "filters": filters if isinstance(filters, dict) else _coerce_filters(source["filters"]),
+        },
+        source_id=source_id,
+    )
+    logger.info("Source %s: rebind preview queued as job %s", source_id, job_id)
+    return job_id
+
+
 # --------------------------------------------------------------------------- #
 # Job completion handlers — called from the /worker/jobs/{id}/complete|fail   #
 # endpoints once the DB row has been transitioned.                            #
 # --------------------------------------------------------------------------- #
 
-async def _summarize_dry_run(job_id: str, source, entries: list[dict]) -> None:
+async def _summarize_dry_run(job_id: str, source, entries: list[dict], payload: dict) -> None:
     """Turn a dry-run discovery result into a compact summary stored on the job."""
     pool = db.get_pool()
+
+    if payload.get("reconcile"):
+        plan = await build_reconcile_plan(
+            source,
+            entries,
+            current_site=str(payload.get("current_site") or ""),
+            current_url=str(payload.get("current_url") or source["url"]),
+            candidate_site=str(payload.get("site") or ""),
+            candidate_url=str(payload.get("url") or ""),
+            candidate_name=payload.get("name"),
+            candidate_enabled=payload.get("enabled"),
+            candidate_filters=payload.get("filters"),
+        )
+        plan["dry_run"] = True
+        await pool.execute(
+            "UPDATE jobs SET result = $1::jsonb WHERE id = $2::uuid",
+            plan, job_id,
+        )
+        logger.info(
+            "Rebind preview %s: %d entries, %d matched, %d would add, %d would orphan, %d ambiguous",
+            job_id, plan["entry_count"], plan["matched"], plan["would_add"],
+            plan["would_orphan"], plan["ambiguous_count"],
+        )
+        return
+
     title_exclude = [str(s).lower() for s in (source["filters"] or {}).get("title_exclude", [])]
     min_duration = await settings.get_int("min_episode_duration_seconds")
 
@@ -509,7 +607,7 @@ async def _summarize_dry_run(job_id: str, source, entries: list[dict]) -> None:
     }
     await pool.execute(
         "UPDATE jobs SET result = $1::jsonb WHERE id = $2::uuid",
-        json.dumps(summary), job_id,
+        summary, job_id,
     )
     logger.info(
         "Dry-run discovery %s: %d entries, %d would import, %d known, %d excluded, %d unavailable, %d too short",
@@ -530,7 +628,7 @@ async def handle_discover_complete(job_id: str, payload: dict, result: dict) -> 
         return
 
     if payload.get("dry_run"):
-        await _summarize_dry_run(job_id, source, entries)
+        await _summarize_dry_run(job_id, source, entries, payload)
         return
 
     new_episodes, reactivated_count = await apply_discovery_results(source_id, source["filters"], entries)

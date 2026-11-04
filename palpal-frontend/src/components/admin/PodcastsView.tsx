@@ -182,6 +182,29 @@ export default function PodcastsView({
       filters,
     };
 
+    // Changing the adapter/URL can change episode IDs. Preview the match
+    // against existing episodes first; the apply button lives in the job
+    // drawer because the scrape runs asynchronously on blurb.
+    if (form.id) {
+      const original = selected.sources.find((source) => source.id === form.id);
+      const urlChanged = original != null && original.url !== body.url;
+      const siteChanged = original != null && original.site !== body.site;
+      if (original && (urlChanged || siteChanged)) {
+        await admin.run(`source-preview:${form.id}`, async () => {
+          const result = await api<{ job_id: string }>(`/admin/sources/${form.id}/preview-url`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+          admin.toast('Rebind preview queued', 'ok', {
+            detail: 'Review the match counts in the job drawer, then apply it there.',
+          });
+          setEditingSource(null);
+          onOpenJob(result.job_id);
+        });
+        return;
+      }
+    }
+
     await admin.run(`source-save:${form.id ?? 'new'}`, async () => {
       if (form.id) {
         await api(`/admin/sources/${form.id}`, { method: 'PUT', body: JSON.stringify(body) });
@@ -516,6 +539,11 @@ export default function PodcastsView({
               <div>
                 {selected.sources.map((source) => {
                   const editing = editingSource?.id === source.id;
+                  const needsRebind = Boolean(
+                    editing
+                    && editingSource
+                    && (source.url !== editingSource.url.trim() || source.site !== editingSource.site),
+                  );
                   const problems = source.problems ?? 0;
                   return (
                     <div className="ac-source" key={source.id}>
@@ -648,6 +676,12 @@ export default function PodcastsView({
                                 placeholder="Channel/collection URL, or full RSS feed URL"
                               />
                             </label>
+                            {needsRebind ? (
+                              <div className="ac-tiny ac-subtle is-wide" style={{ gridColumn: '1 / -1' }}>
+                                Changing the URL or site runs a preview first. Existing episodes are
+                                matched by ID, then title/date; nothing is saved until you apply it.
+                              </div>
+                            ) : null}
                             <label className="ac-field is-wide">
                               <span>Exclude titles (comma-separated)</span>
                               <input
@@ -671,10 +705,15 @@ export default function PodcastsView({
                               <Button
                                 size="sm"
                                 variant="primary"
-                                loading={admin.isPending(`source-save:${editingSource.id ?? 'new'}`)}
+                                loading={
+                                  admin.isPending(`source-save:${editingSource.id ?? 'new'}`)
+                                  || admin.isPending(`source-preview:${editingSource.id ?? 'new'}`)
+                                }
                                 onClick={saveSource}
                               >
-                                {editingSource.id ? 'Save source' : 'Add source'}
+                                {editingSource.id
+                                  ? (needsRebind ? 'Preview rebind' : 'Save source')
+                                  : 'Add source'}
                               </Button>
                             </div>
                           </div>

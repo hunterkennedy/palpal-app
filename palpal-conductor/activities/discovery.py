@@ -65,7 +65,13 @@ async def get_source(source_id: str) -> SourceRow | None:
     return SourceRow(id=str(row["id"]), url=row["url"], filters=_coerce_filters(row["filters"]), podcast_id=row["podcast_id"])
 
 
-async def apply_discovery_results(source_id: str, filters: dict, entries: list[dict]) -> tuple[list[NewEpisode], int]:
+async def apply_discovery_results(
+    source_id: str,
+    filters: dict,
+    entries: list[dict],
+    *,
+    conn=None,
+) -> tuple[list[NewEpisode], int]:
     """
     Take raw entries scraped by a blurb 'discover' job and apply them to the DB:
     insert new episodes (skipping unavailable/title_exclude-filtered ones and
@@ -82,7 +88,9 @@ async def apply_discovery_results(source_id: str, filters: dict, entries: list[d
     Returns (newly_inserted_episodes, reactivated_count).
     """
     title_exclude: list[str] = [s.lower() for s in filters.get("title_exclude", [])]
-    pool = db.get_pool()
+    # Callers that need rebind + insert/orphan semantics to be atomic pass an
+    # acquired connection (see source_rebind.apply_source_rebind).
+    pool = conn or db.get_pool()
     min_duration = await settings.get_int("min_episode_duration_seconds")
 
     all_seen_video_ids = [e["video_id"] for e in entries if e.get("video_id")]

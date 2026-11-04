@@ -43,7 +43,9 @@ from pipeline import (
     queue_episodes_for_processing, backfill_patreon_durations,
     cancel_jobs_for_source, cancel_jobs_for_podcast,
     reschedule_discovery, purge_job_history,
+    preview_source_change,
 )
+from source_rebind import SourceRebindError, apply_source_rebind
 from activities.b2 import (
     delete_transcript as b2_delete_transcript,
     download_transcript as b2_download_transcript,
@@ -456,6 +458,68 @@ async def test_source(source_id: str):
         detail={"job_id": result["job_ids"][0]},
     )
     return {"status": "queued", "job_id": result["job_ids"][0], "source_id": source_id}
+
+
+@app.post("/admin/sources/{source_id}/preview-url", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def preview_source_url(source_id: str, body: dict):
+    """Scrape a candidate URL/site and build a rebind plan without saving it.
+
+    This is the preview half of the source URL change flow. The job result
+    contains the match/orphan/add counts and the full plan that
+    ``apply-url`` will apply if the admin confirms it.
+    """
+    url = str(body.get("url") or "").strip()
+    site = str(body.get("site") or "").strip()
+    if not url:
+        raise HTTPException(status_code=422, detail="A candidate URL is required")
+    if site not in ("youtube", "patreon", "rss"):
+        raise HTTPException(status_code=422, detail="site must be youtube, patreon, or rss")
+
+    raw_filters = body.get("filters")
+    filters = raw_filters if isinstance(raw_filters, dict) else None
+    name = body.get("name") if isinstance(body.get("name"), str) else None
+    enabled = body.get("enabled") if isinstance(body.get("enabled"), bool) else None
+
+    try:
+        job_id = await preview_source_change(
+            source_id, url=url, site=site, name=name, enabled=enabled, filters=filters,
+        )
+    except asyncpg.exceptions.UniqueViolationError:
+        raise HTTPException(
+            status_code=409,
+            detail="That source already has a discovery job in flight",
+        ) from None
+    if not job_id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    await _audit(
+        "source.rebind_preview", target_type="source", target_id=source_id,
+        detail={"job_id": job_id, "site": site},
+    )
+    return {"status": "queued", "job_id": job_id, "source_id": source_id}
+
+
+@app.post("/admin/sources/{source_id}/apply-url", tags=["admin"], dependencies=[Depends(verify_admin_token)])
+async def apply_source_url(source_id: str, body: dict):
+    """Apply a previously reviewed source-rebind preview atomically."""
+    job_id = str(body.get("job_id") or "").strip()
+    if not job_id:
+        raise HTTPException(status_code=422, detail="job_id is required")
+
+    try:
+        counts = await apply_source_rebind(
+            source_id,
+            job_id,
+            auto_queue=bool(body.get("auto_queue", True)),
+        )
+    except SourceRebindError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    await _audit(
+        "source.rebind", target_type="source", target_id=source_id,
+        detail=counts,
+    )
+    return {"status": "applied", **counts}
 
 
 @app.post("/admin/episodes/backfill-patreon-duration", tags=["admin"], dependencies=[Depends(verify_admin_token)])
